@@ -1,0 +1,85 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+*.pyd
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Django
+*.log
+*.pot
+db.sqlite3
+*.db
+db.sqlite3-journal
+/staticfiles/
+/mediafiles/
+/logs/
+
+# Ambientes
+.env
+.env.*
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Docker
+.dockerignore
+.docker
+docker-compose*.yml
+
+# Documentação
+README.md
+docs/
+*.md
+
+# Testes
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+conftest.py
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Outros
+*.bak
+*.tmp
+node_modules/

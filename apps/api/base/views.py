@@ -1,0 +1,202 @@
+import warnings
+
+from django.db.models import ProtectedError
+
+from rest_framework import status
+from rest_framework.decorators import action
+from rest_framework.permissions import DjangoModelPermissions
+from rest_framework.response import Response
+from rest_framework.viewsets import GenericViewSet, ModelViewSet
+
+from threadlocals.threadlocals import get_request_variable
+
+from .handlers import ativar_registro, inativar_registro
+
+
+class UtilsViewSetMixin:
+    """Mixin com métodos utilitários para ViewSets."""
+
+    def check_permissions(self, request):
+        base_permissions = {
+            "grid": ["%(app_label)s.view_%(model_name)s"],
+            "form": ["%(app_label)s.view_%(model_name)s"],
+            "ativar": ["%(app_label)s.ativar_inativar_%(model_name)s"],
+            "inativar": ["%(app_label)s.ativar_inativar_%(model_name)s"],
+        }
+
+        for permission in self.get_permissions():
+            if issubclass(permission.__class__, DjangoModelPermissions):
+                permission.perms_map = {**permission.perms_map, **base_permissions, **self.extra_permissions}
+
+            if not permission.has_permission(request, self):
+                self.permission_denied(
+                    request, message=getattr(permission, "message", None), code=getattr(permission, "code", None)
+                )
+
+    def generic_action(self, *args, **kwargs):
+        instance = None
+
+        if "pk" in kwargs:
+            self.get_object()
+            instance = self.instance
+
+        many = isinstance(self.request.data, list)
+        serializer = self.get_serializer(instance=instance, data=self.request.data, many=many)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        response_status = kwargs.get("status", status.HTTP_200_OK)
+        response_data = kwargs.get("data", None)
+        return Response(response_data, status=response_status)
+
+    def get_queryset(self):
+        queryset = self.modify_base_queryset(super().get_queryset())
+
+        modify_queryset_method = getattr(self, f"modify_{self.action}_queryset", None)
+
+        if callable(modify_queryset_method):
+            queryset = modify_queryset_method(queryset)
+
+        return queryset
+
+    def modify_base_queryset(self, queryset):
+        return queryset
+
+    def get_object(self):
+        instance = super().get_object()
+        self.instance = instance
+        return instance
+
+    def get_serializer_class(self, overwrite_action=None):
+        assert self.serializer_classes != {} or self.serializer_class is not None, (
+            f"'{self.__class__.__name__}' deve implementar o 'serializer_class' ou  'serializer_classes'."
+        )
+
+        action = overwrite_action or self.action
+
+        if self.serializer_class:
+            if self.serializer_class is not None and self.serializer_classes != {}:
+                warnings.warn(
+                    f"'{self.__class__.__name__}' possui o 'serializer_class' e 'serializer_classes'. O 'serializer_classes' será ignorado.",
+                    stacklevel=1,
+                )
+
+            return self.serializer_class
+
+        if action not in self.serializer_classes:
+            raise AssertionError(
+                f"'{self.__class__.__name__}' não possui o 'serializer_classes' para a ação '{action}'."
+            )
+
+        return self.serializer_classes[action]
+
+    def get_aditional_serializer_context(self):
+        return {}
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        aditional_context = self.get_aditional_serializer_context()
+        return {"action": self.action, "token": get_request_variable("token"), **context, **aditional_context}
+
+
+class GenericBaseViewSet(UtilsViewSetMixin, GenericViewSet):
+    pass
+
+
+class BaseModelViewSet(UtilsViewSetMixin, ModelViewSet):
+    queryset = None
+    serializer_class = None
+    serializer_classes = {}
+    filterset_fields = {}
+    search_fields = []
+    ordering_fields = []
+    extra_permissions = {}
+    has_ativo_field = True
+
+    def perform_create(self, serializer, **overwrite):
+        return serializer.save(**overwrite)
+
+    def perform_update(self, serializer, **overwrite):
+        return serializer.save(**overwrite)
+
+    def modify_unique_fields(self, instance):
+        pass
+
+    def list(self, request, *args, **kwargs):
+        fields = self.queryset.model.get_serializable_column_names()
+        queryset = self.filter_queryset(self.get_queryset()).values(*fields)
+        page = self.paginate_queryset(queryset)
+        return self.get_paginated_response(page)
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        return Response(instance.as_dict())
+
+    def destroy(self, request, *args, **kwargs):
+        try:
+            instance = self.get_object()
+            self.perform_destroy(instance)
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except ProtectedError:
+            return Response(
+                {"mensagem": "Esse registro já foi utilizado pelo sistema"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+    @action(methods=["get"], detail=True)
+    def form(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+
+    @action(methods=["get"], detail=False)
+    def grid(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        serializer = self.get_serializer(page, many=True)
+        return self.get_paginated_response(serializer.data)
+
+    @action(methods=["post"], detail=False)
+    def bulk_create(self, request):
+        serializer = self.get_serializer(data=request.data, many=True)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+    @action(methods=["get"], detail=True)
+    def clonar(self, request, pk):
+        instance = self.get_object()
+        clone = instance.clonar()
+        self.modify_unique_fields(clone)
+        clone.save()
+        serializer = self.get_serializer(clone)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=["get"])
+    def values(self, request):
+        values = request.query_params.get("values", None)
+        if values is None:
+            return Response({"values": "Essa query é obrigatória"}, status=status.HTTP_400_BAD_REQUEST)
+
+        values = values.split(",")
+        queryset = self.filter_queryset(self.get_queryset()).values(*values)
+        page = self.paginate_queryset(queryset)
+        return self.get_paginated_response(page)
+
+    @action(detail=True, methods=["get"])
+    def lookup(self, request, pk=None):
+        return Response(status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    if has_ativo_field:
+        @action(methods=["get"], detail=True)
+        def ativar(self, request, *args, **kwargs):
+            instance = self.get_object()
+            ativar_registro(instance)
+            return Response()
+
+        @action(methods=["get"], detail=True)
+        def inativar(self, request, *args, **kwargs):
+            instance = self.get_object()
+            inativar_registro(instance)
+            return Response()
+

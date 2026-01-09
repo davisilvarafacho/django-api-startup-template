@@ -1,0 +1,50 @@
+from rest_framework import serializers
+
+import serpy
+
+
+class BaseModelSerializer(serializers.ModelSerializer):
+    def __init__(self, instance=None, data=serializers.empty, **kwargs):
+        ignore_read_only = kwargs.pop("ignore_read_only", [])
+        ignore_internal = kwargs.pop("ignore_internal", [])
+
+        additional_read_only = kwargs.pop("additional_read_only", [])
+        additional_internal = kwargs.pop("additional_internal", [])
+
+        super().__init__(instance, data, **kwargs)
+
+        model = self.Meta.model
+
+        read_only_fields = model.get_read_only_fields()
+        read_only_fields.extend(additional_read_only)
+
+        internal_fields = model.get_internal_fields()
+        internal_fields.extend(additional_internal)
+
+        for field_name in internal_fields:
+            if field_name in self.fields and field_name not in ignore_internal:
+                self.fields.pop(field_name)
+
+        for field_name in read_only_fields:
+            if field_name in self.fields and field_name not in ignore_read_only:
+                self.fields[field_name].read_only = True
+
+
+class BaseModelSerpySerializer(serpy.Serializer):
+    id = serpy.IntField()
+
+    def to_value(self, instance):
+        fields = [*self._compiled_fields]
+
+        # Remove o campo 'ativo' se ele for None
+        # if hasattr(self, "ativo") and getattr(self, "ativo") is None:
+        #     fields = [f for f in fields if f[0] != "ativo"]
+
+        if self.many:
+            serialize = self._serialize
+            return [serialize(o, fields) for o in instance]
+
+        if instance is None:
+            return None
+
+        return self._serialize(instance, fields)

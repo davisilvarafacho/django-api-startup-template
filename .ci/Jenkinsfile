@@ -1,0 +1,116 @@
+pipeline {
+    agent any
+    
+    environment {
+        IMAGE_NAME = "base-api"
+        CONTAINER_NAME = "base-api"
+        CONTAINER_NETWORK = "zettabyte"
+        PORT = "49033"
+        DOCKERFILE_PATH = "."
+        GIT_REPO = "https://github.com/davisilvarafacho/api-base.git"
+        GIT_BRANCH = "main"
+        GIT_CREDENTIALS_ID = "github"
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                script {
+                    git(
+                        url: "${GIT_REPO}",
+                        branch: "${GIT_BRANCH}",
+                        credentialsId: "${GIT_CREDENTIALS_ID}"
+                    )
+                }
+            }
+        }
+        
+        // stage('Testes') {
+        //     steps {
+        //         script {
+        //             sh '''
+        //                 python3 -m venv venv
+        //                 . venv/bin/activate
+        //                 pip install -r requirements.txt
+        //                 pytest -v
+        //             '''
+        //         }
+        //     }
+        // }
+        
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    sh "docker build -t ${IMAGE_NAME}:${BUILD_NUMBER} -t ${IMAGE_NAME}:latest ${DOCKERFILE_PATH}"
+                }
+            }
+        }
+        
+        stage('Stop e Remove Container Antigo') {
+            steps {
+                script {
+                    sh """
+                        docker stop ${CONTAINER_NAME} || true
+                        docker rm ${CONTAINER_NAME} || true
+                    """
+                }   
+            }
+        }
+        
+        stage('Deploy') {
+            steps {
+                script {
+                    withCredentials([file(credentialsId: 'base-env-production', variable: 'ENV_FILE')]) {
+                        sh """
+                            docker run -d \
+                                --name ${CONTAINER_NAME} \
+                                --hostname ${CONTAINER_NAME} \
+                                --env-file "${ENV_FILE}" \
+                                --restart unless-stopped \
+                                --network ${CONTAINER_NETWORK} \
+                                ${IMAGE_NAME}:${BUILD_NUMBER}
+                        """
+                    }
+                }
+            }
+        }
+        
+        // stage('Health Check') {
+        //     steps {
+        //         script {
+        //             sleep(time: 10, unit: 'SECONDS')
+        //             sh """
+        //                 if docker ps | grep ${CONTAINER_NAME}; then
+        //                     echo "Container está rodando!"
+        //                 else
+        //                     echo "ERRO: Container não está rodando"
+        //                     exit 1
+        //                 fi
+        //             """
+        //         }
+        //     }
+        // }
+        
+        // stage('Limpeza de Imagens Antigas') {
+        //     steps {
+        //         script {
+        //             sh """
+        //                 docker images ${IMAGE_NAME} --format "{{.Tag}}" | grep -v "latest" | grep -v "${BUILD_NUMBER}" | head -n -2 | xargs -r -I {} docker rmi ${IMAGE_NAME}:{} || true
+        //             """
+        //         }
+        //     }
+        // }
+    }
+    
+    post {
+        success {
+            echo 'Deploy realizado com sucesso!'
+        }
+        failure {
+            echo 'Falha no deploy. Rollback pode ser necessário.'
+        }
+        always {
+            cleanWs()
+        }
+    }
+}

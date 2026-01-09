@@ -1,0 +1,178 @@
+import copy
+
+from django.conf import settings
+from django.contrib.contenttypes.models import ContentType
+from django.db import models
+from django.utils.translation import gettext_lazy as _
+
+from auditlog.models import AuditlogHistoryField
+from threadlocals.threadlocals import get_current_user
+
+
+class Estados(models.IntegerChoices):
+    EM_BRANCO = 0, "Em branco"
+    RONDONIA = 1, "Rondônia"
+    ACRE = 2, "Acre"
+    AMAZONAS = 3, "Amazonas"
+    RORAIMA = 4, "Roraima"
+    PARA = 5, "Pará"
+    AMAPA = 6, "Amapá"
+    TOCANTINS = 7, "Tocantins"
+    MARANHAO = 8, "Maranhão"
+    PIAUI = 9, "Piauí"
+    CEARA = 10, "Ceará"
+    RIO_GRANDE_DO_NORTE = 11, "Rio Grande do Norte"
+    PARAIBA = 12, "Paraíba"
+    PERNAMBUCO = 13, "Pernambuco"
+    ALAGOAS = 14, "Alagoas"
+    SERGIPE = 15, "Sergipe"
+    BAHIA = 16, "Bahia"
+    MINAS_GERAIS = 17, "Minas Gerais"
+    ESPIRITO_SANTO = 18, "Espírito Santo"
+    RIO_DE_JANEIRO = 19, "Rio de Janeiro"
+    SAO_PAULO = 20, "São Paulo"
+    PARANA = 21, "Paraná"
+    SANTA_CATARINA = 22, "Santa Catarina"
+    RIO_GRANDE_DO_SUL = 23, "Rio Grande do Sul"
+    MATO_GROSSO_DO_SUL = 24, "Mato Grosso do Sul"
+    MATO_GROSSO = 25, "Mato Grosso"
+    GOIAS = 26, "Goiás"
+    DISTRITO_FEDERAL = 27, "Distrito Federal"
+    EXTERIOR = 28, "Exterior"
+
+
+class CustomManager(models.Manager):
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        deferred_fields = self.model.get_queryset_deferred_fields()
+        if deferred_fields:
+            queryset = queryset.defer(*deferred_fields)
+        return queryset
+
+
+class AtivosManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(ativo=True)
+
+
+class Base(models.Model):
+    ativo = models.BooleanField(_("ativo"), default=True)
+
+    data_criacao = models.DateField(_("data de criação"), auto_now_add=True)
+    hora_criacao = models.TimeField(_("hora de criação"), auto_now_add=True)
+    data_ultima_alteracao = models.DateField(_("data da última alteração"), auto_now=True)
+    hora_ultima_alteracao = models.TimeField(_("hora da última alteração"), auto_now=True)
+
+    owner = models.ForeignKey(verbose_name=_("owner"), to=settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True)
+
+    objects = CustomManager()
+    ativos = AtivosManager()
+
+    history = AuditlogHistoryField()
+
+    internal_fields = [
+        "data_ultima_alteracao",
+        "hora_ultima_alteracao",
+    ]
+    extra_internal_fields = []
+
+    read_only_fields = [
+        "ativo",
+        "data_criacao",
+        "hora_criacao",
+        "owner",
+    ]
+    extra_read_only_fields = []
+
+    queryset_deferred_fields = []
+
+    clone_reset_fields = ("data_criacao", "hora_criacao", "data_ultima_alteracao", "hora_ultima_alteracao")
+    extra_clone_reset_fields = []
+
+    def save(self, *args, **kwargs):
+        # setando o owner automaticamente
+        model_fields = self.get_fields()
+        if "owner" in model_fields:
+            if self.pk is None and self.owner is None:
+                current_user = get_current_user()
+                if current_user and current_user.is_authenticated:
+                    self.owner = current_user
+
+        return super().save(*args, **kwargs)
+
+    def as_dict(self, additional_exclude_fields=None, ignore_excluded_fields=None):
+        excluded = set(self.get_excluded_fields())
+
+        if additional_exclude_fields:
+            excluded.update(additional_exclude_fields)
+
+        if ignore_excluded_fields:
+            excluded.difference_update(ignore_excluded_fields)
+
+        return {field.name: getattr(self, field.name) for field in self._meta.get_fields() if field.concrete and field.name not in excluded}
+
+    def clonar(self, commit=True, **fields):
+        clone = copy.copy(self)
+        clone.pk = None
+        clone._state.adding = True
+
+        model_fields = self.get_fields()
+        control_fields = list(self.clone_reset_fields) + list(self.extra_clone_reset_fields)
+        for field in control_fields:
+            if field in model_fields:
+                setattr(clone, field, None)
+
+        for chave, valor in fields.items():
+            setattr(clone, chave, valor)
+
+        clone.owner = get_current_user()
+
+        clone.modify_before_cloning()
+
+        if commit:
+            clone.save()
+
+        return clone
+
+    def modify_before_cloning(self):
+        pass
+
+    @classmethod
+    def get_fields(cls):
+        return [field.name for field in cls._meta.get_fields() if field.concrete]
+
+    @classmethod
+    def get_serializable_column_names(cls):
+        fields = cls.get_fields()
+        excluded_fields = cls.get_internal_fields()
+        return [field for field in fields if field not in excluded_fields]
+
+    @classmethod
+    def get_excluded_fields(cls):
+        return cls.get_internal_fields()
+
+    @classmethod
+    def get_internal_fields(cls):
+        return cls.internal_fields + cls.extra_internal_fields
+
+    @classmethod
+    def get_read_only_fields(cls):
+        return cls.read_only_fields + cls.extra_read_only_fields
+
+    @classmethod
+    def get_queryset_deferred_fields(cls):
+        return cls.queryset_deferred_fields
+
+    @classmethod
+    def get_relational_fields(cls):
+        return [field.name for field in cls._meta.get_fields() if field.concrete and field.is_relation]
+
+    @classmethod
+    def get_content_type(cls):
+        return ContentType.objects.get_for_model(cls)
+
+    def __int__(self):
+        return self.pk
+
+    class Meta:
+        abstract = True
