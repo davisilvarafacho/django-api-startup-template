@@ -8,7 +8,6 @@ from django.utils.translation import gettext_lazy as _
 import sentry_sdk
 from threadlocals.threadlocals import get_request_variable
 
-from libs.drf.mp import *
 from libs.serpy.mp import *
 from utils.env import get_bool_from_env, get_env_var
 
@@ -101,6 +100,8 @@ LIBS_APPS = [
     "django_filters",
     "debug_toolbar",  # DEVELOPMENT ONLY
     "drf_api_logger",
+    "drf_spectacular",
+    "django_scalar",
     "hijack",  # DEVELOPMENT ONLY
     "hijack.contrib.admin",  # DEVELOPMENT ONLY
     "knox",
@@ -261,19 +262,11 @@ MEDIA_ROOT = os.path.join(BASE_DIR, "mediafiles")
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+RESEND_API_KEY = get_env_var("RESEND_API_KEY")
 
-EMAIL_USE_TLS = True
+DEFAULT_FROM_EMAIL = get_env_var("RESEND_FROM_EMAIL") or "nao-responda@base.com.br"
 
-EMAIL_HOST = "smtp.hostinger.com"
-
-EMAIL_HOST_USER = "nao-responda@base.com.br"
-
-EMAIL_HOST_PASSWORD = get_env_var("EMAIL_PASSWORD")
-
-EMAIL_PORT = 587
-
-DEFAULT_FROM_EMAIL = "nao-responda@base.com.br"
+EMAIL_BACKEND = "apps.api.core.email_backends.ResendEmailBackend"
 
 
 LOGGING_ROOT = os.path.join(BASE_DIR, "logs/")
@@ -421,6 +414,14 @@ B2_APPLICATION_KEY = get_env_var("BACKBLAZE_APPLICATION_KEY")
 
 B2_BUCKET_NAME = get_env_var("BACKBLAZE_BUCKET_NAME")
 
+B2_BUCKET_ID = get_env_var("BACKBLAZE_BUCKET_ID")
+
+# Prefixo opcional para todos os arquivos enviados ao bucket (ex.: "media").
+B2_LOCATION = get_env_var("BACKBLAZE_LOCATION") or ""
+
+# URL pública opcional (domínio próprio/CDN). Sem ela, o SDK fornece a URL B2.
+B2_PUBLIC_BASE_URL = get_env_var("BACKBLAZE_PUBLIC_BASE_URL")
+
 
 # rest framework
 REST_FRAMEWORK = {
@@ -440,9 +441,23 @@ REST_FRAMEWORK = {
         "django_filters.rest_framework.DjangoFilterBackend",
     ],
     "DEFAULT_VERSIONING_CLASS": "rest_framework.versioning.NamespaceVersioning",
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "TEST_REQUEST_DEFAULT_FORMAT": "json",
     "DATE_INPUT_FORMATS": ["%d/%m/%Y"],
 }
+
+
+# OpenAPI / Scalar
+SPECTACULAR_SETTINGS = {
+    "TITLE": "DRF Base API",
+    "DESCRIPTION": "Documentação da API.",
+    "VERSION": "0.1.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+}
+
+SCALAR_OPENAPI_URL = "/api/schema/"
+SCALAR_TITLE = "DRF Base API - Referência"
+SCALAR_THEME = "purple"
 
 
 # knox

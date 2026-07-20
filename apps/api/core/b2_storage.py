@@ -1,237 +1,190 @@
-import mimetypes
-from io import BytesIO
-from urllib.parse import urljoin
+"""Django storage backend backed by Backblaze B2."""
 
+from __future__ import annotations
+
+import mimetypes
+from datetime import datetime, timezone
+from io import BytesIO
+from pathlib import PurePosixPath
+from urllib.parse import quote
+
+from b2sdk.v2 import B2Api, B2HttpApiConfig, InMemoryAccountInfo
+from b2sdk.v2.exception import B2Error, FileNotPresent
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.core.files.base import File
 from django.core.files.storage import Storage
 from django.utils.deconstruct import deconstructible
 
-from b2sdk.v2 import B2Api, B2HttpApiConfig, InMemoryAccountInfo
-from b2sdk.v2.exception import (
-    B2Error,
-    FileNotPresent,
-)
-
 
 @deconstructible
 class BackblazeB2Storage(Storage):
-    """Storage backend para Backblaze B2 usando b2sdk.
+    """Store Django files in a Backblaze B2 bucket using ``b2sdk``.
 
-    Settings necessárias:
-    - B2_APPLICATION_KEY_ID
-    - B2_APPLICATION_KEY
-    - B2_BUCKET_NAME
-    - B2_BUCKET_ID (opcional, melhora performance)
-    - B2_ENDPOINT_URL (opcional, para usar endpoint customizado)
+    The backend accepts the same keys in ``STORAGES[...]["OPTIONS"]`` as the
+    settings below. ``location`` is a prefix in the bucket, useful for keeping
+    database backups separate from uploaded media.
     """
 
-    def __init__(self, **kwargs):
-        try:
-            self.application_key_id = kwargs.get('application_key_id', settings.B2_APPLICATION_KEY_ID)
-            self.application_key = kwargs.get('application_key', settings.B2_APPLICATION_KEY)
-            self.bucket_name = kwargs.get('bucket_name', settings.B2_BUCKET_NAME)
-        except AttributeError as e:
-            raise ImproperlyConfigured(f"Missing Backblaze B2 configuration: {str(e)}") from e
-
-        self.bucket_id = kwargs.get('bucket_id', getattr(settings, 'B2_BUCKET_ID', None))
-        self.endpoint_url = kwargs.get('endpoint_url', getattr(settings, 'B2_ENDPOINT_URL', None))
-        self._bucket = None
+    def __init__(
+        self,
+        application_key_id=None,
+        application_key=None,
+        bucket_name=None,
+        bucket_id=None,
+        location=None,
+        public_base_url=None,
+        **kwargs,
+    ):
+        super().__init__()
+        self.application_key_id = application_key_id or getattr(settings, "B2_APPLICATION_KEY_ID", None)
+        self.application_key = application_key or getattr(settings, "B2_APPLICATION_KEY", None)
+        self.bucket_name = bucket_name or getattr(settings, "B2_BUCKET_NAME", None)
+        self.bucket_id = bucket_id or getattr(settings, "B2_BUCKET_ID", None)
+        self.location = self._clean_location(location if location is not None else getattr(settings, "B2_LOCATION", ""))
+        self.public_base_url = (
+            public_base_url or getattr(settings, "B2_PUBLIC_BASE_URL", None) or getattr(settings, "B2_ENDPOINT_URL", None)
+        )
         self._api = None
+        self._bucket = None
+
+        missing = [
+            setting_name
+            for setting_name, value in {
+                "B2_APPLICATION_KEY_ID": self.application_key_id,
+                "B2_APPLICATION_KEY": self.application_key,
+                "B2_BUCKET_NAME": self.bucket_name,
+            }.items()
+            if not value
+        ]
+        if missing:
+            raise ImproperlyConfigured(f"Backblaze B2 requires: {', '.join(missing)}.")
+
+    @staticmethod
+    def _clean_location(location):
+        return str(location or "").strip("/")
+
+    @staticmethod
+    def _clean_name(name):
+        return str(name).lstrip("/")
+
+    def _full_name(self, name):
+        name = self._clean_name(name)
+        if ".." in PurePosixPath(name).parts:
+            raise ValueError("Backblaze B2 file names cannot contain path traversal segments.")
+        return f"{self.location}/{name}" if self.location else name
+
+    def _relative_name(self, name):
+        name = self._clean_name(name)
+        if self.location and name.startswith(f"{self.location}/"):
+            return name[len(self.location) + 1 :]
+        return name
 
     @property
     def api(self):
-        """Lazy initialization da API do B2."""
+        """Create and authorize the B2 client only when storage is used."""
         if self._api is None:
-            info = InMemoryAccountInfo()
-
-            # Configura API com timeout customizado se necessário
-            config = B2HttpApiConfig()
-
-            self._api = B2Api(info, api_config=config)
-            self._api.authorize_account(
-                "production",
-                self.application_key_id,
-                self.application_key
-            )
+            self._api = B2Api(InMemoryAccountInfo(), api_config=B2HttpApiConfig())
+            self._api.authorize_account("production", self.application_key_id, self.application_key)
         return self._api
 
     @property
     def bucket(self):
-        """Lazy initialization do bucket."""
         if self._bucket is None:
-            if self.bucket_id:
-                self._bucket = self.api.get_bucket_by_id(self.bucket_id)
-            else:
-                self._bucket = self.api.get_bucket_by_name(self.bucket_name)
+            self._bucket = self.api.get_bucket_by_id(self.bucket_id) if self.bucket_id else self.api.get_bucket_by_name(self.bucket_name)
         return self._bucket
 
-    def _clean_name(self, name):
-        """Remove leading slashes do nome do arquivo."""
-        return name.lstrip('/')
+    def _open(self, name, mode="rb"):
+        if "r" not in mode:
+            raise ValueError("Backblaze B2 storage only supports opening files for reading.")
 
-    def _open(self, name, mode='rb'):
-        """Abre um arquivo do B2."""
-        name = self._clean_name(name)
-
+        full_name = self._full_name(name)
         try:
-            download_dest = BytesIO()
-            self.bucket.download_file_by_name(name).save(download_dest)
-            download_dest.seek(0)
-            return File(download_dest, name)
-        except FileNotPresent:
-            raise FileNotFoundError(f"File not found: {name}")
-        except B2Error as e:
-            raise IOError(f"Error opening file {name}: {str(e)}")
+            destination = BytesIO()
+            self.bucket.download_file_by_name(full_name).save(destination)
+            destination.seek(0)
+            return File(destination, name=self._relative_name(full_name))
+        except FileNotPresent as exc:
+            raise FileNotFoundError(f"File not found: {name}") from exc
+        except B2Error as exc:
+            raise OSError(f"Could not open B2 file '{name}'.") from exc
 
     def _save(self, name, content):
-        """Salva um arquivo no B2."""
-        name = self._clean_name(name)
-
-        # Detecta content type
-        content_type, _ = mimetypes.guess_type(name)
-        if content_type is None:
-            content_type = 'application/octet-stream'
-
-        # Prepara file info
-        file_info = {}
+        full_name = self._full_name(name)
+        content_type = getattr(content, "content_type", None) or mimetypes.guess_type(full_name)[0]
 
         try:
-            # Se content for um File do Django, pega os bytes
-            if hasattr(content, 'read'):
+            if hasattr(content, "seek"):
                 content.seek(0)
-                file_data = content.read()
-            else:
-                file_data = content
-
-            # Upload do arquivo
+            data = content.read() if hasattr(content, "read") else content
             self.bucket.upload_bytes(
-                data_bytes=file_data,
-                file_name=name,
-                content_type=content_type,
-                file_infos=file_info
+                data_bytes=data,
+                file_name=full_name,
+                content_type=content_type or "application/octet-stream",
             )
-
-            return name
-
-        except B2Error as e:
-            raise IOError(f"Error saving file {name}: {str(e)}")
+            return self._relative_name(full_name)
+        except B2Error as exc:
+            raise OSError(f"Could not save B2 file '{name}'.") from exc
 
     def delete(self, name):
-        """Deleta um arquivo do B2."""
-        name = self._clean_name(name)
-
+        full_name = self._full_name(name)
         try:
-            # Lista versões do arquivo (B2 mantém versionamento)
-            file_versions = self.bucket.ls(name, latest_only=False, recursive=False)
-
-            for file_version, _ in file_versions:
-                if file_version.file_name == name:
-                    self.api.delete_file_version(
-                        file_version.id_,
-                        file_version.file_name
-                    )
-
+            for file_version, _ in self.bucket.ls(full_name, latest_only=False, recursive=False):
+                if file_version.file_name == full_name:
+                    self.api.delete_file_version(file_version.id_, file_version.file_name)
         except FileNotPresent:
-            pass  # Arquivo já não existe
-        except B2Error as e:
-            raise IOError(f"Error deleting file {name}: {str(e)}")
+            return
+        except B2Error as exc:
+            raise OSError(f"Could not delete B2 file '{name}'.") from exc
 
     def exists(self, name):
-        """Verifica se um arquivo existe no B2."""
-        name = self._clean_name(name)
-
         try:
-            # Tenta listar o arquivo específico
-            file_versions = list(self.bucket.ls(
-                name,
-                latest_only=True,
-                recursive=False
-            ))
-
-            # Verifica se algum arquivo com esse nome existe
-            for file_version, _ in file_versions:
-                if file_version.file_name == name:
-                    return True
+            self.bucket.get_file_info_by_name(self._full_name(name))
+        except (B2Error, FileNotPresent):
             return False
-
-        except B2Error:
-            return False
+        return True
 
     def listdir(self, path):
-        """Lista diretórios e arquivos em um path."""
-        path = self._clean_name(path)
-        if path and not path.endswith('/'):
-            path += '/'
+        full_path = self._full_name(path).rstrip("/")
+        if full_path:
+            full_path += "/"
 
-        directories = set()
-        files = []
-
+        directories, files = set(), []
         try:
-            for file_version, folder_name in self.bucket.ls(
-                    path,
-                    latest_only=True,
-                    recursive=False
-            ):
+            for file_version, folder_name in self.bucket.ls(full_path, latest_only=True, recursive=False):
                 if folder_name:
-                    # É um diretório
-                    dir_name = folder_name.rstrip('/').split('/')[-1]
-                    directories.add(dir_name)
+                    directories.add(folder_name.rstrip("/").rsplit("/", 1)[-1])
                 else:
-                    # É um arquivo
-                    file_name = file_version.file_name
-                    if path:
-                        file_name = file_name[len(path):]
-                    if '/' not in file_name:  # Apenas arquivos diretos, não subpastas
-                        files.append(file_name)
-
-            return list(directories), files
-
-        except B2Error as e:
-            raise IOError(f"Error listing directory {path}: {str(e)}")
+                    files.append(self._relative_name(file_version.file_name).rsplit("/", 1)[-1])
+        except B2Error as exc:
+            raise OSError(f"Could not list B2 directory '{path}'.") from exc
+        return sorted(directories), sorted(files)
 
     def size(self, name):
-        """Retorna o tamanho do arquivo em bytes."""
-        name = self._clean_name(name)
-
         try:
-            file_info = self.bucket.get_file_info_by_name(name)
-            return file_info.size
-        except FileNotPresent:
-            raise FileNotFoundError(f"File not found: {name}")
-        except B2Error as e:
-            raise IOError(f"Error getting file size {name}: {str(e)}")
+            return self.bucket.get_file_info_by_name(self._full_name(name)).size
+        except FileNotPresent as exc:
+            raise FileNotFoundError(f"File not found: {name}") from exc
+        except B2Error as exc:
+            raise OSError(f"Could not get the size of B2 file '{name}'.") from exc
 
     def url(self, name):
-        """Retorna a URL pública do arquivo."""
-        name = self._clean_name(name)
-
-        # URL pública do B2
-        download_url = self.bucket.get_download_url(name)
-
-        # Se tiver endpoint customizado, usa ele
-        if self.endpoint_url:
-            return urljoin(self.endpoint_url, name)
-
-        return download_url
+        full_name = self._full_name(name)
+        if self.public_base_url:
+            return f"{self.public_base_url.rstrip('/')}/{quote(full_name, safe='/')}"
+        return self.bucket.get_download_url(full_name)
 
     def get_accessed_time(self, name):
-        """B2 não suporta accessed time."""
-        raise NotImplementedError("Backblaze B2 doesn't support accessed time")
+        raise NotImplementedError("Backblaze B2 does not expose an access time.")
 
     def get_created_time(self, name):
-        """Retorna quando o arquivo foi criado."""
-        name = self._clean_name(name)
-
         try:
-            file_info = self.bucket.get_file_info_by_name(name)
-            return file_info.upload_timestamp / 1000  # B2 retorna em milliseconds
-        except FileNotPresent:
-            raise FileNotFoundError(f"File not found: {name}")
-        except B2Error as e:
-            raise IOError(f"Error getting file creation time {name}: {str(e)}")
+            timestamp = self.bucket.get_file_info_by_name(self._full_name(name)).upload_timestamp
+        except FileNotPresent as exc:
+            raise FileNotFoundError(f"File not found: {name}") from exc
+        except B2Error as exc:
+            raise OSError(f"Could not get the creation time of B2 file '{name}'.") from exc
+        return datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc)
 
     def get_modified_time(self, name):
-        """Retorna quando o arquivo foi modificado (mesmo que created no B2)."""
         return self.get_created_time(name)
