@@ -1,12 +1,9 @@
-# Imagem base otimizada
 FROM python:3.10-slim AS base
 
-# Variáveis de ambiente para otimização do Python
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_DEFAULT_TIMEOUT=100
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
 
 # Instalar dependências do sistema necessárias
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -16,26 +13,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     vim \
     && rm -rf /var/lib/apt/lists/*
 
-# Stage de build - apenas para compilar dependências
 FROM base AS builder
 
-# Instalar dependências de compilação
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Criar diretório para as wheels
-WORKDIR /wheels
+COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /uvx /bin/
 
-# Copiar arquivos de dependências
-COPY requirements.txt .
+WORKDIR /app
 
-# Compilar as dependências em wheels para instalação mais rápida
-RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
 
-# Stage final - imagem de produção
 FROM base AS production
 
 # Criar usuário não-root para segurança
@@ -44,12 +36,8 @@ RUN groupadd -r django && useradd -r -g django django
 # Definir diretório de trabalho
 WORKDIR /app
 
-# Copiar wheels do stage de build
-COPY --from=builder /wheels /wheels
-
-# Instalar dependências a partir das wheels (apenas arquivos .whl)
-RUN pip install --no-cache-dir --no-index --find-links=/wheels /wheels/*.whl \
-    && rm -rf /wheels
+COPY --from=builder /app/.venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Copiar código da aplicação
 COPY --chown=django:django . .
