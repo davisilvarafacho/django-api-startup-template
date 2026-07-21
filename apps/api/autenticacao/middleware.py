@@ -13,5 +13,4 @@ class UpdateTokenLastUsedMiddleware:
                 request.auth.metadata.last_used = timezone.now()
                 request.auth.metadata.save(update_fields=['last_used'])
 
-        response = self.get_response(request)
-        return response
+        return self.get_response(request)

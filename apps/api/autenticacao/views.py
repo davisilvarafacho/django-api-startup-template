@@ -1,23 +1,20 @@
 from datetime import timedelta
 
-from django.utils import timezone
 from django.contrib.auth.signals import user_logged_in
+from django.utils import timezone
 
 from rest_framework import status, viewsets
 from rest_framework.authtoken.serializers import AuthTokenSerializer
 from rest_framework.decorators import action
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from knox.models import AuthToken, get_token_model
 from knox.views import LoginView as KnoxLoginView
 
-from .utils import parse_user_agent
-from .utils import get_geolocation_data, get_client_ip
-
 from .models import TokenMetaData
 from .serializers import AuthTokenSerializer as CustomAuthTokenSerializer
-
+from .utils import get_client_ip, get_geolocation_data, parse_user_agent
 
 # class LoginView(KnoxLoginView):
 #     permission_classes = (AllowAny,)

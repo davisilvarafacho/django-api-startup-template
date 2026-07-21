@@ -1,13 +1,16 @@
-import httpx
+import logging
 
 from django.core.cache import cache
 from django.http import HttpRequest
 
+import httpx
 from user_agents import parse
 
+logger = logging.getLogger(__name__)
+
+
 def get_geolocation_data(ip_address: str) -> dict:
-    """
-    Obtém dados de geolocalização do IP
+    """Obtém dados de geolocalização do IP
 
     Opções de APIs (escolha uma):
     1. ipapi.co (grátis: 1000 req/dia)
@@ -50,8 +53,8 @@ def get_geolocation_data(ip_address: str) -> dict:
             cache.set(cache_key, result, 60 * 60 * 24)
             return result
 
-    except Exception as e:
-        print(f"Erro ao obter geolocalização: {e}")
+    except Exception:
+        logger.warning("Erro ao obter geolocalização", exc_info=True)
 
     return {}
 
@@ -91,8 +94,8 @@ def get_device_type(ua) -> str:
 
     if ua.is_mobile:
         return 'mobile'
-    elif ua.is_tablet:
+    if ua.is_tablet:
         return 'tablet'
-    elif ua.is_pc:
+    if ua.is_pc:
         return 'desktop'
     return 'unknown'

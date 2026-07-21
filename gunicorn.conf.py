@@ -56,7 +56,6 @@ def when_ready(server):
 
 def pre_fork(server, worker):
     """Chamado antes de cada worker ser criado."""
-    pass
 
 
 def post_fork(server, worker):

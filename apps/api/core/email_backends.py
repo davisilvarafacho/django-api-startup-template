@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from email.mime.base import MIMEBase
 
-import resend
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.core.mail.backends.base import BaseEmailBackend
+
+import resend
 
 
 class ResendEmailBackend(BaseEmailBackend):

@@ -8,13 +8,14 @@ from io import BytesIO
 from pathlib import PurePosixPath
 from urllib.parse import quote
 
-from b2sdk.v2 import B2Api, B2HttpApiConfig, InMemoryAccountInfo
-from b2sdk.v2.exception import B2Error, FileNotPresent
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.core.files.base import File
 from django.core.files.storage import Storage
 from django.utils.deconstruct import deconstructible
+
+from b2sdk.v2 import B2Api, B2HttpApiConfig, InMemoryAccountInfo
+from b2sdk.v2.exception import B2Error, FileNotPresent
 
 
 @deconstructible

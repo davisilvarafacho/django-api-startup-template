@@ -32,4 +32,4 @@ class AuthTokenSerializer(BaseModelSerpySerializer):
         """Você pode estender para guardar info do dispositivo."""
         # Por padrão, Knox não guarda isso
         # Veja implementação alternativa abaixo
-        return None
+        return
