@@ -1,15 +1,16 @@
 import os
 import pathlib
+import sys
 import warnings
 
 from django.core.management.utils import get_random_secret_key
 from django.utils.translation import gettext_lazy as _
 
 import sentry_sdk
-from threadlocals.threadlocals import get_request_variable
 
+from api.configure_enviroment import configure_enviroment
 from libs.serpy.mp import *
-from utils.env import get_bool_from_env, get_env_var
+from utils.env import get_bool_from_env, get_env_var, get_list_from_env
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
 
@@ -25,6 +26,19 @@ IN_PRODUCTION = ENVIROMENT == "production"
 
 EXECUTION = get_env_var("DJANGO_EXECUTION_MODE")
 
+# Ambiente efetivo usado para carregar apps/middlewares/storages específicos.
+# Sempre resolve para um valor suportado por `configure_enviroment`.
+TESTING = "pytest" in sys.modules or "test" in sys.argv
+
+if TESTING:
+    CONFIG_ENVIRONMENT = "test"
+elif IN_PRODUCTION:
+    CONFIG_ENVIRONMENT = "production"
+else:
+    CONFIG_ENVIRONMENT = "development"
+
+ENV_MIDDLEWARES, ENV_APPS, ENV_STORAGES = configure_enviroment(CONFIG_ENVIRONMENT)
+
 
 if not SECRET_KEY and not IN_PRODUCTION:
     warnings.warn("'SECRET_KEY' não foi configurada, using a random temporary key.", stacklevel=2)
@@ -34,40 +48,26 @@ if not SECRET_KEY and not IN_PRODUCTION:
 if IN_PRODUCTION:
 
     def before_send(event, hint):
-        token = get_request_variable("token")
-
-        if "request" in event and "headers" in event["request"]:
-            event["request"]["headers"]["Authorization"] = token
-
-        event.setdefault("extra", {})
-        event["extra"]["token"] = token
+        # Nunca enviar o token de autenticação para o Sentry.
+        headers = event.get("request", {}).get("headers")
+        if headers:
+            headers.pop("Authorization", None)
 
         return event
 
     sentry_sdk.init(
         dsn=get_env_var("SENTRY_DSN"),
         environment=ENVIROMENT,
-        traces_sample_rate=1.0,
-        profiles_sample_rate=1.0,
+        traces_sample_rate=0.1,
+        profiles_sample_rate=0.1,
         send_default_pii=True,
         before_send=before_send,
     )
 
 
-ALLOWED_HOSTS = [
-    # development
-    "127.0.0.1",
-    "localhost",
-    "191.101.234.208",
-    # production
-]
+ALLOWED_HOSTS = get_list_from_env("DJANGO_ALLOWED_HOSTS", ["127.0.0.1", "localhost"])
 
-CSRF_TRUSTED_ORIGINS = [
-    # development
-    "http://127.0.0.1:8000",
-    "http://localhost:8000",
-    # production
-]
+CSRF_TRUSTED_ORIGINS = get_list_from_env("DJANGO_CSRF_TRUSTED_ORIGINS", ["http://127.0.0.1:8000", "http://localhost:8000"])
 
 INTERNAL_IPS = [
     "127.0.0.1",
@@ -92,23 +92,17 @@ DJANGO_APPS = [
     "django.contrib.staticfiles",
 ]
 
+# Apps agnósticas de ambiente. As específicas de dev/prod/test são adicionadas
+# por `configure_enviroment` (ver api/configure_enviroment.py).
 LIBS_APPS = [
     "auditlog",
-    "cachalot",  # PRODUCTION ONLY
     "corsheaders",
-    "django_extensions",
+    "django_celery_beat",
     "django_filters",
-    "debug_toolbar",  # DEVELOPMENT ONLY
-    "drf_api_logger",
     "drf_spectacular",
     "django_scalar",
-    "hijack",  # DEVELOPMENT ONLY
-    "hijack.contrib.admin",  # DEVELOPMENT ONLY
     "knox",
     "rest_framework",
-    "dbbackup",  # PRODUCTION ONLY
-    "silk",  # DEVELOPMENT ONLY
-    "zeal",  # DEVELOPMENT ONLY
 ]
 
 BASE_APPS = [
@@ -118,9 +112,11 @@ BASE_APPS = [
     "apps.usuarios",
 ]
 
-INSTALLED_APPS = LIBS_APPS + DJANGO_APPS + BASE_APPS
+INSTALLED_APPS = LIBS_APPS + DJANGO_APPS + BASE_APPS + ENV_APPS
 
 
+# Middlewares agnósticos de ambiente. Os específicos são adicionados ao final
+# por `configure_enviroment` (ver api/configure_enviroment.py).
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.middleware.gzip.GZipMiddleware",
@@ -134,13 +130,7 @@ MIDDLEWARE = [
     "threadlocals.middleware.ThreadLocalMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "auditlog.middleware.AuditlogMiddleware",
-    "debug_toolbar.middleware.DebugToolbarMiddleware",
-    "zeal.middleware.zeal_middleware",  # DEVELOPMENT ONLY
-    "django_cprofile_middleware.middleware.ProfilerMiddleware",  # DEVELOPMENT ONLY
-    "silk.middleware.SilkyMiddleware",  # DEVELOPMENT ONLY
-    "drf_api_logger.middleware.api_logger_middleware.APILoggerMiddleware",  # DEVELOPMENT ONLY
-    "hijack.middleware.HijackUserMiddleware",  # DEVELOPMENT ONLY
-]
+] + ENV_MIDDLEWARES
 
 
 ROOT_URLCONF = "api.urls"
@@ -168,36 +158,28 @@ WSGI_APPLICATION = "api.wsgi.application"
 
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": os.path.join(BASE_DIR, "db.sqlite3"),
+        "ENGINE": "django.db.backends.postgresql",
+        "HOST": get_env_var("DATABASE_HOST"),
+        "NAME": get_env_var("DATABASE_NAME"),
+        "USER": get_env_var("DATABASE_USER"),
+        "PASSWORD": get_env_var("DATABASE_PASSWORD"),
+        "PORT": get_env_var("DATABASE_PORT"),
+        "CONN_MAX_AGE": 60 * 60 * 3,  # 3 horas
+        "CONN_HEALTH_CHECKS": True,
     },
     "logging": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": os.path.join(BASE_DIR, "logging_db.sqlite3"),
     },
-    # postgresql
-    # "default": {
-    #     "ENGINE": "django.db.backends.postgresql",
-    #     "HOST": get_env_var("DATABASE_HOST"),
-    #     "NAME": get_env_var("DATABASE_NAME"),
-    #     "USER": get_env_var("DATABASE_USER"),
-    #     "PASSWORD": get_env_var("DATABASE_PASSWORD"),
-    #     "PORT": get_env_var("DATABASE_PORT"),
-    #     "CONN_MAX_AGE": 60 * 60 * 3,  # 3 hours
-    # },
 }
 
 
+# `staticfiles` é agnóstico; `default` e `dbbackup` vêm de `configure_enviroment`.
 STORAGES = {
-    "default": {
-        "BACKEND": "apps.api.core.b2_storage.BackblazeB2Storage",
-    },
     "staticfiles": {
         "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
     },
-    "dbbackup": {
-        "BACKEND": "apps.api.core.b2_storage.BackblazeB2Storage",
-    },
+    **ENV_STORAGES,
 }
 
 
@@ -440,6 +422,15 @@ REST_FRAMEWORK = {
         "rest_framework.filters.SearchFilter",
         "django_filters.rest_framework.DjangoFilterBackend",
     ],
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "100/hour",
+        "user": "1000/hour",
+        "auth": "10/min",
+    },
     "DEFAULT_VERSIONING_CLASS": "rest_framework.versioning.NamespaceVersioning",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "TEST_REQUEST_DEFAULT_FORMAT": "json",
@@ -484,3 +475,65 @@ DRF_API_LOGGER_DEFAULT_DATABASE = "logging"
 DBBACKUP_MEDIA_PATH = "backups/"
 
 DBBACKUP_DATE_FORMAT = "%d/%m/%Y_%H%M%S"
+
+
+# redis
+REDIS_HOST = get_env_var("REDIS_HOST") or "127.0.0.1"
+
+REDIS_PORT = get_env_var("REDIS_PORT") or "6379"
+
+REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}"
+
+
+# cache
+# Em testes, cache em memória para não exigir Redis rodando.
+if TESTING:
+    CACHES = {
+        "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
+        "cachalot": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
+    }
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": f"{REDIS_URL}/1",
+            "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
+        },
+        # Cache dedicado do cachalot (ver CACHALOT_CACHE abaixo).
+        "cachalot": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": f"{REDIS_URL}/3",
+            "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
+        },
+    }
+
+# cachalot precisa de um cache COMPARTILHADO entre processos (Redis) para
+# invalidar corretamente. Com LocMemCache (por-processo), cada worker do
+# gunicorn mantém seu próprio cache e a invalidação disparada em um worker não
+# limpa os demais — causa clássica de dado "velho" servido a clientes.
+# Obs.: escritas fora do ORM (SQL cru, outro serviço no mesmo banco, triggers)
+# continuam invisíveis ao cachalot; use CACHALOT_UNCACHABLE_TABLES nesses casos.
+CACHALOT_CACHE = "cachalot"
+
+
+# celery
+CELERY_BROKER_URL = get_env_var("CELERY_BROKER_URL") or f"{REDIS_URL}/0"
+
+CELERY_RESULT_BACKEND = get_env_var("CELERY_RESULT_BACKEND") or f"{REDIS_URL}/2"
+
+CELERY_TIMEZONE = TIME_ZONE
+
+CELERY_TASK_TRACK_STARTED = True
+
+CELERY_TASK_TIME_LIMIT = 60 * 30  # hard limit: 30 min
+
+CELERY_TASK_SOFT_TIME_LIMIT = 60 * 25  # soft limit: 25 min
+
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+
+CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+
+# Em testes, executa as tasks de forma síncrona e propaga exceções.
+CELERY_TASK_ALWAYS_EAGER = TESTING
+
+CELERY_TASK_EAGER_PROPAGATES = TESTING

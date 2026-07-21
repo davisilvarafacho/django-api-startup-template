@@ -32,6 +32,7 @@ def configure_production_environment():
 
     prod_apps = [
         "cachalot",
+        "dbbackup",
     ]
 
     prod_storages = {
