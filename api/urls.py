@@ -5,7 +5,6 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 
-from debug_toolbar.toolbar import debug_toolbar_urls
 from django_scalar.views import scalar_viewer
 from drf_spectacular.views import SpectacularAPIView
 
@@ -40,6 +39,9 @@ urlpatterns = [
 ]
 
 if settings.IN_DEVELOPMENT:
+    # Import local: debug_toolbar só está instalado no ambiente de desenvolvimento.
+    from debug_toolbar.toolbar import debug_toolbar_urls
+
     urlpatterns.append(path("health/", health_check))
     urlpatterns.append(path("sentry-error/", lambda request: 1 / 0))
 
