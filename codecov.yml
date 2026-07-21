@@ -1,0 +1,14 @@
+coverage:
+  status:
+    project:
+      default:
+        # Não bloqueia enquanto a base de testes cresce; troque para um alvo (ex.: 70%) depois.
+        informational: true
+    patch:
+      default:
+        # Código NOVO em um PR precisa de 80% de cobertura (gate não-retroativo).
+        target: 80%
+
+comment:
+  layout: "reach, diff, files"
+  require_changes: true
