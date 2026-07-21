@@ -1,5 +1,6 @@
 import warnings
 
+from django.core.cache import cache
 from django.db.models import ProtectedError
 
 from rest_framework import status
@@ -97,6 +98,30 @@ class UtilsViewSetMixin:
         aditional_context = self.get_aditional_serializer_context()
         return {"action": self.action, "token": get_request_variable("token"), **context, **aditional_context}
 
+    # ---- cache ----
+    # Namespace versionado por modelo. As views que cacheiam resposta com TTL
+    # devem montar a chave com `build_cache_key(...)`; a action `invalidate_cache`
+    # vira a versão do namespace e torna todas as chaves antigas inalcançáveis
+    # (invalidação em massa O(1), sem depender de `delete_pattern`).
+
+    def get_cache_namespace(self):
+        model = self.queryset.model
+        return f"viewcache:{model._meta.app_label}.{model._meta.model_name}"
+
+    def get_cache_version(self):
+        return cache.get_or_set(f"{self.get_cache_namespace()}:version", 1, None)
+
+    def build_cache_key(self, *parts):
+        suffix = ":".join(str(part) for part in parts)
+        return f"{self.get_cache_namespace()}:{self.get_cache_version()}:{suffix}"
+
+    def bump_cache_version(self):
+        version_key = f"{self.get_cache_namespace()}:version"
+        try:
+            cache.incr(version_key)
+        except ValueError:
+            cache.set(version_key, 2, None)
+
 
 class GenericBaseViewSet(UtilsViewSetMixin, GenericViewSet):
     pass
@@ -111,6 +136,7 @@ class BaseModelViewSet(UtilsViewSetMixin, ModelViewSet):
     ordering_fields = []
     extra_permissions = {}
     has_ativo_field = True
+    cache_timeout = 60  # TTL padrão (segundos) para caches deste viewset
 
     def perform_create(self, serializer, **overwrite):
         return serializer.save(**overwrite)
@@ -186,6 +212,16 @@ class BaseModelViewSet(UtilsViewSetMixin, ModelViewSet):
     @action(detail=True, methods=["get"])
     def lookup(self, request, pk=None):
         return Response(status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    @action(methods=["post"], detail=False)
+    def invalidate_cache(self, request, *args, **kwargs):
+        """Invalida (flush) todo o cache versionado deste recurso.
+
+        O cache com TTL expira sozinho; este endpoint força o frescor imediato
+        virando a versão do namespace do viewset.
+        """
+        self.bump_cache_version()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     if has_ativo_field:
         @action(methods=["get"], detail=True)

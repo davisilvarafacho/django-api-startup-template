@@ -19,6 +19,7 @@ class CustomDjangoModelPermissions(DjangoModelPermissions):
         "ativar": ["%(app_label)s.ativar_inativar_%(model_name)s"],
         "inativar": ["%(app_label)s.ativar_inativar_%(model_name)s"],
         "lookup": ["%(app_label)s.add_%(model_name)s"],
+        "invalidate_cache": ["%(app_label)s.change_%(model_name)s"],
     }
 
     def is_action(self, request):
