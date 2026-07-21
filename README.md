@@ -55,3 +55,41 @@ RESEND_FROM_EMAIL="Minha API <nao-responda@exemplo.com>"
 ```
 
 O backend suporta mensagens texto, HTML (`EmailMultiAlternatives`), cópia, cópia oculta, `reply_to`, cabeçalhos extras e anexos comuns do Django.
+
+## Infraestrutura local (Postgres + Redis + Celery)
+
+O banco padrão passou a ser **PostgreSQL** e o cache/broker usa **Redis**. Para
+subir a infra local:
+
+```bash
+cp .env.example .env   # e preencha DATABASE_* / REDIS_*
+docker compose up -d db redis
+uv run python manage.py migrate
+uv run python manage.py runserver
+```
+
+Subir a stack completa (web + worker + beat) em containers:
+
+```bash
+docker compose up --build
+```
+
+### Celery
+
+- Worker: `celery -A api worker -l info`
+- Beat (agendador via banco): `celery -A api beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler`
+- Em testes, as tasks rodam de forma síncrona (`CELERY_TASK_ALWAYS_EAGER`).
+
+### Cache
+
+- `default` (Redis db 1): cache de aplicação e throttling do DRF.
+- `cachalot` (Redis db 3): cache **compartilhado** do django-cachalot — necessário
+  para invalidação correta entre workers do gunicorn.
+- `BaseModelViewSet` expõe `build_cache_key(...)` para cachear respostas com TTL e
+  a action `POST .../invalidate_cache/` para flush manual (invalidação O(1) por
+  versão de namespace).
+
+### Throttling
+
+Limites padrão do DRF: `anon` 100/h, `user` 1000/h. O escopo `auth` (10/min) está
+reservado para endpoints de login/reset.
