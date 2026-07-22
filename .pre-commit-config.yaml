@@ -1,5 +1,6 @@
-# Instale com: uv run pre-commit install
+# Instale com: uv run pre-commit install  (instala os hooks pre-commit E commit-msg)
 # Normalize tudo uma vez: uv run pre-commit run --all-files
+default_install_hook_types: [pre-commit, commit-msg]
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -18,3 +19,10 @@ repos:
       - id: ruff
         args: [--fix]
       - id: ruff-format
+
+  # Valida a mensagem de commit contra Conventional Commits.
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v4.13.9
+    hooks:
+      - id: commitizen
+        stages: [commit-msg]

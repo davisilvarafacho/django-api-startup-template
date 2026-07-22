@@ -211,6 +211,7 @@ fail_under = 0
 [dependency-groups]
 dev = [
     "bandit>=1.9.4",
+    "commitizen>=4.13.9",
     "django-stubs>=6.0.7",
     "factory-boy>=3.3.3",
     "mypy>=2.3.0",
@@ -218,4 +219,17 @@ dev = [
     "pre-commit>=4.6.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.15.22",
+]
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version_provider = "pep621"          # fonte da verdade = [project] version
+tag_format = "v$version"
+version_scheme = "semver"
+major_version_zero = true            # em 0.x, breaking change vira minor (não 1.0.0)
+update_changelog_on_bump = true
+changelog_incremental = true
+# Arquivos extra onde a versão é espelhada (pyproject é tratado pelo provider pep621).
+version_files = [
+    "api/settings.py:\"VERSION\"",
 ]
