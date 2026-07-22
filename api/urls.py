@@ -19,7 +19,7 @@ from apps.api.core.status_handlers import (
 
 apps_urls = [
     path("", include(app + ".urls"))
-    for app in settings.BASE_APPS
+    for app in settings.BUSINESS_APPS
     if os.path.exists(os.path.join(settings.BASE_DIR, app.replace(".", "/"), "urls.py"))
 ]
 

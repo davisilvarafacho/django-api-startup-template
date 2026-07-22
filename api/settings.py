@@ -76,7 +76,7 @@ INTERNAL_IPS = [
 
 SITE_ID = 1
 
-ADMINS = [("Davi Silva Rafacho", "rafacho@zettabyte.tech")]
+ADMINS = []
 
 MANAGERS = ADMINS
 
@@ -105,14 +105,14 @@ LIBS_APPS = [
     "rest_framework",
 ]
 
-BASE_APPS = [
+BUSINESS_APPS = [
     "apps.api.autenticacao",
     "apps.api.base",
     "apps.api.core",
     "apps.usuarios",
 ]
 
-INSTALLED_APPS = LIBS_APPS + DJANGO_APPS + BASE_APPS + ENV_APPS
+INSTALLED_APPS = LIBS_APPS + DJANGO_APPS + BUSINESS_APPS + ENV_APPS
 
 
 # Middlewares agnósticos de ambiente. Os específicos são adicionados ao final
