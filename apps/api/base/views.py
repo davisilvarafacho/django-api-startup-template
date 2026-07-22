@@ -21,8 +21,8 @@ class UtilsViewSetMixin:
         base_permissions = {
             "grid": ["%(app_label)s.view_%(model_name)s"],
             "form": ["%(app_label)s.view_%(model_name)s"],
-            "ativar": ["%(app_label)s.ativar_inativar_%(model_name)s"],
-            "inativar": ["%(app_label)s.ativar_inativar_%(model_name)s"],
+            "ativar": ["%(app_label)s.can_toggle_%(model_name)s"],
+            "inativar": ["%(app_label)s.can_toggle_%(model_name)s"],
         }
 
         for permission in self.get_permissions():
