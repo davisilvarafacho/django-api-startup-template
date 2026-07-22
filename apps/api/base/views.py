@@ -1,6 +1,7 @@
 import warnings
 
 from django.core.cache import cache
+from django.db import transaction
 from django.db.models import ProtectedError
 
 from rest_framework import status
@@ -188,6 +189,47 @@ class BaseModelViewSet(UtilsViewSetMixin, ModelViewSet):
         self.perform_create(serializer)
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+    @action(methods=["patch"], detail=False)
+    def bulk_update(self, request):
+        """Atualiza vários registros de uma vez (parcial e atômico).
+
+        Espera uma lista de objetos, cada um contendo o campo `id` para identificar
+        a instância. Valida todos antes de salvar; se qualquer item falhar, nada é
+        persistido.
+        """
+        if not isinstance(request.data, list):
+            return Response(
+                {"mensagem": "Envie uma lista de objetos para atualizar."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        ids = [item.get("id") for item in request.data]
+        if not all(ids):
+            return Response(
+                {"mensagem": "Cada objeto deve conter o campo 'id'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        instances = {obj.pk: obj for obj in self.filter_queryset(self.get_queryset()).filter(pk__in=ids)}
+
+        serializers = []
+        for item in request.data:
+            instance = instances.get(item.get("id"))
+            if instance is None:
+                return Response(
+                    {"mensagem": f"Registro {item.get('id')} não encontrado."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            serializer = self.get_serializer(instance, data=item, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializers.append(serializer)
+
+        with transaction.atomic():
+            for serializer in serializers:
+                self.perform_update(serializer)
+
+        return Response([serializer.data for serializer in serializers], status=status.HTTP_200_OK)
 
     @action(methods=["get"], detail=True)
     def clonar(self, request, pk):
