@@ -1,0 +1,35 @@
+site_name: DRF Base API
+site_description: Base reutilizável para APIs Django REST Framework.
+site_url: https://github.com/forteplus/drf-base-api-project
+repo_url: https://github.com/forteplus/drf-base-api-project
+repo_name: forteplus/drf-base-api-project
+
+theme:
+  name: material
+  language: pt-BR
+  features:
+    - content.code.copy
+    - navigation.footer
+    - navigation.indexes
+    - navigation.sections
+    - search.suggest
+
+nav:
+  - Início: index.md
+  - Tutorial:
+      - Primeiro ambiente: tutorial/primeiro-ambiente.md
+  - Como fazer:
+      - Desenvolvimento local: how-to/desenvolvimento-local.md
+      - Publicar uma versão: how-to/publicar-versao.md
+  - Referência:
+      - API: reference/api.md
+      - Convenções: reference/convencoes.md
+      - Frameworks: frameworks.md
+      - Roadmap: ROADMAP.md
+      - Changelog: CHANGELOG.md
+      - Relatório da base: relatorio-base-gente-grande.md
+  - Explicações:
+      - Arquitetura: explanation/arquitetura.md
+  - ADRs:
+      - Índice: adr/index.md
+      - '0001 — Documentação Diátaxis': adr/0001-documentacao-diataxis.md

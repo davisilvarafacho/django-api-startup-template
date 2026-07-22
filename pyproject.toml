@@ -215,6 +215,7 @@ dev = [
     "django-stubs>=6.0.7",
     "factory-boy>=3.3.3",
     "mypy>=2.3.0",
+    "mkdocs-material>=9.7.1",
     "pip-audit>=2.10.1",
     "pre-commit>=4.6.1",
     "pytest-cov>=7.1.0",

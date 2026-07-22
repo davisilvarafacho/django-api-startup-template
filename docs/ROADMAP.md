@@ -6,7 +6,7 @@ com o que **já foi implementado** e o que está **planejado**, em ondas (batche
 **Legenda:** ✅ feito · ⏳ planejado · 🧠 brainstorm próprio antes de codar ·
 🔎 estudar antes · ⏸️ adiado
 
-_Atualizado em 2026-07-21._
+_Atualizado em 2026-07-22._
 
 ---
 
@@ -19,7 +19,7 @@ _Atualizado em 2026-07-21._
 | — | Endpoint de invalidação de cache | ✅ |
 | — | Endpoint global de lookup | ✅ |
 | Batch 3 | DevEx / CI | ✅ |
-| Batch 4 | Documentação & convenções | ⏳ |
+| Batch 4 | Documentação & convenções | ✅ |
 | Batch 5 | Autenticação & permissões | ⏳ |
 | Batch 6 | Multi-tenancy | ⏳ |
 | Batch 7 | Observabilidade | ⏳ |
@@ -63,17 +63,17 @@ _Atualizado em 2026-07-21._
 - **factory_boy** (`UsuarioFactory`) + testes DB-less (lookup, env).
 - Extras: app `configuracoes` removido; dívida de lint zerada; fix do import de `debug_toolbar` (quebrava test/prod).
 
+### Batch 4 — Documentação & convenções
+- Versionamento **SemVer** alinhado com `SPECTACULAR_SETTINGS["VERSION"]`.
+- **Conventional Commits** validados por commitlint no hook e na CI.
+- `CHANGELOG.md` no formato **Keep a Changelog**.
+- Portal **MkDocs + Material** organizado por **Diátaxis**.
+- **ADRs (MADR)** em `docs/adr/`.
+- Convenções de código explícitas em `.ai/CONVENTIONS.md`.
+
 ---
 
 ## ⏳ Planejado
-
-### Batch 4 — Documentação & convenções
-- Versionamento **SemVer** casado com `SPECTACULAR_SETTINGS["VERSION"]`.
-- **Conventional Commits** padronizados (+ commitlint).
-- Changelog no formato **Keep a Changelog**.
-- Docs com **MkDocs + Material** organizadas por **Diátaxis**.
-- **ADRs (MADR)** em `docs/adr/`.
-- Convenções de código explícitas (ex.: `r = f(); g(r)` em vez de `g(f())`) em `.ai/CONVENTIONS.md`.
 
 ### Batch 5 — Autenticação & permissões
 - App de integrações: proxy model de `knox.AuthToken` com campo `type` (1=token, 2=reset_password, 999=api_key).
