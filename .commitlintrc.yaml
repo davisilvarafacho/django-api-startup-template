@@ -1,0 +1,4 @@
+extends:
+  - '@commitlint/config-conventional'
+
+header-max-length: 100

@@ -4,6 +4,7 @@
 
 ```bash
 uv sync                       # instala dependências (inclui grupo dev)
+make docs                     # valida a documentação
 uv run pre-commit install     # ativa os hooks de pre-commit
 cp .env.example .env          # preencha DATABASE_* / REDIS_*
 docker compose up -d db redis # sobe Postgres + Redis
@@ -16,6 +17,7 @@ Atalhos no `Makefile` — rode `make help` para ver todos.
 
 - **Commits:** seguem [Conventional Commits](https://www.conventionalcommits.org)
   (`feat:`, `fix:`, `docs:`, `refactor:`, `chore:`, `test:`, `perf:`, `build:`, `ci:`).
+  O hook de `commit-msg` e a CI validam esse formato.
 - **Versionamento:** [SemVer](https://semver.org), casado com a versão do schema OpenAPI.
 - **Changelog:** formato [Keep a Changelog](https://keepachangelog.com).
 - **Lint/format:** `ruff` (via pre-commit). Rode `make lint` e `make format`.
@@ -33,5 +35,6 @@ Cobertura de código **novo** é exigida em 80% no PR (Codecov, gate não-retroa
 ## Antes de abrir o PR
 
 - `make lint` e `make test` verdes.
+- `make docs` verde.
 - `uv run python manage.py makemigrations --check --dry-run` sem migrações pendentes.
 - Preencha o template de PR.
