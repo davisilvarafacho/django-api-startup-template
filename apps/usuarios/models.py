@@ -6,7 +6,7 @@ from django.utils.translation import gettext_lazy as _
 
 from auditlog.registry import auditlog
 
-from apps.api.base.models import Base
+from apps.api.base.models import BaseGlobal
 
 
 class UsuarioManager(UserManager):
@@ -34,7 +34,7 @@ class UsuarioManager(UserManager):
         return self._create_user(email, password, **extra_fields)
 
 
-class Usuario(Base, AbstractUser):
+class Usuario(BaseGlobal, AbstractUser):
     username = None
     owner = None
 

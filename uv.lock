@@ -148,6 +148,15 @@ wheels = [
 ]
 
 [[package]]
+name = "backoff"
+version = "2.2.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/47/d7/5bbeb12c44d7c4f2fb5b56abce497eb5ed9f34d85701de869acedd602619/backoff-2.2.1.tar.gz", hash = "sha256:03f829f5bb1923180821643f8753b0502c3b682293992485b0eef2807afa5cba", size = 17001, upload-time = "2022-10-05T19:19:32.061Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/df/73/b6e24bd22e6720ca8ee9a85a0c4a2971af8497d8f3193fa05390cbd46e09/backoff-2.2.1-py3-none-any.whl", hash = "sha256:63579f9a0628e06278f7e47b7d7d5b6ce20dc65c5e96a6f3ca99a6adca0396e8", size = 15148, upload-time = "2022-10-05T19:19:30.546Z" },
+]
+
+[[package]]
 name = "backrefs"
 version = "7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -611,6 +620,15 @@ wheels = [
 ]
 
 [[package]]
+name = "distro"
+version = "1.9.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/fc/f8/98eea607f65de6527f8a2e8885fc8015d3e6f5775df186e443e0964a11c3/distro-1.9.0.tar.gz", hash = "sha256:2fa77c6fd8940f116ee1d6b94a2f90b13b5ea8d019b98bc8bafdcabcdd9bdbed", size = 60722, upload-time = "2023-12-24T09:54:32.31Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/12/b3/231ffd4ab1fc9d679809f356cebee130ac7daa00d6d6f3206dd4fd137e9e/distro-1.9.0-py3-none-any.whl", hash = "sha256:7bffd925d65168f85027d8da9af6bddab658135b840670a223589bc0c8ef02b2", size = 20277, upload-time = "2023-12-24T09:54:30.421Z" },
+]
+
+[[package]]
 name = "django"
 version = "5.2.8"
 source = { registry = "https://pypi.org/simple" }
@@ -748,6 +766,19 @@ wheels = [
 ]
 
 [[package]]
+name = "django-guardian"
+version = "3.3.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "django" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/88/89/0b0b268b158cd9155c1b49ebd1429a186228af359c84ab6fd74ecea572e4/django_guardian-3.3.2.tar.gz", hash = "sha256:f8edcf1576eb15d1593e23955693723ef351a7340667f9159e7bec786559c1ab", size = 110499, upload-time = "2026-06-08T12:02:39.643Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2a/80/5d3793ee277968dcc0c7e8a7752c9dc51d0fec632d9ab12229fa89172846/django_guardian-3.3.2-py3-none-any.whl", hash = "sha256:d5245d6be77a6c632f5b0c739221a44e6469dfa4925c75653ea49cec388e6765", size = 146962, upload-time = "2026-06-08T12:02:38.21Z" },
+]
+
+[[package]]
 name = "django-hijack"
 version = "3.7.4"
 source = { registry = "https://pypi.org/simple" }
@@ -798,6 +829,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ba/7e/6ef520fbfa0cb902fe32c6f921426b1dcfa50cb2471a0ddca31ba770fa72/django_rest_knox-5.0.2.tar.gz", hash = "sha256:f283622bcf5d28a6a0203845c065d06c7432efa54399ae32070c61ac03af2d6f", size = 16292, upload-time = "2024-09-30T21:21:07.606Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/13/29/09468c086fd19f34b00a9698ee9cc1864dfae8c171be140657b965577472/django_rest_knox-5.0.2-py3-none-any.whl", hash = "sha256:694da5d0ad6eb3edbfd7cdc8d69c089fc074e6b0e548e00ff2750bf2fdfadb6f", size = 14960, upload-time = "2024-09-30T21:21:04.896Z" },
+]
+
+[[package]]
+name = "django-rls"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "django" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/31/bf/d991f4f63dbdfaada0633d91711536ff0e2325cc8ac33e3deca02e238796/django_rls-2.0.0.tar.gz", hash = "sha256:d753e3d92a870910a5a443a76ccc8f79905218f438a04bea5720f06558295311", size = 23465, upload-time = "2026-07-13T22:14:13.002Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ba/ab/8baf8140e1053debf869958beef3bf21b7fcb61048e182ecbaf92ce8585c/django_rls-2.0.0-py3-none-any.whl", hash = "sha256:7b023827c62936878fe2c106e3c084b9a7b0680f7020511bc66abce2fd7cb1e7", size = 27539, upload-time = "2026-07-13T22:14:11.627Z" },
 ]
 
 [[package]]
@@ -944,25 +987,20 @@ dependencies = [
     { name = "django-cachalot" },
     { name = "django-celery-beat" },
     { name = "django-cors-headers" },
-    { name = "django-cprofile-middleware" },
     { name = "django-dbbackup" },
-    { name = "django-debug-toolbar" },
-    { name = "django-extensions" },
     { name = "django-filter" },
+    { name = "django-guardian" },
     { name = "django-hijack" },
     { name = "django-import-export" },
     { name = "django-redis" },
     { name = "django-rest-knox" },
+    { name = "django-rls" },
     { name = "django-scalar" },
-    { name = "django-silk" },
     { name = "django-threadlocals" },
     { name = "django-unfold" },
-    { name = "django-zeal" },
     { name = "djangorestframework" },
-    { name = "drf-api-logger" },
     { name = "drf-spectacular" },
     { name = "exceptiongroup" },
-    { name = "faker" },
     { name = "gprof2dot" },
     { name = "gunicorn" },
     { name = "h11" },
@@ -976,16 +1014,16 @@ dependencies = [
     { name = "packaging" },
     { name = "pillow" },
     { name = "pluggy" },
+    { name = "posthog" },
     { name = "psycopg2-binary" },
     { name = "pygments" },
-    { name = "pytest" },
-    { name = "pytest-django" },
     { name = "python-dateutil" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "redis" },
     { name = "requests" },
     { name = "resend" },
+    { name = "rules" },
     { name = "sentry-sdk" },
     { name = "serpy" },
     { name = "six" },
@@ -1007,14 +1045,30 @@ dependencies = [
 dev = [
     { name = "bandit" },
     { name = "commitizen" },
+    { name = "django-cprofile-middleware" },
+    { name = "django-debug-toolbar" },
+    { name = "django-extensions" },
+    { name = "django-silk" },
     { name = "django-stubs" },
+    { name = "django-zeal" },
+    { name = "drf-api-logger" },
     { name = "factory-boy" },
+    { name = "faker" },
     { name = "mkdocs-material" },
     { name = "mypy" },
     { name = "pip-audit" },
     { name = "pre-commit" },
+    { name = "pytest" },
     { name = "pytest-cov" },
+    { name = "pytest-django" },
     { name = "ruff" },
+]
+test = [
+    { name = "factory-boy" },
+    { name = "faker" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-django" },
 ]
 
 [package.metadata]
@@ -1034,25 +1088,20 @@ requires-dist = [
     { name = "django-cachalot", specifier = "==2.8.0" },
     { name = "django-celery-beat", specifier = ">=2.9.0" },
     { name = "django-cors-headers", specifier = "==4.9.0" },
-    { name = "django-cprofile-middleware", specifier = "==1.0.5" },
     { name = "django-dbbackup", specifier = "==5.0.1" },
-    { name = "django-debug-toolbar", specifier = "==6.1.0" },
-    { name = "django-extensions", specifier = "==4.1" },
     { name = "django-filter", specifier = "==25.2" },
+    { name = "django-guardian", specifier = ">=3.3.2" },
     { name = "django-hijack", specifier = "==3.7.4" },
     { name = "django-import-export", specifier = "==4.3.14" },
     { name = "django-redis", specifier = ">=7.0.0" },
     { name = "django-rest-knox", specifier = "==5.0.2" },
+    { name = "django-rls", specifier = ">=2.0.0" },
     { name = "django-scalar", specifier = "==0.2.0" },
-    { name = "django-silk", specifier = "==5.4.3" },
     { name = "django-threadlocals", specifier = "==0.10" },
     { name = "django-unfold", specifier = "==0.72.0" },
-    { name = "django-zeal", specifier = "==2.0.4" },
     { name = "djangorestframework", specifier = "==3.16.1" },
-    { name = "drf-api-logger", specifier = "==1.1.21" },
     { name = "drf-spectacular", specifier = "==0.30.0" },
     { name = "exceptiongroup", specifier = "==1.3.0" },
-    { name = "faker", specifier = "==38.2.0" },
     { name = "gprof2dot", specifier = "==2025.4.14" },
     { name = "gunicorn", specifier = "==23.0.0" },
     { name = "h11", specifier = "==0.16.0" },
@@ -1066,16 +1115,16 @@ requires-dist = [
     { name = "packaging", specifier = "==25.0" },
     { name = "pillow", specifier = "==12.0.0" },
     { name = "pluggy", specifier = "==1.6.0" },
+    { name = "posthog", specifier = ">=7.28.0" },
     { name = "psycopg2-binary", specifier = "==2.9.11" },
     { name = "pygments", specifier = "==2.19.2" },
-    { name = "pytest", specifier = "==9.0.1" },
-    { name = "pytest-django", specifier = "==4.11.1" },
     { name = "python-dateutil", specifier = "==2.9.0.post0" },
     { name = "python-dotenv", specifier = "==1.2.1" },
     { name = "pyyaml", specifier = "==6.0.3" },
     { name = "redis", specifier = ">=8.0.1" },
     { name = "requests", specifier = "==2.32.5" },
     { name = "resend", specifier = "==2.34.0" },
+    { name = "rules", specifier = ">=3.5" },
     { name = "sentry-sdk", specifier = "==2.44.0" },
     { name = "serpy", specifier = "==0.3.1" },
     { name = "six", specifier = "==1.17.0" },
@@ -1097,14 +1146,30 @@ requires-dist = [
 dev = [
     { name = "bandit", specifier = ">=1.9.4" },
     { name = "commitizen", specifier = ">=4.13.9" },
+    { name = "django-cprofile-middleware", specifier = "==1.0.5" },
+    { name = "django-debug-toolbar", specifier = "==6.1.0" },
+    { name = "django-extensions", specifier = "==4.1" },
+    { name = "django-silk", specifier = "==5.4.3" },
     { name = "django-stubs", specifier = ">=6.0.7" },
+    { name = "django-zeal", specifier = "==2.0.4" },
+    { name = "drf-api-logger", specifier = "==1.1.21" },
     { name = "factory-boy", specifier = ">=3.3.3" },
+    { name = "faker", specifier = "==38.2.0" },
     { name = "mkdocs-material", specifier = ">=9.7.1" },
     { name = "mypy", specifier = ">=2.3.0" },
     { name = "pip-audit", specifier = ">=2.10.1" },
     { name = "pre-commit", specifier = ">=4.6.1" },
+    { name = "pytest", specifier = "==9.0.1" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
+    { name = "pytest-django", specifier = "==4.11.1" },
     { name = "ruff", specifier = ">=0.15.22" },
+]
+test = [
+    { name = "factory-boy", specifier = ">=3.3.3" },
+    { name = "faker", specifier = "==38.2.0" },
+    { name = "pytest", specifier = "==9.0.1" },
+    { name = "pytest-cov", specifier = ">=7.1.0" },
+    { name = "pytest-django", specifier = "==4.11.1" },
 ]
 
 [[package]]
@@ -2082,6 +2147,21 @@ wheels = [
 ]
 
 [[package]]
+name = "posthog"
+version = "7.28.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "backoff" },
+    { name = "distro" },
+    { name = "requests" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/36/f0/3af875ac3fd5863ed4874c9618d85eab3f7fd24b395827d99da0ef90aca6/posthog-7.28.0.tar.gz", hash = "sha256:9e048dee58f27373db622c0744be30c1a2b7f1df31049956d6341c9646fb3833", size = 356360, upload-time = "2026-07-21T20:44:18.687Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1c/8b/d41d98e64bd6ce650d45690cffc718274b1eda65e3bfd79575a1cf95b45c/posthog-7.28.0-py3-none-any.whl", hash = "sha256:4cff10062807bbd8ae6ec2804a71584831a75b390ce7ba3e736bf4cc0fb25d28", size = 425147, upload-time = "2026-07-21T20:44:16.904Z" },
+]
+
+[[package]]
 name = "pre-commit"
 version = "4.6.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2732,6 +2812,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/4d/76/3f72d8fc38c1cb77b38c56a70da9d0c17700cc1cc50f9649c9d3c8f5ba71/ruff-0.15.22-py3-none-win32.whl", hash = "sha256:e5ba0e4a13fd14abbed2a77b517a3911290c6c6c59ef67784328d1668fab76cf", size = 10789165, upload-time = "2026-07-16T15:14:04.16Z" },
     { url = "https://files.pythonhosted.org/packages/cb/46/4965251734c2b6fcdca1b1b187d20bcac3af0ee5b083b89c910bb961ce3a/ruff-0.15.22-py3-none-win_amd64.whl", hash = "sha256:9be63ba1eb936acd2d1342fb8337c356353706fce233b2a15a09a97037e6acde", size = 11938297, upload-time = "2026-07-16T15:14:07.316Z" },
     { url = "https://files.pythonhosted.org/packages/57/c9/e69b1ff4c8b69093ef08b8919ab767af0569666865b39c30a8795d88d3c6/ruff-0.15.22-py3-none-win_arm64.whl", hash = "sha256:e1168075b72158510839f250027659cdd78476f40507dd517892304c41318661", size = 11298172, upload-time = "2026-07-16T15:14:10.51Z" },
+]
+
+[[package]]
+name = "rules"
+version = "3.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f7/36/918cf4cc9fd0e38bb9310b2d1a13ae6ebb2b5732d56e7de6feb4a992a6ed/rules-3.5.tar.gz", hash = "sha256:f01336218f4561bab95f53672d22418b4168baea271423d50d9e8490d64cb27a", size = 55504, upload-time = "2024-09-02T16:01:46.174Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ea/33/16213dd62ca8ce8749985318a966ac1300ab55c977b2d66632a45b405c99/rules-3.5-py2.py3-none-any.whl", hash = "sha256:0f00fc9ee448b3f82e9aff9334ab0c56c76dce4dfa14f1598f57969f1022acc0", size = 25658, upload-time = "2024-09-02T16:01:44.844Z" },
 ]
 
 [[package]]

@@ -6,6 +6,8 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 
 from auditlog.models import AuditlogHistoryField
+from django_rls.models import RLSModel
+from django_rls.policies import TenantPolicy
 from threadlocals.threadlocals import get_current_user
 
 
@@ -55,7 +57,14 @@ class AtivosManager(models.Manager):
         return super().get_queryset().filter(ativo=True)
 
 
-class Base(models.Model):
+class BaseGlobal(models.Model):
+    """Campos comuns **sem** isolamento por organização.
+
+    Use somente nos modelos de identidade/bootstrap, que precisam ser lidos
+    antes de existir contexto de tenant: `Organizacao`, `Vinculo`, `Convite` e
+    `Usuario`. Todo o resto deve herdar de `Base`.
+    """
+
     ativo = models.BooleanField(_("ativo"), default=True)
 
     data_criacao = models.DateField(_("data de criação"), auto_now_add=True)
@@ -176,3 +185,24 @@ class Base(models.Model):
 
     class Meta:
         abstract = True
+
+
+class Base(BaseGlobal, RLSModel):
+    """Base padrão: todo modelo de negócio é isolado por organização.
+
+    O FK `organizacao` e a policy de RLS são herdados por toda subclasse
+    concreta — o metaclass do django-rls propaga `rls_policies`. Multi-tenancy é
+    o **default**: esquecer de configurar algo resulta em ficar protegido, não
+    em vazar dados entre clientes.
+    """
+
+    organizacao = models.ForeignKey(
+        "organizacoes.Organizacao",
+        verbose_name=_("organização"),
+        on_delete=models.PROTECT,
+        related_name="+",
+    )
+
+    class Meta:
+        abstract = True
+        rls_policies = [TenantPolicy(name="isolamento_organizacao", tenant_field="organizacao")]

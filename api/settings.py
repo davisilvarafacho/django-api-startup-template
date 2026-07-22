@@ -99,16 +99,20 @@ LIBS_APPS = [
     "corsheaders",
     "django_celery_beat",
     "django_filters",
+    "django_rls",
     "drf_spectacular",
     "django_scalar",
+    "guardian",
     "knox",
     "rest_framework",
+    "rules.apps.AutodiscoverRulesConfig",
 ]
 
 BUSINESS_APPS = [
     "apps.api.autenticacao",
     "apps.api.base",
     "apps.api.core",
+    "apps.organizacoes",
     "apps.usuarios",
 ]
 
@@ -130,6 +134,10 @@ MIDDLEWARE = [
     "threadlocals.middleware.ThreadLocalMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "auditlog.middleware.AuditlogMiddleware",
+    "posthog.integrations.django.PosthogContextMiddleware",
+    # Deve ser o mais interno possível: abre a transação que envolve a request
+    # (necessária para o `SET LOCAL` do RLS).
+    "apps.organizacoes.middleware.OrganizacaoMiddleware",
 ] + ENV_MIDDLEWARES
 
 
@@ -158,7 +166,10 @@ WSGI_APPLICATION = "api.wsgi.application"
 
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.postgresql",
+        # Backend do django-rls: envolve o do Postgres e adiciona o suporte a
+        # ROW LEVEL SECURITY. Com o engine padrão as policies são silenciosamente
+        # ignoradas (apenas um warning) e o isolamento entre organizações NÃO acontece.
+        "ENGINE": "django_rls.backends.postgresql",
         "HOST": get_env_var("DATABASE_HOST"),
         "NAME": get_env_var("DATABASE_NAME"),
         "USER": get_env_var("DATABASE_USER"),
@@ -199,6 +210,30 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 AUTH_USER_MODEL = "usuarios.Usuario"
+
+
+# Autorização em camadas: `rules` (predicados por objeto, ex.: papel na
+# organização), o backend padrão do Django (permissions/groups) e o `guardian`
+# (permissões por objeto persistidas no banco).
+AUTHENTICATION_BACKENDS = [
+    "rules.permissions.ObjectPermissionBackend",
+    "django.contrib.auth.backends.ModelBackend",
+    "guardian.backends.ObjectPermissionBackend",
+]
+
+# Não criar o usuário anônimo do guardian (o modelo de usuário usa e-mail como
+# username e o isolamento por organização torna esse registro desnecessário).
+ANONYMOUS_USER_NAME = None
+
+
+# Row Level Security. O contexto é aplicado por `apps.organizacoes` com
+# `SET LOCAL`, seguro sob connection pool em transaction mode.
+DJANGO_RLS = {
+    # Falha alto ao consultar um modelo isolado sem contexto de organização,
+    # em vez de silenciosamente retornar zero linhas.
+    "REQUIRE_CONTEXT": True,
+    "AUDIT_LOG": IN_PRODUCTION,
+}
 
 
 LOGIN_REDIRECT_URL = "/admin/"
@@ -242,6 +277,12 @@ MEDIA_URL = "/media/"
 MEDIA_ROOT = os.path.join(BASE_DIR, "mediafiles")
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+
+# PostHog
+POSTHOG_PROJECT_TOKEN = get_env_var("POSTHOG_PROJECT_TOKEN")
+POSTHOG_HOST = get_env_var("POSTHOG_HOST") or "https://us.i.posthog.com"
+POSTHOG_DISABLED = get_bool_from_env("POSTHOG_DISABLED", False)
 
 
 RESEND_API_KEY = get_env_var("RESEND_API_KEY")

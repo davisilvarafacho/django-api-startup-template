@@ -1,0 +1,9 @@
+# Prometheus faz scrape do endpoint /metrics do Django (django-prometheus) no host.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: erp-backend
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8000"]   # Django via runserver/gunicorn no host

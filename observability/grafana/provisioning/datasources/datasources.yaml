@@ -1,0 +1,34 @@
+# Datasources auto-provisionados no Grafana (traces, logs, métricas correlacionados).
+apiVersion: 1
+datasources:
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki
+        filterByTraceID: true     # do span -> logs do mesmo trace
+      serviceMap:
+        datasourceUid: prometheus
+
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      derivedFields:
+        # extrai "trace=<id>" da linha de log e vira link clicável pro Tempo
+        - name: TraceID
+          matcherRegex: 'trace=(\w+)'
+          url: '${__value.raw}'
+          datasourceUid: tempo
+
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true

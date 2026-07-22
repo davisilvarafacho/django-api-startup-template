@@ -40,7 +40,7 @@ class RouteRegistry:
 
         routes = getattr(module, ATTR_NAME, None)
         if routes is None:
-            logger.debug(f"{app_name}.{FILE_NAME} existe mas não define {ATTR_NAME}. Ignorando.")
+            logger.debug("%s.%s existe mas não define %s. Ignorando.", app_name, FILE_NAME, ATTR_NAME)
             return
 
         if not isinstance(routes, (list, tuple)):

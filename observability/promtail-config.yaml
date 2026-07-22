@@ -1,0 +1,18 @@
+# Promtail lê os *.log montados em /var/log/erp (host ./logging) e envia ao Loki.
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: erp-backend
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: erp-backend
+          __path__: /var/log/erp/*.log

@@ -9,8 +9,10 @@ from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
+import posthog
 from knox.models import AuthToken, get_token_model
 from knox.views import LoginView as KnoxLoginView
+from posthog import capture, identify_context, new_context
 
 from .models import TokenMetaData
 from .serializers import AuthTokenSerializer as CustomAuthTokenSerializer
@@ -98,6 +100,20 @@ class LoginView(KnoxLoginView):
         # verifica se há comportamento suspeito
         self.check_suspicious_activity(user, metadata)
 
+        # PostHog: identifica o usuário e captura o evento de login
+        with new_context():
+            identify_context(str(user.pk))
+            posthog.tag('is_staff', user.is_staff)
+            posthog.tag('date_joined', user.date_joined.isoformat())
+            capture('user_logged_in', properties={
+                'device_type': metadata.device_type,
+                'os_name': metadata.os_name,
+                'country_code': metadata.country_code,
+                'app_version': metadata.app_version,
+                'is_suspicious': metadata.is_suspicious,
+                'risk_score': metadata.risk_score,
+            })
+
         # Adiciona informações do dispositivo na resposta
         response.data['device'] = {
             'type': metadata.device_type,
@@ -131,6 +147,16 @@ class LoginView(KnoxLoginView):
                     )
                     new_metadata.risk_score = 50
                     new_metadata.save()
+
+                    # PostHog: captura evento de login suspeito
+                    with new_context():
+                        identify_context(str(user.pk))
+                        capture('suspicious_login_detected', properties={
+                            'previous_country_code': old_token.country_code,
+                            'new_country_code': new_metadata.country_code,
+                            'risk_score': new_metadata.risk_score,
+                            'device_type': new_metadata.device_type,
+                        })
 
                     # aqui você pode enviar notificação ao usuário
                     # send_security_alert(user, new_metadata)
@@ -170,6 +196,12 @@ class AuthTokenViewSet(viewsets.ReadOnlyModelViewSet):
                 )
 
             token.delete()
+
+            # PostHog: captura revogação de token individual
+            with new_context():
+                identify_context(str(request.user.pk))
+                capture('token_revoked')
+
             return Response({"detail": "Token revogado com sucesso"}, status=status.HTTP_204_NO_CONTENT)
         except AuthToken.DoesNotExist:
             return Response({"detail": "Token não encontrado"}, status=status.HTTP_404_NOT_FOUND)
@@ -179,5 +211,12 @@ class AuthTokenViewSet(viewsets.ReadOnlyModelViewSet):
         current_digest = request.auth.digest if hasattr(request, "auth") else None
 
         deleted_count = self.get_queryset().exclude(digest=current_digest).delete()[0]
+
+        # PostHog: captura revogação de todos os tokens
+        with new_context():
+            identify_context(str(request.user.pk))
+            capture('all_tokens_revoked', properties={
+                'revoked_count': deleted_count,
+            })
 
         return Response({"detail": f"{deleted_count} token(s) revogado(s) com sucesso"})

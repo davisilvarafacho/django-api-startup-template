@@ -121,3 +121,8 @@ _Atualizado em 2026-07-22._
 ## ⏸️ Adiado
 - **LGPD** (bloco próprio): PII, retenção/expurgo, exportação, direito ao esquecimento, consentimento, scrub de PII.
 - Arquitetura de **plugins / integrações**.
+
+## Brainstorm do dev
+
+- Permissões/rules via plano
+- Checkout por seat e plano, default stripe - classe de abstração backend plugavel na frente - lib para conectar 5 ou mais providers de cara - stripe, assas, etc

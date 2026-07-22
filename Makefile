@@ -29,7 +29,7 @@ beat: ## Sobe o beat do Celery (agendador via banco)
 	uv run celery -A api beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
 
 test: ## Roda a suíte com cobertura
-	uv run pytest
+	uv run --group test pytest
 
 lint: ## Checa lint (ruff)
 	uv run ruff check .
