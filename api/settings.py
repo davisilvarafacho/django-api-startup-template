@@ -27,8 +27,8 @@ IN_PRODUCTION = ENVIROMENT == "production"
 
 EXECUTION = get_env_var("DJANGO_EXECUTION_MODE")
 
-# Ambiente efetivo usado para carregar apps/middlewares/storages específicos.
-# Sempre resolve para um valor suportado por `configure_enviroment`.
+# ambiente efetivo usado para carregar apps/middlewares/storages específicos.
+# sempre resolve para um valor suportado por `configure_enviroment`.
 TESTING = "pytest" in sys.modules or "test" in sys.argv
 
 if TESTING:
@@ -93,8 +93,6 @@ DJANGO_APPS = [
     "django.contrib.staticfiles",
 ]
 
-# Apps agnósticas de ambiente. As específicas de dev/prod/test são adicionadas
-# por `configure_enviroment` (ver api/configure_enviroment.py).
 LIBS_APPS = [
     "auditlog",
     "corsheaders",
@@ -122,8 +120,6 @@ BUSINESS_APPS = [
 INSTALLED_APPS = LIBS_APPS + DJANGO_APPS + BUSINESS_APPS + ENV_APPS
 
 
-# Middlewares agnósticos de ambiente. Os específicos são adicionados ao final
-# por `configure_enviroment` (ver api/configure_enviroment.py).
 MIDDLEWARE = [
     # Primeiro de todos: mede a request inteira, inclusive o tempo gasto pelos
     # demais middlewares.
@@ -200,7 +196,6 @@ DATABASES = {
 }
 
 
-# `staticfiles` é agnóstico; `default` e `dbbackup` vêm de `configure_enviroment`.
 STORAGES = {
     "staticfiles": {
         "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
@@ -339,7 +334,6 @@ B2_BUCKET_ID = get_env_var("BACKBLAZE_BUCKET_ID")
 # Prefixo opcional para todos os arquivos enviados ao bucket (ex.: "media").
 B2_LOCATION = get_env_var("BACKBLAZE_LOCATION", "")
 
-# URL pública opcional (domínio próprio/CDN). Sem ela, o SDK fornece a URL B2.
 B2_PUBLIC_BASE_URL = get_env_var("BACKBLAZE_PUBLIC_BASE_URL")
 
 
@@ -381,7 +375,7 @@ REST_FRAMEWORK = {
 }
 
 
-# OpenAPI / Scalar
+# openapi / scalar
 SPECTACULAR_SETTINGS = {
     "TITLE": "DRF Base API",
     "DESCRIPTION": "Documentação da API.",
@@ -433,7 +427,7 @@ REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}"
 
 
 # cache
-# Em testes, cache em memória para não exigir Redis rodando.
+# sm testes, cache em memória para não exigir Redis rodando.
 if TESTING:
     CACHES = {
         "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
@@ -457,8 +451,8 @@ else:
 # cachalot precisa de um cache COMPARTILHADO entre processos (Redis) para
 # invalidar corretamente. Com LocMemCache (por-processo), cada worker do
 # gunicorn mantém seu próprio cache e a invalidação disparada em um worker não
-# limpa os demais — causa clássica de dado "velho" servido a clientes.
-# Obs.: escritas fora do ORM (SQL cru, outro serviço no mesmo banco, triggers)
+# limpa os demais.
+# sbs.: escritas fora do ORM (SQL cru, outro serviço no mesmo banco, triggers)
 # continuam invisíveis ao cachalot; use CACHALOT_UNCACHABLE_TABLES nesses casos.
 CACHALOT_CACHE = "cachalot"
 
@@ -480,7 +474,7 @@ CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 
-# Em testes, executa as tasks de forma síncrona e propaga exceções.
+# sm testes, executa as tasks de forma síncrona e propaga exceções.
 CELERY_TASK_ALWAYS_EAGER = TESTING
 
 CELERY_TASK_EAGER_PROPAGATES = TESTING
