@@ -11,7 +11,10 @@ aqui é o que permite usar `SET LOCAL` mais adiante.
 """
 from django.db import transaction
 
+from django_rls.context import clear_rls_context
+
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
+from apps.organizacoes.context import CHAVE_TENANT
 
 
 class OrganizacaoMiddleware:
@@ -24,4 +27,11 @@ class OrganizacaoMiddleware:
         request.vinculo = None
 
         with transaction.atomic():
-            return self.get_response(request)
+            try:
+                return self.get_response(request)
+            finally:
+                # O `SET LOCAL` morre no commit, mas o rastreio em memória da lib
+                # não. Sem limpar, a próxima request na mesma thread herdaria a
+                # crença de que já existe contexto — e passaria pelo guard sem
+                # ter tenant algum aplicado no banco.
+                clear_rls_context({CHAVE_TENANT})

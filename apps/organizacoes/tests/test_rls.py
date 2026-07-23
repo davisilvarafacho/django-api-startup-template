@@ -18,6 +18,7 @@ import psycopg2
 import pytest
 
 from apps.api.base.models import Base
+from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.models import Organizacao
 
 PAPEL_TESTE = "rls_tester"
@@ -98,8 +99,13 @@ def cenario(ambiente_rls):
     org_a = Organizacao.objects.create(nome="Org A", slug="org-a")
     org_b = Organizacao.objects.create(nome="Org B", slug="org-b")
 
-    RegistroRLS.objects.create(organizacao=org_a, descricao="registro-a")
-    RegistroRLS.objects.create(organizacao=org_b, descricao="registro-b")
+    # Cada registro é criado sob o contexto da própria organização — o guard do
+    # queryset agora exige contexto explícito também para escrita.
+    with organizacao_atual_privilegiada(org_a.id):
+        RegistroRLS.objects.create(organizacao=org_a, descricao="registro-a")
+
+    with organizacao_atual_privilegiada(org_b.id):
+        RegistroRLS.objects.create(organizacao=org_b, descricao="registro-b")
 
     return org_a, org_b
 
@@ -121,3 +127,26 @@ def test_sem_contexto_nao_ve_nada(cenario):
 @pytest.mark.django_db(transaction=True)
 def test_contexto_de_organizacao_inexistente_nao_vaza(cenario):
     assert consultar_como_papel_comum(999_999) == []
+
+
+
+@pytest.mark.django_db(transaction=True)
+def test_orm_sem_contexto_falha_alto(cenario):
+    """Consultar um modelo isolado sem organização deve levantar, não devolver dados.
+
+    O RLS do banco não protege sozinho: a conexão do Django costuma ser dona da
+    tabela (e em teste é superusuária), e nesses casos as policies são ignoradas.
+    O guard do queryset é a rede que transforma o engano em erro visível.
+    """
+    from django_rls.exceptions import RLSError
+
+    with pytest.raises(RLSError):
+        RegistroRLS.objects.count()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_orm_com_contexto_enxerga_a_propria_organizacao(cenario):
+    org_a, _ = cenario
+
+    with organizacao_atual_privilegiada(org_a.id):
+        assert RegistroRLS.objects.count() >= 1
