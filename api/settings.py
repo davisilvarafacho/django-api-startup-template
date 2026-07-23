@@ -133,6 +133,9 @@ MIDDLEWARE = [
     "django.middleware.locale.LocaleMiddleware",
     "threadlocals.middleware.ThreadLocalMiddleware",
     "corsheaders.middleware.CorsMiddleware",
+    # Resolve o token antes dos middlewares que dependem de `request.user`
+    # (auditlog, PostHog, tenancy). Precisa vir depois do ThreadLocalMiddleware.
+    "apps.api.autenticacao.middleware.AuthenticationMiddleware",
     "auditlog.middleware.AuditlogMiddleware",
     "posthog.integrations.django.PosthogContextMiddleware",
     # Deve ser o mais interno possível: abre a transação que envolve a request
@@ -450,9 +453,10 @@ B2_PUBLIC_BASE_URL = get_env_var("BACKBLAZE_PUBLIC_BASE_URL")
 REST_FRAMEWORK = {
     "PAGE_SIZE": 30,
     "DEFAULT_PAGINATION_CLASS": "apps.api.core.pagination.CustomPagination",
+    # A autenticação real acontece no AuthenticationMiddleware; aqui o DRF apenas
+    # reaproveita o usuário já resolvido.
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "knox.auth.TokenAuthentication",
-        "apps.api.autenticacao.authentications.QueryParamTokenAuthentication",
+        "apps.api.autenticacao.authentications.PassthroughAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",

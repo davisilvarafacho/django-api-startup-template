@@ -12,6 +12,12 @@ class CoreConfig(AppConfig):
 
         import posthog
 
+        from .routes_registry import routes_registry
+
+        # Varre os BUSINESS_APPS atrás de `public_routes.PUBLIC_ROUTES`. Sem isso
+        # o AuthenticationMiddleware não sabe quais rotas dispensam token.
+        routes_registry.discover()
+
         posthog.api_key = settings.POSTHOG_PROJECT_TOKEN
         posthog.host = settings.POSTHOG_HOST
         posthog.disabled = settings.POSTHOG_DISABLED
