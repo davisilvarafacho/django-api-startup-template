@@ -18,6 +18,7 @@ from rest_framework.exceptions import AuthenticationFailed
 
 from knox.auth import TokenAuthentication
 
+from apps.api.core.route_markers import MARCADOR_PUBLICA, tem_marcador, view_do_path
 from apps.api.core.routes_registry import routes_registry
 
 from .authentications import QueryParamTokenAuthentication
@@ -55,7 +56,7 @@ class AuthenticationMiddleware:
             self.mark_public(request)
             return self.get_response(request)
 
-        if routes_registry.matches(path):
+        if self.is_public_route(path):
             logger.debug("Rota pública acessada: %s", path)
             self.mark_public(request)
             return self.get_response(request)
@@ -102,6 +103,14 @@ class AuthenticationMiddleware:
     @staticmethod
     def is_debug_route(path):
         return path.startswith(DEBUG_PREFIXES)
+
+    @staticmethod
+    def is_public_route(path):
+        """Rota pública por prefixo registrado ou por `@public` na view."""
+        if routes_registry.matches(path):
+            return True
+
+        return tem_marcador(view_do_path(path), MARCADOR_PUBLICA)
 
 
 class UpdateTokenLastUsedMiddleware:
