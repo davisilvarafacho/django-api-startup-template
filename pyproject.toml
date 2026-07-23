@@ -187,6 +187,9 @@ extend-exclude = ["*/migrations/*", "libs", "examples"]
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "api.settings"
 python_files = ["test_*.py", "*_test.py", "testing/python/*.py"]
+# O projeto de referência em examples/ tem a própria suíte e os próprios módulos;
+# coletá-la aqui só gera ModuleNotFoundError.
+norecursedirs = ["examples", ".git", ".venv", "node_modules", "site", "staticfiles"]
 addopts = "--cov --cov-report=term-missing --cov-report=xml"
 
 [tool.coverage.run]
