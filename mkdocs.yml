@@ -19,7 +19,10 @@ nav:
   - Tutorial:
       - Primeiro ambiente: tutorial/primeiro-ambiente.md
   - Como fazer:
+      - Fluxo de desenvolvimento: how-to/fluxo-de-desenvolvimento.md
       - Desenvolvimento local: how-to/desenvolvimento-local.md
+      - Observabilidade local: how-to/observabilidade-local.md
+      - Analytics com PostHog: how-to/analytics-posthog.md
       - Publicar uma versão: how-to/publicar-versao.md
   - Referência:
       - API: reference/api.md
@@ -30,6 +33,9 @@ nav:
       - Relatório da base: relatorio-base-gente-grande.md
   - Explicações:
       - Arquitetura: explanation/arquitetura.md
+      - Autenticação passthrough: explanation/autenticacao.md
   - ADRs:
       - Índice: adr/index.md
       - '0001 — Documentação Diátaxis': adr/0001-documentacao-diataxis.md
+      - '0002 — Logs estruturados e retenção': adr/0002-logs-estruturados-e-retencao.md
+      - '0003 — Feature flags': adr/0003-feature-flags.md
