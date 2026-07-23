@@ -52,7 +52,7 @@ dependencies = [
     "psycopg2-binary==2.9.11",
     "pygments==2.19.2",
     "python-dateutil==2.9.0.post0",
-    "python-dotenv==1.2.1",
+    "python-dotenv==1.2.2",
     "python-json-logger>=4.1.0",
     "pyyaml==6.0.3",
     "redis>=8.0.1",
