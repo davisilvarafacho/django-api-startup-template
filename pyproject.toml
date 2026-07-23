@@ -104,7 +104,7 @@ exclude = [
 [tool.ruff]
 target-version = "py310"
 line-length = 150
-extend-exclude = ["*/migrations/*", "libs"]
+extend-exclude = ["*/migrations/*", "libs", "examples"]
 
   [tool.ruff.lint]
   select = [

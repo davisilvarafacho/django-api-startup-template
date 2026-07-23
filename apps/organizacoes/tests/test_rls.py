@@ -12,10 +12,10 @@ Dois detalhes tornam este teste diferente de um teste comum:
 Como a verificação usa uma segunda conexão, os dados precisam estar commitados:
 daí o `django_db(transaction=True)`.
 """
+from django.db import connection, models
+
 import psycopg2
 import pytest
-
-from django.db import connection, models
 
 from apps.api.base.models import Base
 from apps.organizacoes.models import Organizacao
