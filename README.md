@@ -1,5 +1,7 @@
 # DRF Base API Project
 
+A mais robusta base para apis rest com django e rest framework do open source brasileiro🇧🇷.
+
 ## Ambiente de desenvolvimento
 
 O projeto usa [uv](https://docs.astral.sh/uv/) para gerenciar o Python e as dependências.
