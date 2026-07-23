@@ -1,4 +1,4 @@
-# DRF Base API Project
+# best-django-api-template
 
 A mais robusta base para apis rest com django e rest framework do open source brasileiro🇧🇷.
 
