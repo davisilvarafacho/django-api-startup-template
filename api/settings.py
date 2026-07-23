@@ -296,13 +296,13 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # PostHog
 POSTHOG_PROJECT_TOKEN = get_env_var("POSTHOG_PROJECT_TOKEN")
-POSTHOG_HOST = get_env_var("POSTHOG_HOST") or "https://us.i.posthog.com"
+POSTHOG_HOST = get_env_var("POSTHOG_HOST", "https://us.i.posthog.com")
 POSTHOG_DISABLED = get_bool_from_env("POSTHOG_DISABLED", False)
 
 
 RESEND_API_KEY = get_env_var("RESEND_API_KEY")
 
-DEFAULT_FROM_EMAIL = get_env_var("RESEND_FROM_EMAIL") or "nao-responda@base.com.br"
+DEFAULT_FROM_EMAIL = get_env_var("RESEND_FROM_EMAIL", "nao-responda@base.com.br")
 
 EMAIL_BACKEND = "apps.api.core.email_backends.ResendEmailBackend"
 
