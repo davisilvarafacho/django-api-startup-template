@@ -76,3 +76,21 @@ def worker_int(worker):
 def worker_abort(worker):
     """Chamado quando um worker recebe um sinal SIGABRT."""
     worker.log.info("Worker %s recebeu SIGABRT", worker.pid)
+
+
+def child_exit(server, worker):
+    """Remove as métricas do worker que morreu.
+
+    Com `PROMETHEUS_MULTIPROC_DIR` cada worker escreve num arquivo próprio que o
+    `/metrics` consolida. Sem limpar na saída, os contadores de workers mortos
+    continuam sendo somados para sempre — e o gunicorn recicla worker a cada
+    `max_requests` (1000), então o vazamento é rápido.
+    """
+    if not os.getenv("PROMETHEUS_MULTIPROC_DIR"):
+        return
+
+    # Import local: prometheus_client só é necessário quando o modo multiprocesso
+    # está ligado.
+    from prometheus_client import multiprocess
+
+    multiprocess.mark_process_dead(worker.pid)
