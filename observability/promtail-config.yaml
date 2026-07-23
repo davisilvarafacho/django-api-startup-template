@@ -1,4 +1,6 @@
-# Promtail lê os *.log montados em /var/log/erp (host ./logging) e envia ao Loki.
+# Promtail lê os logs JSON que o Django escreve (LOGGING_ROOT = logs/) e envia ao Loki.
+#
+# Em produção o formatter é JSON (uma linha por evento) — ver api/logging_config.py.
 server:
   http_listen_port: 9080
   grpc_listen_port: 0
@@ -10,9 +12,24 @@ clients:
   - url: http://loki:3100/loki/api/v1/push
 
 scrape_configs:
-  - job_name: erp-backend
+  - job_name: drf-base-api
     static_configs:
       - targets: [localhost]
         labels:
-          job: erp-backend
-          __path__: /var/log/erp/*.log
+          job: drf-base-api
+          __path__: /var/log/drf-base-api/*.jsonl
+    pipeline_stages:
+      # Extrai os campos do log estruturado. Só `level` vira label: `request_id` e
+      # `trace_id` têm cardinalidade altíssima e criariam um stream por request,
+      # que é o jeito clássico de derrubar um Loki. Eles continuam pesquisáveis
+      # no conteúdo da linha e alimentam o link para o Tempo.
+      - json:
+          expressions:
+            level: level
+            logger: logger
+            timestamp: timestamp
+      - labels:
+          level:
+      - timestamp:
+          source: timestamp
+          format: RFC3339

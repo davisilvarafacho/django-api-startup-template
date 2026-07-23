@@ -1,4 +1,4 @@
-.PHONY: help install hooks up down migrate run worker beat test lint format check precommit shell docs docs-serve commitlint version-check
+.PHONY: help install hooks up down migrate run worker beat test lint format check precommit shell docs docs-serve commitlint version-check obs-up obs-down
 
 help: ## Lista os comandos disponíveis
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "\033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -15,6 +15,12 @@ up: ## Sobe Postgres + Redis (docker compose)
 
 down: ## Derruba os serviços do docker compose
 	docker compose down
+
+obs-up: ## Sobe a stack de observabilidade (Grafana, Tempo, Loki, Prometheus)
+	docker compose -f docker-compose.observability.yml up -d
+
+obs-down: ## Derruba a stack de observabilidade
+	docker compose -f docker-compose.observability.yml down
 
 migrate: ## Aplica as migrações
 	uv run python manage.py migrate

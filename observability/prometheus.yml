@@ -1,9 +1,23 @@
-# Prometheus faz scrape do endpoint /metrics do Django (django-prometheus) no host.
+# Prometheus raspa o /metrics exposto pelo django-prometheus.
+#
+# O endpoint é restrito por rede/token (ver apps/api/core/metrics.py). Como este
+# serviço entra na mesma rede do compose principal, ele cai na faixa privada do
+# Docker e passa direto.
 global:
   scrape_interval: 15s
 
 scrape_configs:
-  - job_name: erp-backend
+  - job_name: drf-base-api
     metrics_path: /metrics
     static_configs:
-      - targets: ["host.docker.internal:8000"]   # Django via runserver/gunicorn no host
+      # Serviço `web` do docker-compose.yml (gunicorn na porta 80).
+      - targets: ["web:80"]
+        labels:
+          service: drf-base-api
+
+  # Django rodando no host (`make run`) em vez de container. Deixe apenas um dos
+  # dois jobs ativo para não duplicar as séries.
+  # - job_name: drf-base-api-host
+  #   metrics_path: /metrics
+  #   static_configs:
+  #     - targets: ["host.docker.internal:8000"]

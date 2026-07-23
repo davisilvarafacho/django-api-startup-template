@@ -1,12 +1,17 @@
 # Stack de observabilidade: Tempo (traces) + Loki (logs) + Prometheus (métricas) + Grafana (UI).
-# Django roda no HOST (runserver/gunicorn) e:
-#   - traces   -> exporta OTLP para http://localhost:4318 (Tempo)
-#   - métricas -> Prometheus faz scrape em host.docker.internal:8000/metrics
-#   - logs     -> escreve em ./logging/*.log; Promtail lê e manda pro Loki
 #
-# NÃO rode junto com docker-compose.otel.yml (Jaeger) — os dois usam a porta 4318.
-#   Subir:  docker compose -f docker-compose.observability.yml up -d
-#   Grafana: http://localhost:3000  (login desabilitado, entra direto)
+# Complementa o docker-compose.yml — sobe na MESMA rede, para o Prometheus
+# alcançar o serviço `web` pelo nome:
+#
+#   docker compose up -d                                    # app + Postgres + Redis
+#   docker compose -f docker-compose.observability.yml up -d # observabilidade
+#
+# Grafana: http://localhost:3001 (login desabilitado, entra direto)
+#
+# O Django precisa de OTEL_ENABLED=1 e OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4318
+# no .env para exportar traces (ver docs/how-to/observabilidade-local.md).
+name: drf-base-api-observability
+
 services:
   tempo:
     image: grafana/tempo:2.6.1
@@ -35,7 +40,8 @@ services:
     command: ["-config.file=/etc/promtail/promtail-config.yaml"]
     volumes:
       - ./observability/promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
-      - ./logging:/var/log/erp:ro   # lê os *.log que o Django escreve no host
+      # LOGGING_ROOT do Django (ver api/settings.py).
+      - ./logs:/var/log/drf-base-api:ro
     depends_on:
       - loki
     restart: unless-stopped
@@ -49,7 +55,8 @@ services:
     ports:
       - "9090:9090"
     extra_hosts:
-      - "host.docker.internal:host-gateway"   # alcança o Django rodando no host
+      # Alternativa para quando o Django roda no host (`make run`).
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
   grafana:
@@ -60,9 +67,10 @@ services:
       - GF_AUTH_DISABLE_LOGIN_FORM=true
     volumes:
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
     ports:
-      - "3001:3000"   # host 3001 (3000 já ocupada pelo Metabase); Grafana interno segue 3000
+      - "3001:3000"   # 3000 costuma estar ocupada; o Grafana interno segue em 3000
     depends_on:
       - tempo
       - loki
@@ -74,3 +82,10 @@ volumes:
   loki_data:
   prometheus_data:
   grafana_data:
+
+networks:
+  # Mesma rede do docker-compose.yml (name: drf-base-api), para o Prometheus
+  # resolver `web`. Suba o compose principal antes deste.
+  default:
+    name: drf-base-api_default
+    external: true

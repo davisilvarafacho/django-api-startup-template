@@ -20,9 +20,9 @@ datasources:
     url: http://loki:3100
     jsonData:
       derivedFields:
-        # extrai "trace=<id>" da linha de log e vira link clicável pro Tempo
+        # extrai o campo `trace_id` do log JSON e vira link clicável pro Tempo
         - name: TraceID
-          matcherRegex: 'trace=(\w+)'
+          matcherRegex: '"trace_id":\s*"(\w+)"'
           url: '${__value.raw}'
           datasourceUid: tempo
 
