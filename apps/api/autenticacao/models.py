@@ -1,5 +1,8 @@
+from django.conf import settings
 from django.db import models
 from django.utils.translation import gettext_lazy as _
+
+from auditlog.registry import auditlog
 
 
 class TokenMetaData(models.Model):
@@ -442,3 +445,6 @@ class TokenMetaData(models.Model):
 #             ip_address=ip_address,
 #             success=success
 #         )
+
+
+auditlog.register(TokenMetaData, exclude_fields=[*settings.BASE_AUDITLOG_EXCLUDE_FIELDS])

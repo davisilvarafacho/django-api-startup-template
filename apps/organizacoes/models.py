@@ -15,6 +15,8 @@ from django.db import models, transaction
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
+from auditlog.registry import auditlog
+
 from apps.api.base.models import BaseGlobal
 
 
@@ -196,3 +198,9 @@ class Convite(BaseGlobal):
         ordering = ["-id"]
         verbose_name = _("Convite")
         verbose_name_plural = _("Convites")
+
+
+auditlog.register(Organizacao, exclude_fields=[*settings.BASE_AUDITLOG_EXCLUDE_FIELDS])
+auditlog.register(Time, exclude_fields=[*settings.BASE_AUDITLOG_EXCLUDE_FIELDS])
+auditlog.register(Vinculo, exclude_fields=[*settings.BASE_AUDITLOG_EXCLUDE_FIELDS])
+auditlog.register(Convite, exclude_fields=[*settings.BASE_AUDITLOG_EXCLUDE_FIELDS])

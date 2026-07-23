@@ -58,5 +58,7 @@ class Usuario(BaseGlobal, AbstractUser):
         verbose_name_plural = _("Usuários")
 
 
-exclude_fields = settings.BASE_AUDITLOG_EXCLUDE_FIELDS.extend(["password", "last_login"])
-auditlog.register(Usuario, exclude_fields=exclude_fields)
+auditlog.register(
+    Usuario,
+    exclude_fields=[*settings.BASE_AUDITLOG_EXCLUDE_FIELDS, "password", "last_login"],
+)
