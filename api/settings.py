@@ -456,6 +456,10 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
+        # Fallback global de tenancy. Vem antes das permissões de modelo para
+        # que o contexto de RLS já esteja aplicado. Exceções são declarativas:
+        # `public_routes.py` (sem token) e `tenant_free_routes.py` (sem organização).
+        "apps.organizacoes.permissions.TenantPermission",
         "apps.api.autenticacao.permissions.CustomDjangoModelPermissions",
     ],
     "DEFAULT_FILTER_BACKENDS": [
