@@ -57,6 +57,8 @@ cover/
 
 # Django stuff:
 *.log
+# Log estruturado JSON (LOGGING_ROOT); lido pelo Promtail, nunca versionado.
+logs/*.jsonl
 local_settings.py
 *.sqlite3
 mediafiles/
