@@ -3,10 +3,10 @@
 Roadmap de tudo o que foi apresentado para elevar esta base a padrão de produção,
 com o que **já foi implementado** e o que está **planejado**, em ondas (batches).
 
-**Legenda:** ✅ feito · ⏳ planejado · 🧠 brainstorm próprio antes de codar ·
-🔎 estudar antes · ⏸️ adiado
+**Legenda:** ✅ feito · 🚧 em andamento · ⏳ planejado · 🧠 brainstorm próprio antes de
+codar · 🔎 estudar antes · ⏸️ adiado
 
-_Atualizado em 2026-07-22._
+_Atualizado em 2026-07-23._
 
 ---
 
@@ -20,11 +20,13 @@ _Atualizado em 2026-07-22._
 | — | Endpoint global de lookup | ✅ |
 | Batch 3 | DevEx / CI | ✅ |
 | Batch 4 | Documentação & convenções | ✅ |
-| Batch 5 | Autenticação & permissões | ⏳ |
-| Batch 6 | Multi-tenancy | ⏳ |
-| Batch 7 | Observabilidade | ⏳ |
+| Batch 5 | Autenticação & permissões | 🚧 |
+| Batch 6 | Multi-tenancy | 🚧 |
+| Batch 7 | Observabilidade | ✅ |
 | Batch 8 | Domínio & segurança | ⏳ |
 | Batch 9 | API avançada | ⏳ |
+| Batch 10 | Escala de banco | ⏳ |
+| Batch 11 | DevEx & operação (restante) | ⏳ |
 
 ---
 
@@ -71,32 +73,43 @@ _Atualizado em 2026-07-22._
 - **ADRs (MADR)** em `docs/adr/`.
 - Convenções de código explícitas em `.ai/CONVENTIONS.md`.
 
+### Batch 7 — Observabilidade
+- **Logging estruturado (JSON)** com `python-json-logger` (`api/logging_config.py`).
+- **Correlation/request ID próprio** (`apps/api/core/request_id.py`), propagado para Sentry e Celery.
+- **Estratégia de logs de request**: nada em banco em produção; log JSON → Promtail → Loki com retenção de 30 dias ([ADR 0002](adr/0002-logs-estruturados-e-retencao.md)).
+- **Health check completo**: `/health/` (liveness) e `/health/ready/` (banco, cache, broker, storage), agora fora do bloco de desenvolvimento — o `HEALTHCHECK` do Dockerfile marcava o container como unhealthy em produção.
+- **Métricas** com `django-prometheus` em `/metrics`, restrito a rede interna/token.
+- **Traces** com **OpenTelemetry** (grupo opcional `observability`), exportando OTLP para o Tempo.
+- **Dashboards Grafana** provisionados + stack local (Tempo, Loki, Prometheus, Promtail) alinhada ao compose do projeto.
+- **`django-waffle`** (feature flags operacionais) + divisão de papéis com o PostHog ([ADR 0003](adr/0003-feature-flags.md)).
+- **PostHog** com as pendências do setup fechadas (vars no `.env.example`, SDK desligado em teste/sem token).
+
 ---
 
 ## ⏳ Planejado
 
-### Batch 5 — Autenticação & permissões
-- App de integrações: proxy model de `knox.AuthToken` com campo `type` (1=token, 2=reset_password, 999=api_key).
-- **`django-guardian` + `django-rules`** (setup extensível, object-level).
-- **Cache de permissão**.
-- Papéis estilo **Saleor** (ordem crescente) somados às permissions do Django.
-- **MFA/2FA** + checagem de senha vazada (HaveIBeenPwned).
+### Batch 5 — Autenticação & permissões 🚧
+- ✅ **`django-guardian` + `django-rules`** (setup extensível, object-level).
+- ✅ Papéis estilo **Saleor** (ordem crescente) somados às permissions do Django.
+- ⏳ App de integrações: proxy model de `knox.AuthToken` com campo `type` (1=token, 2=reset_password, 999=api_key).
+- ⏳ **Scoped API tokens** (estilo Sentry: `project:read`, `org:write`).
+- ⏳ **Cache de permissão**.
+- ⏳ **MFA/2FA** + checagem de senha vazada (HaveIBeenPwned).
+- ⏳ **Field-level permissions** (serializers dinâmicos por papel).
+- ⏳ Ciclo de vida de conta: verificação de e-mail, social auth, desativação/exclusão, gestão de sessões e dispositivos.
 
-### Batch 6 — Multi-tenancy
-- **Organization → Team → Membership → Role**, com convites.
-- Isolamento por tenant com **RLS** via `django-rls`.
-
-### Batch 7 — Observabilidade
-- **Logging estruturado (JSON)** + correlation/request ID.
-- **PostHog** (analytics/eventos) + **`django-waffle`** (feature flags).
-- Métricas & dashboards (**Grafana / Prometheus / OpenTelemetry**).
-- Estratégia de armazenamento de logs de request (evitar banco gigante).
+### Batch 6 — Multi-tenancy 🚧
+- ✅ **Organização → Time → Vínculo → Convite**.
+- ✅ Isolamento por tenant com **RLS** via `django-rls`.
+- ⏳ Camada HTTP do app (`views.py`/`serializers.py`/`urls.py`): hoje o convite só existe pelo admin.
 
 ### Batch 8 — Domínio & segurança
 - Base de código de **notificações** (providers plugáveis, templates, preferências).
 - Lib para **dados sensíveis** (field-level encryption).
 - **Validação de upload** genérica e plugável.
 - **Money handling** + **metadata framework** (JSON key-value por modelo).
+- **Idempotency keys** em POST (evita duplicidade em retry de rede/pagamento).
+- **`django-anymail`**: abstração de e-mail multi-provider (hoje a base está acoplada ao Resend).
 
 ### Batch 9 — API avançada
 - `select_related` / `prefetch_related` sistematizados no `BaseViewSet`.
@@ -105,6 +118,17 @@ _Atualizado em 2026-07-22._
 - **Cursor pagination**.
 - Serializer registry (Sentry) / dataloaders (Saleor).
 
+### Batch 10 — Escala de banco
+- **Read replica + DB router** para escala de leitura.
+- **Constraints no banco** (`UniqueConstraint`, `CheckConstraint`) e triggers com **`django-pgtrigger`**.
+- Data migrations separadas de schema migrations.
+
+### Batch 11 — DevEx & operação (restante)
+- **Fixtures / seeds / demo data** via management command.
+- **Devcontainer** para onboarding.
+- **Runbooks** operacionais.
+- Política de **deprecação de API** (changelog de API + header `Sunset`).
+
 ---
 
 ## 🧠 Brainstorms próprios (antes de implementar)
@@ -112,6 +136,8 @@ _Atualizado em 2026-07-22._
 - **URLs assinadas** para arquivos privados (auth base que gera e valida token).
 
 ## 🔎 A estudar
+- **Soft delete real**: existe o campo `ativo`, mas o `destroy` apaga fisicamente.
+- **`django-constance`** (configuração em runtime, sem redeploy).
 - Headers de **SSL/HSTS/secure** + `manage.py check --deploy`.
 - **CSP** (`django-csp`).
 - **oso** / **casbin** (camada de policy).
