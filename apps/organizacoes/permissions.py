@@ -8,6 +8,7 @@ app lista suas exceções em `public_routes.py` (rotas sem token) ou
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import BasePermission
 
+from apps.api.core.route_markers import MARCADOR_SEM_TENANCY, tem_marcador
 from apps.api.core.routes_registry import routes_registry
 from apps.organizacoes.constants import HEADER_ORGANIZACAO
 from apps.organizacoes.context import definir_organizacao_atual
@@ -28,7 +29,11 @@ class TenantPermission(BasePermission):
         path = request.path_info
 
         # Sem token não há vínculo a validar; isenção explícita idem.
+        # O DRF já entrega a view resolvida, então aqui não é preciso resolver a URL.
         if routes_registry.matches(path) or tenant_free_registry.matches(path):
+            return True
+
+        if tem_marcador(view, MARCADOR_SEM_TENANCY):
             return True
 
         slug = getattr(request, "organizacao_slug", None)
