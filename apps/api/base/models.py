@@ -6,7 +6,7 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 
 from auditlog.models import AuditlogHistoryField
-from django_rls.models import RLSModel
+from django_rls.models import RLSModel, RLSQuerySet
 from django_rls.policies import TenantPolicy
 from threadlocals.threadlocals import get_current_user
 
@@ -43,7 +43,20 @@ class Estados(models.IntegerChoices):
     EXTERIOR = 28, "Exterior"
 
 
-class CustomManager(models.Manager):
+class BaseQuerySet(RLSQuerySet):
+    """QuerySet com o guard de contexto do django-rls.
+
+    Sem isso o `REQUIRE_CONTEXT` não tem efeito: o manager do `BaseGlobal` vence
+    o `RLSManager` no MRO, e consultar um modelo isolado fora de um contexto de
+    organização passaria batido — devolvendo silenciosamente zero linhas (ou
+    todas, se a conexão for de um superusuário, que ignora RLS).
+
+    O guard só atua em modelos que têm policies; os que herdam apenas de
+    `BaseGlobal` não são afetados.
+    """
+
+
+class CustomManager(models.Manager.from_queryset(BaseQuerySet)):
     def get_queryset(self):
         queryset = super().get_queryset()
         deferred_fields = self.model.get_queryset_deferred_fields()
@@ -52,7 +65,7 @@ class CustomManager(models.Manager):
         return queryset
 
 
-class AtivosManager(models.Manager):
+class AtivosManager(models.Manager.from_queryset(BaseQuerySet)):
     def get_queryset(self):
         return super().get_queryset().filter(ativo=True)
 
