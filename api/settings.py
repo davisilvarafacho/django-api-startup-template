@@ -9,6 +9,7 @@ from django.utils.translation import gettext_lazy as _
 import sentry_sdk
 
 from api.configure_enviroment import configure_enviroment
+from api.logging_config import build_logging
 from libs.serpy.mp import *
 from utils.env import get_bool_from_env, get_env_var, get_list_from_env
 
@@ -99,6 +100,7 @@ LIBS_APPS = [
     "corsheaders",
     "django_celery_beat",
     "django_filters",
+    "django_prometheus",
     "django_rls",
     "drf_spectacular",
     "django_scalar",
@@ -106,6 +108,7 @@ LIBS_APPS = [
     "knox",
     "rest_framework",
     "rules.apps.AutodiscoverRulesConfig",
+    "waffle",
 ]
 
 BUSINESS_APPS = [
@@ -122,7 +125,13 @@ INSTALLED_APPS = LIBS_APPS + DJANGO_APPS + BUSINESS_APPS + ENV_APPS
 # Middlewares agnósticos de ambiente. Os específicos são adicionados ao final
 # por `configure_enviroment` (ver api/configure_enviroment.py).
 MIDDLEWARE = [
+    # Primeiro de todos: mede a request inteira, inclusive o tempo gasto pelos
+    # demais middlewares.
+    "django_prometheus.middleware.PrometheusBeforeMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    # Logo após o SecurityMiddleware para que todo log emitido daqui em diante
+    # já carregue o correlation id.
+    "apps.api.core.request_id.RequestIDMiddleware",
     "django.middleware.gzip.GZipMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -141,6 +150,9 @@ MIDDLEWARE = [
     # Deve ser o mais interno possível: abre a transação que envolve a request
     # (necessária para o `SET LOCAL` do RLS).
     "apps.organizacoes.middleware.OrganizacaoMiddleware",
+    "waffle.middleware.WaffleMiddleware",
+    # Par do PrometheusBeforeMiddleware; fecha a medição da request.
+    "django_prometheus.middleware.PrometheusAfterMiddleware",
 ] + ENV_MIDDLEWARES
 
 
@@ -297,131 +309,13 @@ EMAIL_BACKEND = "apps.api.core.email_backends.ResendEmailBackend"
 
 LOGGING_ROOT = os.path.join(BASE_DIR, "logs/")
 
-# LOGGING = {
-#     "version": 1,
-#     "disable_existing_loggers": False,
-#     "formatters": {
-#         "api_formatter": {
-#             "format": "[%(asctime)s] %(name)s [%(levelname)s] %(message)s",
-#             "datefmt": "%d/%b/%Y %H:%M:%S",
-#         },
-#         "cloud_formatter": {
-#             "format": "[%(asctime)s] base %(name)s: [%(levelname)s] %(message)s",
-#             "datefmt": "%Y-%m-%dT%H:%M:%S",
-#         },
-#     },
-#     "filters": {
-#         "warnings_filter": {
-#             "()": "django.utils.log.CallbackFilter",
-#             "callback": lambda record: record.levelno == logging.WARNING,
-#         },
-#         "api_filter": {
-#             "()": "django.utils.log.CallbackFilter",
-#             "callback": lambda record: record.levelno >= logging.INFO,
-#         },
-#         "error_filter": {
-#             "()": "django.utils.log.CallbackFilter",
-#             "callback": lambda record: record.levelno >= logging.ERROR,
-#         },
-#     },
-#     "handlers": {
-#         "console": {
-#             "level": "DEBUG",
-#             "class": "logging.StreamHandler",
-#             "formatter": "api_formatter",
-#         },
-#         "api_activity": {
-#             "level": "DEBUG",
-#             "class": "logging.handlers.RotatingFileHandler",
-#             "filename": os.path.join(LOGGING_ROOT, "api_activity.log"),
-#             "maxBytes": 1024 * 1024 * 5,
-#             "backupCount": 10,
-#             "formatter": "api_formatter",
-#             "filters": ["api_filter"],
-#         },
-#         "api_warnings": {
-#             "level": "WARNING",
-#             "class": "logging.handlers.RotatingFileHandler",
-#             "filename": os.path.join(LOGGING_ROOT, "warnings.log"),
-#             "maxBytes": 1024 * 1024 * 10,
-#             "backupCount": 2,
-#             "formatter": "api_formatter",
-#             "filters": ["warnings_filter"],
-#         },
-#         "api_errors": {
-#             "level": "ERROR",
-#             "class": "logging.handlers.RotatingFileHandler",
-#             "filename": os.path.join(LOGGING_ROOT, "errors.log"),
-#             "maxBytes": 1024 * 1024 * 50,
-#             "backupCount": 10,
-#             "formatter": "api_formatter",
-#             "filters": ["error_filter"],
-#         },
-#         "api_errors_mail": {
-#             "level": "ERROR",
-#             "class": "django.utils.log.AdminEmailHandler",
-#             "formatter": "api_formatter",
-#             "filters": ["error_filter"],
-#         },
-#         "api_cloud_log": {
-#             "level": "DEBUG",
-#             "class": "logging.handlers.SysLogHandler",
-#             "formatter": "cloud_formatter",
-#             "address": ("logs.papertrailapp.com", 17562),
-#         },
-#     },
-#     "loggers": {
-#         "django": {
-#             "handlers": ["console"],
-#             "level": "INFO",
-#             "propagate": False,
-#         },
-#         "pika": {
-#             "handlers": [],
-#             "level": "WARNING",
-#             "propagate": False,
-#         },
-#         "httpx": {
-#             "handlers": [],
-#             "level": "WARNING",
-#             "propagate": False,
-#         },
-#         "httpcore": {
-#             "handlers": [],
-#             "level": "WARNING",
-#             "propagate": False,
-#         },
-#         "botocore": {
-#             "handlers": [],
-#             "level": "WARNING",
-#             "propagate": False,
-#         },
-#         "urllib3": {
-#             "handlers": [],
-#             "level": "WARNING",
-#             "propagate": False,
-#         },
-#         "twilio": {
-#             "handlers": [],
-#             "level": "WARNING",
-#             "propagate": False,
-#         },
-#         "django_lifecycle": {
-#             "handlers": [],
-#             "level": "WARNING",
-#             "propagate": False,
-#         },
-#     },
-#     "root": {
-#         "handlers": ["console", "api_activity", "api_errors"],
-#         "level": "INFO",
-#         "propagate": True,
-#         "formatter": "simple",
-#     },
-# }
+os.makedirs(LOGGING_ROOT, exist_ok=True)
 
-# if IN_PRODUCTION:
-#     LOGGING["root"]["handlers"] += ["api_cloud_log", "api_errors_mail"]
+LOG_LEVEL = get_env_var("DJANGO_LOG_LEVEL", "INFO")
+
+# Em produção sai JSON (uma linha por evento, lido pelo Promtail/Loki); nos demais
+# ambientes, texto legível no console. Ver api/logging_config.py.
+LOGGING = build_logging(CONFIG_ENVIRONMENT, LOG_LEVEL, LOGGING_ROOT)
 
 
 # base
@@ -443,7 +337,7 @@ B2_BUCKET_NAME = get_env_var("BACKBLAZE_BUCKET_NAME")
 B2_BUCKET_ID = get_env_var("BACKBLAZE_BUCKET_ID")
 
 # Prefixo opcional para todos os arquivos enviados ao bucket (ex.: "media").
-B2_LOCATION = get_env_var("BACKBLAZE_LOCATION") or ""
+B2_LOCATION = get_env_var("BACKBLAZE_LOCATION", "")
 
 # URL pública opcional (domínio próprio/CDN). Sem ela, o SDK fornece a URL B2.
 B2_PUBLIC_BASE_URL = get_env_var("BACKBLAZE_PUBLIC_BASE_URL")
@@ -491,7 +385,7 @@ REST_FRAMEWORK = {
 SPECTACULAR_SETTINGS = {
     "TITLE": "DRF Base API",
     "DESCRIPTION": "Documentação da API.",
-    "VERSION": "0.1.0",
+    "VERSION": "0.1.0",  # x-release-please-version
     "SERVE_INCLUDE_SCHEMA": False,
 }
 
@@ -512,6 +406,10 @@ ZEAL_RAISE = False
 
 
 # drf api logger
+# Só é carregado em desenvolvimento (ver configure_enviroment), e grava no banco
+# `logging` — separado do banco da aplicação de propósito. Em produção o log de
+# request é estruturado em arquivo/stdout (ver `apps.api.core.request_id`):
+# request log em tabela é o caminho mais rápido para um banco de dezenas de GB.
 DRF_API_LOGGER_DATABASE = True
 
 DRF_LOGGER_QUEUE_MAX_SIZE = 5000
@@ -527,9 +425,9 @@ DBBACKUP_DATE_FORMAT = "%d/%m/%Y_%H%M%S"
 
 
 # redis
-REDIS_HOST = get_env_var("REDIS_HOST") or "127.0.0.1"
+REDIS_HOST = get_env_var("REDIS_HOST", "127.0.0.1")
 
-REDIS_PORT = get_env_var("REDIS_PORT") or "6379"
+REDIS_PORT = get_env_var("REDIS_PORT", "6379")
 
 REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}"
 
@@ -586,3 +484,46 @@ CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 CELERY_TASK_ALWAYS_EAGER = TESTING
 
 CELERY_TASK_EAGER_PROPAGATES = TESTING
+
+
+# waffle (feature flags operacionais)
+# `Flag`/`Switch`/`Sample` vivem no banco e são editáveis pelo admin — servem de
+# kill-switch e rollout interno. Rollout de produto por segmento de usuário é
+# papel do PostHog (ver docs/adr/0003).
+WAFFLE_FLAG_DEFAULT = False
+
+WAFFLE_SWITCH_DEFAULT = False
+
+WAFFLE_SAMPLE_DEFAULT = False
+
+# Uma flag consultada e inexistente deve falhar fechado, não criar linha no banco.
+WAFFLE_CREATE_MISSING_FLAGS = False
+
+WAFFLE_CREATE_MISSING_SWITCHES = False
+
+
+# prometheus
+# Atenção: NÃO trocar o ENGINE do banco para `django_prometheus.db.backends.*`.
+# O RLS depende de `django_rls.backends.postgresql` (ver DATABASES) e os dois
+# backends são mutuamente exclusivos. Métricas de banco vêm da instrumentação
+# do OpenTelemetry (psycopg2), não daqui.
+PROMETHEUS_EXPORT_MIGRATIONS = False
+
+# Com múltiplos workers do gunicorn, cada processo mantém seu próprio registro
+# em memória e o /metrics devolveria só o do worker que atendeu o scrape. O
+# diretório compartilhado é o que consolida os números (ver gunicorn.conf.py).
+PROMETHEUS_MULTIPROC_DIR = get_env_var("PROMETHEUS_MULTIPROC_DIR")
+
+if PROMETHEUS_MULTIPROC_DIR:
+    os.environ.setdefault("PROMETHEUS_MULTIPROC_DIR", PROMETHEUS_MULTIPROC_DIR)
+    os.makedirs(PROMETHEUS_MULTIPROC_DIR, exist_ok=True)
+
+
+# opentelemetry (traces distribuídos)
+# Desligado por padrão: as libs estão no grupo opcional `observability` e a
+# inicialização é feita em `api/telemetry.py`, chamada pelo ready() do core.
+OTEL_ENABLED = get_bool_from_env("OTEL_ENABLED", False)
+
+OTEL_EXPORTER_OTLP_ENDPOINT = get_env_var("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
+
+OTEL_SERVICE_NAME = get_env_var("OTEL_SERVICE_NAME", "drf-base-api")
