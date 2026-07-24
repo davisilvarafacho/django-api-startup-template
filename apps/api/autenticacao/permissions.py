@@ -1,7 +1,58 @@
 from django.core.exceptions import ImproperlyConfigured
 
 from rest_framework import exceptions
-from rest_framework.permissions import DjangoModelPermissions, IsAdminUser
+from rest_framework.permissions import BasePermission, DjangoModelPermissions, IsAdminUser
+
+from .models import TokenType
+
+
+class TokenScopePermission(BasePermission):
+    """Aplica escopos declarados na view apenas para tokens do tipo API key."""
+
+    message = "Token sem escopo suficiente para este endpoint."
+    view_attribute = "required_token_scopes"
+
+    def has_permission(self, request, view):
+        required_scopes = self.get_required_scopes(request, view)
+        if not required_scopes:
+            return True
+
+        auth_token = getattr(request, "auth", None)
+        metadata = getattr(auth_token, "metadata", None)
+        token_type = getattr(metadata, "type", TokenType.TOKEN)
+
+        if token_type != TokenType.API_KEY:
+            return True
+
+        granted_scopes = set(getattr(metadata, "scopes", []) or [])
+
+        return "*" in granted_scopes or set(required_scopes).issubset(granted_scopes)
+
+    def get_required_scopes(self, request, view):
+        scopes = getattr(view, self.view_attribute, None)
+        if not scopes:
+            return []
+
+        if isinstance(scopes, str):
+            return [scopes]
+
+        if isinstance(scopes, dict):
+            action = getattr(view, "action", None)
+            if action and action in scopes:
+                return self.normalize_scopes(scopes[action])
+
+            method = getattr(request, "method", "").upper()
+            return self.normalize_scopes(scopes.get(method, []))
+
+        return self.normalize_scopes(scopes)
+
+    @staticmethod
+    def normalize_scopes(scopes):
+        if not scopes:
+            return []
+        if isinstance(scopes, str):
+            return [scopes]
+        return list(scopes)
 
 
 class CustomDjangoModelPermissions(DjangoModelPermissions):

@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.utils.translation import gettext_lazy as _
 
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed
@@ -7,6 +8,7 @@ from knox.auth import TokenAuthentication
 from knox.settings import knox_settings
 
 from .constants import REQUEST_ATTR_RESOLVED, RESOLVED_PUBLIC
+from .models import TokenType
 
 
 class PassthroughAuthentication(BaseAuthentication):
@@ -46,7 +48,22 @@ class PassthroughAuthentication(BaseAuthentication):
         return knox_settings.AUTH_HEADER_PREFIX
 
 
-class QueryParamTokenAuthentication(TokenAuthentication):
+class TypedTokenAuthentication(TokenAuthentication):
+    """Autenticador Knox que respeita o tipo operacional do token."""
+
+    allowed_token_types = (TokenType.TOKEN, TokenType.API_KEY)
+
+    def validate_user(self, auth_token):
+        metadata = getattr(auth_token, "metadata", None)
+        token_type = getattr(metadata, "type", TokenType.TOKEN)
+
+        if token_type not in self.allowed_token_types:
+            raise AuthenticationFailed(_("Este token não permite acesso à API."))
+
+        return super().validate_user(auth_token)
+
+
+class QueryParamTokenAuthentication(TypedTokenAuthentication):
     """Autentica via `?token=`, restrito aos e-mails em `settings.ADMINS_EMAILS`.
 
     Serve para abrir links autenticados direto no navegador (relatórios, exports),

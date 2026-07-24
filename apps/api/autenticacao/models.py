@@ -5,6 +5,12 @@ from django.utils.translation import gettext_lazy as _
 from auditlog.registry import auditlog
 
 
+class TokenType(models.IntegerChoices):
+    TOKEN = 1, _('Token')
+    RESET_PASSWORD = 2, _('Reset de senha')
+    API_KEY = 999, _('API key')
+
+
 class TokenMetaData(models.Model):
     """Metadados completos para tokens Knox"""
 
@@ -15,6 +21,13 @@ class TokenMetaData(models.Model):
         on_delete=models.CASCADE,
         related_name='metadata',
         primary_key=True
+    )
+    type = models.PositiveSmallIntegerField(
+        verbose_name=_('Tipo'),
+        choices=TokenType.choices,
+        default=TokenType.TOKEN,
+        db_index=True,
+        help_text=_('Tipo de uso do token Knox.'),
     )
 
     # informações do dispositivo
@@ -193,6 +206,12 @@ class TokenMetaData(models.Model):
         default=dict,
         blank=True,
         help_text=_("Dados adicionais em formato JSON")
+    )
+    scopes = models.JSONField(
+        verbose_name=_('Escopos'),
+        default=list,
+        blank=True,
+        help_text=_("Escopos concedidos ao token API key, como 'org:read'."),
     )
 
     def mark_as_suspicious(self, reason):

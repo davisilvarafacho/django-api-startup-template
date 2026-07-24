@@ -352,6 +352,7 @@ REST_FRAMEWORK = {
         # que o contexto de RLS já esteja aplicado. Exceções são declarativas:
         # `public_routes.py` (sem token) e `tenant_free_routes.py` (sem organização).
         "apps.organizacoes.permissions.TenantPermission",
+        "apps.api.autenticacao.permissions.TokenScopePermission",
         "apps.api.autenticacao.permissions.CustomDjangoModelPermissions",
     ],
     "DEFAULT_FILTER_BACKENDS": [

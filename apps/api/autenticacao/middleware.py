@@ -16,12 +16,10 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import AuthenticationFailed
 
-from knox.auth import TokenAuthentication
-
 from apps.api.core.route_markers import MARCADOR_PUBLICA, tem_marcador, view_do_path
 from apps.api.core.routes_registry import routes_registry
 
-from .authentications import QueryParamTokenAuthentication
+from .authentications import QueryParamTokenAuthentication, TypedTokenAuthentication
 from .constants import REQUEST_ATTR_RESOLVED, RESOLVED_PRIVATE, RESOLVED_PUBLIC
 
 logger = logging.getLogger(__name__)
@@ -42,7 +40,7 @@ DEBUG_PREFIXES = (
 
 class AuthenticationMiddleware:
     # Ordem importa: a primeira que devolver um usuário vence.
-    authentication_classes = (TokenAuthentication, QueryParamTokenAuthentication)
+    authentication_classes = (TypedTokenAuthentication, QueryParamTokenAuthentication)
 
     def __init__(self, get_response):
         self.get_response = get_response

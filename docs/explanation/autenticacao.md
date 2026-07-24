@@ -20,6 +20,7 @@ duas.
 | `RouteRegistry` | `apps/api/core/routes_registry.py` | Coleta, no boot, os prefixos declarados por cada app |
 | `PUBLIC_ROUTES` | `<app>/public_routes.py` | Rotas que dispensam token |
 | `AuthenticationMiddleware` | `apps/api/autenticacao/middleware.py` | Valida o token e resolve o usuário |
+| `TypedTokenAuthentication` | `apps/api/autenticacao/authentications.py` | Valida Knox e bloqueia tipos de token que não podem acessar a API |
 | `PassthroughAuthentication` | `apps/api/autenticacao/authentications.py` | Entrega ao DRF o que o middleware resolveu |
 
 ## O fluxo
@@ -30,13 +31,51 @@ duas.
 2. O `AuthenticationMiddleware` decide, para cada request:
    - rota de debug (`/silk/`, `/api/docs/`, …) **e** `DEBUG=True` → segue sem token;
    - `routes_registry.matches(path)` → segue sem token;
-   - caso contrário, tenta os autenticadores em ordem (`TokenAuthentication` do
-     Knox, depois `QueryParamTokenAuthentication`). Token inválido ou ausente
-     encerra a request com **401** — ela nunca chega ao DRF.
+   - caso contrário, tenta os autenticadores em ordem (`TypedTokenAuthentication`,
+     depois `QueryParamTokenAuthentication`). Token inválido, ausente ou de tipo
+     não aceito para API encerra a request com **401** — ela nunca chega ao DRF.
 3. Em caso de sucesso o middleware grava `request.user`, `request.auth` e o
    marcador `request.autenticacao_resolvida`.
 4. A `PassthroughAuthentication`, única em `DEFAULT_AUTHENTICATION_CLASSES`, lê
    o marcador e devolve `(user, token)` ao DRF — ou `None` em rota pública.
+
+## Tipos de token
+
+O Knox continua sendo o mecanismo de token. A classificação operacional fica em
+`TokenMetaData.type`, um metadado 1:1 do token, porque proxy models do Django não
+podem adicionar colunas físicas.
+
+Valores públicos:
+
+- `1` — token de sessão/API normal.
+- `2` — reset de senha; não autentica endpoints da API.
+- `999` — API key; autentica endpoints da API e servirá de base para scoped API
+  tokens.
+
+## Scoped API Tokens
+
+Escopos vivem em `TokenMetaData.scopes` como lista de strings. Eles só limitam
+tokens do tipo `999` (`API_KEY`); tokens de sessão continuam dependendo das
+permissions normais do Django/guardian/rules.
+
+Uma view pode declarar escopos de duas formas:
+
+```python
+required_token_scopes = ["org:read"]
+```
+
+ou por método/action:
+
+```python
+required_token_scopes = {
+    "GET": ["org:read"],
+    "POST": ["org:write"],
+    "create": ["org:write"],
+}
+```
+
+`TokenScopePermission` roda globalmente antes das permissões de modelo. Se a view
+não declarar escopos, ela não exige nada extra do token.
 
 ## Declarando uma rota pública
 

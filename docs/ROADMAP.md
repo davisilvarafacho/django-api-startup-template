@@ -91,8 +91,8 @@ _Atualizado em 2026-07-23._
 ### Batch 5 — Autenticação & permissões 🚧
 - ✅ **`django-guardian` + `django-rules`** (setup extensível, object-level).
 - ✅ Papéis estilo **Saleor** (ordem crescente) somados às permissions do Django.
-- ⏳ App de integrações: proxy model de `knox.AuthToken` com campo `type` (1=token, 2=reset_password, 999=api_key).
-- ⏳ **Scoped API tokens** (estilo Sentry: `project:read`, `org:write`).
+- ✅ Tipagem operacional de `knox.AuthToken` via `TokenMetaData.type` (1=token, 2=reset_password, 999=api_key); reset password não autentica API.
+- ✅ **Scoped API tokens**: `TokenMetaData.scopes` + `TokenScopePermission` global via `required_token_scopes` na view.
 - ⏳ **Cache de permissão**.
 - ⏳ **MFA/2FA** + checagem de senha vazada (HaveIBeenPwned).
 - ⏳ **Field-level permissions** (serializers dinâmicos por papel).
