@@ -6,7 +6,7 @@ com o que **já foi implementado** e o que está **planejado**, em ondas (batche
 **Legenda:** ✅ feito · 🚧 em andamento · ⏳ planejado · 🧠 brainstorm próprio antes de
 codar · 🔎 estudar antes · ⏸️ adiado
 
-_Atualizado em 2026-07-23._
+_Atualizado em 2026-07-24._
 
 ---
 
@@ -21,7 +21,7 @@ _Atualizado em 2026-07-23._
 | Batch 3 | DevEx / CI | ✅ |
 | Batch 4 | Documentação & convenções | ✅ |
 | Batch 5 | Autenticação & permissões | 🚧 |
-| Batch 6 | Multi-tenancy | 🚧 |
+| Batch 6 | Multi-tenancy | ✅ |
 | Batch 7 | Observabilidade | ✅ |
 | Batch 8 | Domínio & segurança | ⏳ |
 | Batch 9 | API avançada | ⏳ |
@@ -73,6 +73,16 @@ _Atualizado em 2026-07-23._
 - **ADRs (MADR)** em `docs/adr/`.
 - Convenções de código explícitas em `.ai/CONVENTIONS.md`.
 
+### Batch 6 — Multi-tenancy
+- **Organização → Time → Vínculo → Convite**.
+- Isolamento por tenant com **RLS** via `django-rls`.
+- Camada HTTP do app (`views.py`/`serializers.py`/`urls.py`):
+  - `GET/POST /organizacoes/` para listar/criar organizações do usuário sem exigir `X-Organization`.
+  - `GET/POST /times/` filtrado pela organização do header.
+  - `GET/PATCH/DELETE /vinculos/` filtrado pela organização do header.
+  - `GET/POST/DELETE /convites/` filtrado pela organização do header.
+  - `POST /convites/aceitar/` para aceitar convite sem exigir `X-Organization`.
+
 ### Batch 7 — Observabilidade
 - **Logging estruturado (JSON)** com `python-json-logger` (`api/logging_config.py`).
 - **Correlation/request ID próprio** (`apps/api/core/request_id.py`), propagado para Sentry e Celery.
@@ -97,11 +107,6 @@ _Atualizado em 2026-07-23._
 - ⏳ **MFA/2FA** + checagem de senha vazada (HaveIBeenPwned).
 - ⏳ **Field-level permissions** (serializers dinâmicos por papel).
 - ⏳ Ciclo de vida de conta: verificação de e-mail, social auth, desativação/exclusão, gestão de sessões e dispositivos.
-
-### Batch 6 — Multi-tenancy 🚧
-- ✅ **Organização → Time → Vínculo → Convite**.
-- ✅ Isolamento por tenant com **RLS** via `django-rls`.
-- ⏳ Camada HTTP do app (`views.py`/`serializers.py`/`urls.py`): hoje o convite só existe pelo admin.
 
 ### Batch 8 — Domínio & segurança
 - Base de código de **notificações** (providers plugáveis, templates, preferências).

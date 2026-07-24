@@ -12,7 +12,7 @@ from apps.api.core.route_markers import MARCADOR_SEM_TENANCY, tem_marcador
 from apps.api.core.routes_registry import routes_registry
 from apps.organizacoes.constants import HEADER_ORGANIZACAO
 from apps.organizacoes.context import definir_organizacao_atual
-from apps.organizacoes.models import Vinculo
+from apps.organizacoes.models import Papel, Vinculo
 from apps.organizacoes.routes import tenant_free_registry
 
 
@@ -58,3 +58,22 @@ class TenantPermission(BasePermission):
         definir_organizacao_atual(vinculo.organizacao_id)
 
         return True
+
+
+class PapelMinimoPermission(BasePermission):
+    """Exige um papel minimo por action, usando o vinculo resolvido no tenant."""
+
+    message = "Papel insuficiente nesta organização."
+
+    def has_permission(self, request, view):
+        vinculo = getattr(request, "vinculo", None)
+        if vinculo is None:
+            return False
+
+        papel_minimo = self.get_papel_minimo(view)
+        return vinculo.tem_papel_minimo(papel_minimo)
+
+    def get_papel_minimo(self, view):
+        papeis_por_action = getattr(view, "papeis_por_action", {})
+        action = getattr(view, "action", None)
+        return papeis_por_action.get(action, getattr(view, "papel_minimo", Papel.VISUALIZADOR))
