@@ -107,7 +107,7 @@ exclude = [
   ignore_errors = true
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py312"
 line-length = 150
 extend-exclude = ["*/migrations/*", "libs"]
 
