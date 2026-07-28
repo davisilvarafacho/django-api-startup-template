@@ -68,7 +68,7 @@ dependencies = [
     "tomli==2.3.0",
     "typing-extensions==4.15.0",
     "tzdata==2025.2",
-    "ua-parser==1.0.1",
+    "ua-parser==1.0.2",
     "ua-parser-builtins==0.18.0.post1",
     "urllib3==2.5.0",
     "user-agents==2.2.0",
