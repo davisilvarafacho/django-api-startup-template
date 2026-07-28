@@ -3,7 +3,7 @@ from django.utils import timezone
 
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -16,9 +16,10 @@ from apps.api.core.errors import APIError
 
 from .errors import AuthErrorCode
 from .models import TokenType
+from .permissions import TokenScopePermission
 from .risk import evaluate_login_risk
 from .serializers import AuthTokenSerializer as CustomAuthTokenSerializer
-from .serializers import LoginResponseSerializer, LoginSerializer
+from .serializers import LoginResponseSerializer, LoginSerializer, ReauthenticateSerializer
 from .services import issue_token
 from .utils import build_token_metadata
 
@@ -115,6 +116,27 @@ class LoginView(APIView):
                     'device_type': metadata.device_type,
                     'country_code': metadata.country_code,
                 })
+
+
+class ReauthenticateView(APIView):
+    """Confirma a identidade da sessão atual (step-up auth).
+
+    Só tokens de sessão passam por aqui: `session_only` faz o
+    `TokenScopePermission` recusar API keys antes mesmo da senha ser checada.
+    """
+
+    permission_classes = [IsAuthenticated, TokenScopePermission]
+    session_only = True
+
+    def post(self, request):
+        serializer = ReauthenticateSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+
+        metadata = request.auth.metadata
+        metadata.reauthenticated_at = timezone.now()
+        metadata.save(update_fields=["reauthenticated_at"])
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class AuthTokenViewSet(viewsets.ReadOnlyModelViewSet):

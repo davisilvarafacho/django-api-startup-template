@@ -352,6 +352,8 @@ REST_FRAMEWORK = {
         "apps.organizacoes.permissions.TenantPermission",
         "apps.api.autenticacao.permissions.TokenScopePermission",
         "apps.api.autenticacao.permissions.CustomDjangoModelPermissions",
+        # No-op sem `@require_recent_auth` declarado na view/action/método.
+        "apps.api.autenticacao.recent_auth.RecentAuthenticationPermission",
     ],
     "DEFAULT_FILTER_BACKENDS": [
         "rest_framework.filters.OrderingFilter",

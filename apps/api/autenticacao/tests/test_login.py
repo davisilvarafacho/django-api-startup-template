@@ -6,11 +6,27 @@ from django.contrib.auth.signals import user_logged_in
 from rest_framework.test import APIClient
 
 import pytest
+from threadlocals.threadlocals import set_current_user, set_thread_variable
 
 from apps.api.autenticacao.models import AuthToken, TokenMetaData, TokenType
 from apps.usuarios.factories import UsuarioFactory
 
 pytestmark = pytest.mark.django_db
+
+
+@pytest.fixture(autouse=True)
+def _limpar_thread_locals():
+    """Limpa o estado que `ThreadLocalMiddleware` deixa entre requests.
+
+    `ThreadLocalMiddleware` nunca limpa `request` sozinho: sem isso, o
+    usuário desta request vazaria como `get_current_user()` para o próximo
+    teste que rodar na mesma thread.
+    """
+    set_current_user(None)
+    set_thread_variable("request", None)
+    yield
+    set_current_user(None)
+    set_thread_variable("request", None)
 
 
 @pytest.fixture

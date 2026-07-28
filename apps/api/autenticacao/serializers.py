@@ -9,6 +9,7 @@ from apps.api.base.serializers import BaseModelSerpySerializer
 from apps.api.core.errors import APIError
 
 from .errors import AuthErrorCode
+from .recent_auth import user_has_mfa_enabled, verify_mfa_code
 
 
 class AuthTokenSerializer(BaseModelSerpySerializer):
@@ -80,3 +81,21 @@ class LoginResponseSerializer(serializers.Serializer):
     token = serializers.CharField()
     expiry = serializers.DateTimeField(allow_null=True)
     session = LoginSessionSerializer()
+
+
+class ReauthenticateSerializer(serializers.Serializer):
+    """Confirma a identidade da sessão atual (senha e, se aplicável, MFA)."""
+
+    password = serializers.CharField(write_only=True, trim_whitespace=False)
+    mfa_code = serializers.CharField(required=False, allow_blank=True, write_only=True, default="")
+
+    def validate(self, attrs):
+        user = self.context["request"].user
+
+        if not user.check_password(attrs["password"]):
+            raise APIError(AuthErrorCode.INVALID_CREDENTIALS, status_code=401)
+
+        if user_has_mfa_enabled(user):
+            verify_mfa_code(user, attrs.get("mfa_code", ""))
+
+        return attrs
