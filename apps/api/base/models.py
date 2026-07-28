@@ -106,6 +106,8 @@ class BaseGlobal(models.Model):
     ]
     extra_read_only_fields = []
 
+    extra_write_only_fields = []
+
     queryset_deferred_fields = []
 
     clone_reset_fields = ("data_criacao", "hora_criacao", "data_ultima_alteracao", "hora_ultima_alteracao")
@@ -180,6 +182,10 @@ class BaseGlobal(models.Model):
     @classmethod
     def get_read_only_fields(cls):
         return cls.read_only_fields + cls.extra_read_only_fields
+
+    @classmethod
+    def get_write_only_fields(cls):
+        return list(cls.extra_write_only_fields)
 
     @classmethod
     def get_queryset_deferred_fields(cls):
