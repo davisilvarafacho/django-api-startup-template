@@ -15,9 +15,8 @@ from django.db import models, transaction
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
-from auditlog.registry import auditlog
-
 from apps.api.base.models import BaseGlobal
+from utils.logs import register
 
 
 def gerar_token_convite():
@@ -200,7 +199,7 @@ class Convite(BaseGlobal):
         verbose_name_plural = _("Convites")
 
 
-auditlog.register(Organizacao, exclude_fields=[*settings.BASE_AUDITLOG_EXCLUDE_FIELDS])
-auditlog.register(Time, exclude_fields=[*settings.BASE_AUDITLOG_EXCLUDE_FIELDS])
-auditlog.register(Vinculo, exclude_fields=[*settings.BASE_AUDITLOG_EXCLUDE_FIELDS])
-auditlog.register(Convite, exclude_fields=[*settings.BASE_AUDITLOG_EXCLUDE_FIELDS])
+register(Organizacao)
+register(Time)
+register(Vinculo)
+register(Convite)
