@@ -66,3 +66,33 @@ def test_token_scope_permission_esta_nas_permissoes_globais():
     permission_classes = settings.REST_FRAMEWORK["DEFAULT_PERMISSION_CLASSES"]
 
     assert "apps.api.autenticacao.permissions.TokenScopePermission" in permission_classes
+
+
+class ViewComGetRequiredTokenScopes:
+    def get_required_token_scopes(self):
+        return ["organizations:read"]
+
+
+def test_api_key_com_scope_de_recurso_wildcard_satisfaz_requisito():
+    permission = permissions.TokenScopePermission()
+    request = RequestFalsa("GET", TokenFalso(TokenType.API_KEY, scopes=["organizations:*"]))
+
+    assert permission.has_permission(request, ViewComGetRequiredTokenScopes())
+
+
+def test_api_key_com_scope_global_wildcard_satisfaz_qualquer_requisito():
+    permission = permissions.TokenScopePermission()
+    request = RequestFalsa("GET", TokenFalso(TokenType.API_KEY, scopes=["*"]))
+
+    assert permission.has_permission(request, ViewComGetRequiredTokenScopes())
+
+
+def test_get_required_token_scopes_da_view_tem_prioridade_sobre_o_atributo_legado():
+    class ViewComAmbos(ViewComGetRequiredTokenScopes):
+        required_token_scopes = {"GET": ["org:read"]}
+
+    permission = permissions.TokenScopePermission()
+    request = RequestFalsa("GET", TokenFalso(TokenType.API_KEY, scopes=["org:read"]))
+
+    # `organizations:read` (do método), não `org:read` (do atributo legado).
+    assert not permission.has_permission(request, ViewComAmbos())

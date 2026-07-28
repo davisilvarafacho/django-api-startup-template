@@ -3,7 +3,23 @@ from django.core.exceptions import ImproperlyConfigured
 from rest_framework import exceptions
 from rest_framework.permissions import BasePermission, DjangoModelPermissions, IsAdminUser
 
+from apps.api.core.scope_registry import matches_scope
+
 from .models import TokenType
+
+
+def require_token_scopes(*scopes):
+    """Declara os scopes exigidos por uma action customizada de ViewSet.
+
+    `UtilsViewSetMixin.get_required_token_scopes()` lê esse metadado quando a
+    action não tem mapeamento CRUD automático (`resource:read/create/...`).
+    """
+
+    def decorator(func):
+        func._required_token_scopes = scopes
+        return func
+
+    return decorator
 
 
 class TokenScopePermission(BasePermission):
@@ -26,9 +42,19 @@ class TokenScopePermission(BasePermission):
 
         granted_scopes = set(getattr(metadata, "scopes", []) or [])
 
-        return "*" in granted_scopes or set(required_scopes).issubset(granted_scopes)
+        return any(
+            matches_scope(granted, required) for required in required_scopes for granted in granted_scopes
+        )
 
     def get_required_scopes(self, request, view):
+        get_required_token_scopes = getattr(view, "get_required_token_scopes", None)
+        if callable(get_required_token_scopes):
+            scopes = get_required_token_scopes()
+            if scopes:
+                return list(scopes)
+
+        # Compatibilidade com o atributo estático legado (dict por action/method,
+        # lista ou string única).
         scopes = getattr(view, self.view_attribute, None)
         if not scopes:
             return []

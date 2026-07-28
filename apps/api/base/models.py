@@ -102,6 +102,10 @@ class BaseGlobal(CreationAuditMixin):
 
     ativo = models.BooleanField(_("ativo"), default=True)
 
+    # Interface pública e estável de scopes/permissions (`resource:action`).
+    # `None` significa que o model não é exposto pelo registry de scopes.
+    api_scope_resource = None
+
     objects = CustomManager()
     ativos = AtivosManager()
 
