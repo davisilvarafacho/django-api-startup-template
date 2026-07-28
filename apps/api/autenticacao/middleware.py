@@ -10,17 +10,18 @@ recebem `request.user` preenchido, e o DRF apenas reaproveita o resultado via
 import logging
 
 from django.conf import settings
-from django.http import JsonResponse
 from django.utils import timezone
 
 from rest_framework import status
 from rest_framework.exceptions import AuthenticationFailed
 
+from apps.api.core.errors import error_response
 from apps.api.core.route_markers import MARCADOR_PUBLICA, tem_marcador, view_do_path
 from apps.api.core.routes_registry import routes_registry
 
 from .authentications import QueryParamTokenAuthentication, TypedTokenAuthentication
 from .constants import REQUEST_ATTR_RESOLVED, RESOLVED_PRIVATE, RESOLVED_PUBLIC
+from .errors import AuthErrorCode
 
 logger = logging.getLogger(__name__)
 
@@ -70,10 +71,14 @@ class AuthenticationMiddleware:
         try:
             result = self.run_authenticators(request)
         except AuthenticationFailed as exc:
-            return JsonResponse({"mensagem": str(exc.detail)}, status=status.HTTP_401_UNAUTHORIZED)
+            return error_response(
+                AuthErrorCode.INVALID_TOKEN,
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                message=str(exc.detail),
+            )
 
         if result is None:
-            return JsonResponse({"mensagem": "Token não fornecido."}, status=status.HTTP_401_UNAUTHORIZED)
+            return error_response(AuthErrorCode.TOKEN_NOT_PROVIDED, status_code=status.HTTP_401_UNAUTHORIZED)
 
         user, auth_token = result
 
