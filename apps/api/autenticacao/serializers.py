@@ -1,45 +1,11 @@
 from django.contrib.auth import authenticate
-from django.utils import timezone
 
 from rest_framework import serializers
 
-import serpy
-
-from apps.api.base.serializers import BaseModelSerpySerializer
 from apps.api.core.errors import APIError
 
 from .errors import AuthErrorCode
 from .recent_auth import user_has_mfa_enabled, verify_mfa_code
-
-
-class AuthTokenSerializer(BaseModelSerpySerializer):
-    digest = serpy.StrField()
-    token_key = serpy.StrField()
-    created = serpy.Field()
-    expiry = serpy.Field()
-    # is_current = serpy.MethodField()
-    days_until_expiry = serpy.MethodField()
-    device_info = serpy.MethodField()
-
-    def get_is_current(self, obj):
-        """Verifica se é o token da requisição atual."""
-        request = self.context.get("request")
-        if not request or not hasattr(request, "auth"):
-            return False
-        return request.auth.digest == obj.digest
-
-    def get_days_until_expiry(self, obj):
-        """Calcula dias restantes até expirar."""
-        if not obj.expiry:
-            return None
-        delta = obj.expiry - timezone.now()
-        return max(delta.days, 0)
-
-    def get_device_info(self, obj):
-        """Você pode estender para guardar info do dispositivo."""
-        # Por padrão, Knox não guarda isso
-        # Veja implementação alternativa abaixo
-        return
 
 
 class LoginSerializer(serializers.Serializer):
@@ -99,3 +65,33 @@ class ReauthenticateSerializer(serializers.Serializer):
             verify_mfa_code(user, attrs.get("mfa_code", ""))
 
         return attrs
+
+
+class SessionSerializer(serializers.Serializer):
+    """Sessão de login. Nunca inclui `digest`, `token_key` ou o plain token."""
+
+    uuid = serializers.UUIDField(read_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
+    expiry = serializers.DateTimeField(read_only=True, allow_null=True)
+    device_name = serializers.CharField(source="metadata.device_name", required=False, allow_blank=True)
+    device_type = serializers.CharField(source="metadata.device_type", read_only=True)
+    location = serializers.SerializerMethodField()
+    last_used = serializers.DateTimeField(source="metadata.last_used", read_only=True)
+    risk_score = serializers.IntegerField(source="metadata.risk_score", read_only=True)
+    is_suspicious = serializers.BooleanField(source="metadata.is_suspicious", read_only=True)
+    is_current = serializers.SerializerMethodField()
+
+    def get_location(self, obj):
+        return obj.metadata.get_location_string()
+
+    def get_is_current(self, obj):
+        request = self.context.get("request")
+        auth_token = getattr(request, "auth", None) if request else None
+        return bool(auth_token and auth_token.digest == obj.digest)
+
+    def update(self, instance, validated_data):
+        device_name = validated_data.get("metadata", {}).get("device_name")
+        if device_name is not None:
+            instance.metadata.device_name = device_name
+            instance.metadata.save(update_fields=["device_name"])
+        return instance

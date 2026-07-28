@@ -1,7 +1,7 @@
-from django.contrib.auth.signals import user_logged_in
+from django.contrib.auth.signals import user_logged_in, user_logged_out
 from django.utils import timezone
 
-from rest_framework import status, viewsets
+from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -18,9 +18,8 @@ from .errors import AuthErrorCode
 from .models import TokenType
 from .permissions import TokenScopePermission
 from .risk import evaluate_login_risk
-from .serializers import AuthTokenSerializer as CustomAuthTokenSerializer
-from .serializers import LoginResponseSerializer, LoginSerializer, ReauthenticateSerializer
-from .services import issue_token
+from .serializers import LoginResponseSerializer, LoginSerializer, ReauthenticateSerializer, SessionSerializer
+from .services import issue_token, revoke_all_sessions, revoke_session
 from .utils import build_token_metadata
 
 # Nunca importar `knox.models.AuthToken` diretamente: o modelo ativo é o
@@ -139,54 +138,96 @@ class ReauthenticateView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class AuthTokenViewSet(viewsets.ReadOnlyModelViewSet):
-    serializer_class = CustomAuthTokenSerializer
+class SessionScopedViewMixin:
+    """Endpoints administrativos de credenciais recusam API keys de saída."""
+
+    permission_classes = [IsAuthenticated, TokenScopePermission]
+    session_only = True
+
+
+class SessionViewSet(
+    SessionScopedViewMixin,
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.UpdateModelMixin,
+    viewsets.GenericViewSet,
+):
+    """Gerencia as sessões (`TokenType.TOKEN`) do usuário autenticado.
+
+    Nunca lista/edita API keys ou tokens de reset; `PATCH` só aceita
+    `device_name`; `DELETE` revoga logicamente (nunca apaga).
+    """
+
+    serializer_class = SessionSerializer
+    lookup_field = "uuid"
+    http_method_names = ["get", "patch", "delete", "post", "head", "options"]
 
     def get_queryset(self):
-        return AuthToken.objects.filter(responsavel=self.request.user).order_by("-created_at")
+        return (
+            AuthToken.objects.filter(responsavel=self.request.user, type=TokenType.TOKEN, revoked_at__isnull=True)
+            .select_related("metadata")
+            .order_by("-created_at")
+        )
 
     @action(detail=False, methods=["get"])
     def current(self, request):
-        if not hasattr(request, "auth") or not request.auth:
-            return Response({"detail": "Token não encontrado"}, status=status.HTTP_404_NOT_FOUND)
-
         serializer = self.get_serializer(request.auth)
         return Response(serializer.data)
 
-    @action(detail=True, methods=["delete"])
-    def revoke(self, request, pk=None):
-        try:
-            token = self.get_queryset().get(digest=pk)
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        revoke_session(instance, actor=request.user)
 
-            # Não permite revogar o token atual
-            if hasattr(request, "auth") and request.auth.digest == token.digest:
-                return Response(
-                    {"detail": "Você não pode revogar o token atual. Use o endpoint de logout."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            token.delete()
-
-            # PostHog: captura revogação de token individual
-            with new_context():
-                identify_context(str(request.user.pk))
-                capture('token_revoked')
-
-            return Response({"detail": "Token revogado com sucesso"}, status=status.HTTP_204_NO_CONTENT)
-        except AuthToken.DoesNotExist:
-            return Response({"detail": "Token não encontrado"}, status=status.HTTP_404_NOT_FOUND)
-
-    @action(detail=False, methods=["delete"])
-    def revoke_all_except_current(self, request):
-        current_digest = request.auth.digest if hasattr(request, "auth") else None
-
-        deleted_count = self.get_queryset().exclude(digest=current_digest).delete()[0]
-
-        # PostHog: captura revogação de todos os tokens
         with new_context():
             identify_context(str(request.user.pk))
-            capture('all_tokens_revoked', properties={
-                'revoked_count': deleted_count,
-            })
+            capture('session_revoked')
 
-        return Response({"detail": f"{deleted_count} token(s) revogado(s) com sucesso"})
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=False, methods=["post"], url_path="revoke_all_except_current")
+    def revoke_all_except_current(self, request):
+        revoked_count = revoke_all_sessions(request.user, actor=request.user, exclude_uuid=request.auth.uuid)
+
+        with new_context():
+            identify_context(str(request.user.pk))
+            capture('all_sessions_revoked_except_current', properties={'revoked_count': revoked_count})
+
+        return Response({"revoked_count": revoked_count})
+
+
+class LogoutView(APIView):
+    """Revoga logicamente só a sessão atual; nunca API keys/reset."""
+
+    permission_classes = [IsAuthenticated, TokenScopePermission]
+    session_only = True
+
+    def post(self, request):
+        auth_token = request.auth
+        if getattr(auth_token, "type", None) == TokenType.TOKEN:
+            revoke_session(auth_token, actor=request.user)
+
+        user_logged_out.send(sender=request.user.__class__, request=request, user=request.user)
+
+        with new_context():
+            identify_context(str(request.user.pk))
+            capture('user_logged_out')
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class LogoutAllView(APIView):
+    """Revoga logicamente todas as sessões do usuário, incluindo a atual."""
+
+    permission_classes = [IsAuthenticated, TokenScopePermission]
+    session_only = True
+
+    def post(self, request):
+        revoked_count = revoke_all_sessions(request.user, actor=request.user)
+
+        user_logged_out.send(sender=request.user.__class__, request=request, user=request.user)
+
+        with new_context():
+            identify_context(str(request.user.pk))
+            capture('all_sessions_revoked', properties={'revoked_count': revoked_count})
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
