@@ -10,6 +10,7 @@ import pytest
 from knox.models import AuthToken
 from threadlocals.threadlocals import set_current_user, set_thread_variable
 
+from apps.api.autenticacao.models import TokenMetaData, TokenType
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
 from apps.organizacoes.models import Convite, Organizacao, Papel, Time, Vinculo
 from apps.usuarios.factories import UsuarioFactory
@@ -29,6 +30,14 @@ def configurar_request_de_teste(settings):
 
 def client_autenticado(usuario):
     _, token = AuthToken.objects.create(user=usuario)
+    client = APIClient()
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+    return client
+
+
+def client_com_api_key(usuario, scopes):
+    instance, token = AuthToken.objects.create(user=usuario)
+    TokenMetaData.objects.create(token=instance, type=TokenType.API_KEY, scopes=scopes)
     client = APIClient()
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
     return client
@@ -271,3 +280,70 @@ def test_usuario_convidado_aceita_convite_sem_header_de_organizacao():
     assert Vinculo.objects.filter(usuario=usuario, organizacao=organizacao, papel=Papel.MEMBRO).exists()
     convite.refresh_from_db()
     assert convite.aceito_em is not None
+
+
+# ---- scopes públicos (resource:action) derivados dos models ----
+
+
+def test_api_key_com_scope_teams_read_pode_listar_times():
+    usuario = UsuarioFactory()
+    organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
+    vincular(usuario, organizacao, Papel.MEMBRO)
+
+    response = client_com_api_key(usuario, ["teams:read"]).get(
+        "/times/",
+        **{META_HEADER_ORGANIZACAO: "org-a"},
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+
+
+def test_api_key_sem_scope_teams_read_e_recusada():
+    usuario = UsuarioFactory()
+    organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
+    vincular(usuario, organizacao, Papel.MEMBRO)
+
+    response = client_com_api_key(usuario, ["organizations:read"]).get(
+        "/times/",
+        **{META_HEADER_ORGANIZACAO: "org-a"},
+    )
+
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+
+
+def test_api_key_precisa_do_scope_invitations_accept_para_aceitar_convite():
+    usuario = UsuarioFactory(email="precisa-scope@example.com")
+    organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
+    convite = Convite.objects.create(
+        organizacao=organizacao,
+        email=usuario.email,
+        papel=Papel.MEMBRO,
+        expira_em=timezone.now() + timedelta(days=1),
+    )
+
+    response = client_com_api_key(usuario, ["teams:read"]).post(
+        "/convites/aceitar/",
+        {"token": convite.token},
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+
+
+def test_api_key_com_scope_invitations_accept_aceita_convite():
+    usuario = UsuarioFactory(email="com-scope@example.com")
+    organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
+    convite = Convite.objects.create(
+        organizacao=organizacao,
+        email=usuario.email,
+        papel=Papel.MEMBRO,
+        expira_em=timezone.now() + timedelta(days=1),
+    )
+
+    response = client_com_api_key(usuario, ["invitations:accept"]).post(
+        "/convites/aceitar/",
+        {"token": convite.token},
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK

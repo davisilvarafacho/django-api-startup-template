@@ -110,10 +110,14 @@ A classe `Meta` de cada model **deve** declarar, no mínimo, os seguintes atribu
   - Manager de "ativos" (`ativos`) além do `objects` (`CustomManager`, que aplica
     `defer` dos `queryset_deferred_fields`).
   - Campo `ativo` para soft-active (ligado às actions `ativar`/`inativar`).
-  - `owner` preenchido automaticamente com o usuário corrente no `save()`.
+  - `created_by` preenchido automaticamente com o usuário corrente no `save()`
+    (via `CreationAuditMixin`); não existe `last_modified_by` — quem alterou por
+    último vive no `history`, não num FK.
   - Histórico de auditoria (`history`, via `django-auditlog`).
-  - Timestamps de criação/alteração (`data_criacao`, `hora_criacao`, …).
+  - Timestamps `created_at`/`last_modified_at`.
   - Utilitários: `clonar()`, `as_dict()`, `get_fields()` e afins.
+  - `api_scope_resource = None` por padrão — ver §2.7 para expor o model como
+    recurso público de scopes/permissions.
 
 ### 2.5. Métodos Obrigatórios
 
@@ -126,6 +130,27 @@ A classe `Meta` de cada model **deve** declarar, no mínimo, os seguintes atribu
 - Campos expostos porém não editáveis são declarados em `extra_read_only_fields`
   (somados aos `read_only_fields` da `Base`). O `BaseModelSerializer` consome ambos
   automaticamente.
+
+### 2.7. Scopes e Permissions Públicas (`resource:action`)
+
+- A interface pública e estável de scopes de API key e permissions humanas é
+  `resource:action` (ex.: `teams:read`, `invitations:accept`); codenames Django
+  (`app_label.codename`) são um detalhe interno, nunca expostos a clientes.
+- Um model expõe seu recurso com `api_scope_resource = "recurso"`; `None`
+  (o default) significa que o model não é exposto.
+- Um ViewSet pode sobrescrever com `scope_resource = "recurso"` quando a
+  superfície pública diverge do model consultado (ex.: sem `queryset` estático).
+  Regra: **default no model, override na view** — só sobrescreva quando
+  necessário.
+- Actions CRUD (`read`/`create`/`update`/`delete`) são derivadas automaticamente
+  da action do ViewSet; actions customizadas declaram o scope com
+  `@require_token_scopes("recurso:action")`.
+- Wildcards: `resource:*` (qualquer action do recurso) e `*` (qualquer recurso).
+  Delegar `*` a uma API key exige superuser ou a permission
+  `autenticacao.grant_unrestricted_apikey` — ver
+  `apps.api.autenticacao.scope_delegation.validate_scope_delegation`.
+- Fonte da verdade: `apps.api.core.scope_registry` (`ScopeRegistry`,
+  `parse_scope`, `matches_scope`, `required_django_permissions`).
 
 ---
 

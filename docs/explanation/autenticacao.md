@@ -58,24 +58,74 @@ Escopos vivem em `TokenMetaData.scopes` como lista de strings. Eles só limitam
 tokens do tipo `999` (`API_KEY`); tokens de sessão continuam dependendo das
 permissions normais do Django/guardian/rules.
 
-Uma view pode declarar escopos de duas formas:
+`TokenScopePermission` roda globalmente antes das permissões de modelo. Se a view
+não exigir nenhum scope, o token não precisa de nada extra.
+
+### A linguagem pública: `resource:action`
+
+Scopes e permissions humanas falam a mesma língua estável: `resource:action`
+(ex.: `teams:read`, `invitations:accept`). Por baixo, isso é traduzido para os
+codenames internos do Django (`app_label.codename`) pelo registry em
+`apps.api.core.scope_registry`; clientes e documentação nunca veem o codename.
+
+- **Actions CRUD**: `read`, `create`, `update`, `delete` — mapeadas para
+  `view_/add_/change_/delete_<model>`. Actions customizadas também são
+  permitidas (ex.: `invitations:accept`).
+- **Wildcards**: `resource:*` (qualquer action daquele recurso) e `*` (qualquer
+  recurso e action).
+
+### Declarando o recurso de um model
+
+```python
+class Time(BaseGlobal):
+    api_scope_resource = "teams"
+```
+
+`None` (o default de `BaseGlobal`) significa que o model não é exposto pelo
+registry. Um ViewSet pode sobrescrever o recurso público quando ele diverge do
+model consultado (ex.: sem `queryset` estático):
+
+```python
+class OrganizacaoViewSet(ScopeResourceMixin, ...):
+    scope_resource = "organizations"
+```
+
+`UtilsViewSetMixin`/`BaseModelViewSet` já incluem esse mixin; ViewSets que não
+herdam dele (como os de `apps.organizacoes`) usam `ScopeResourceMixin`
+diretamente.
+
+### Actions customizadas
+
+`get_required_token_scopes()` deriva o scope CRUD automaticamente a partir da
+action padrão (`list`/`retrieve`/`create`/`update`/`partial_update`/`destroy`).
+Para uma `@action` customizada, declare o scope explicitamente:
+
+```python
+@action(detail=False, methods=["post"], url_path="aceitar")
+@require_token_scopes("invitations:accept")
+def aceitar(self, request):
+    ...
+```
+
+### Compatibilidade
+
+O atributo estático legado ainda funciona quando a view não define
+`get_required_token_scopes()` (nem herda o mixin):
 
 ```python
 required_token_scopes = ["org:read"]
+# ou
+required_token_scopes = {"GET": ["org:read"], "POST": ["org:write"]}
 ```
 
-ou por método/action:
+### Delegação: um usuário só concede o que ele mesmo pode fazer
 
-```python
-required_token_scopes = {
-    "GET": ["org:read"],
-    "POST": ["org:write"],
-    "create": ["org:write"],
-}
-```
-
-`TokenScopePermission` roda globalmente antes das permissões de modelo. Se a view
-não declarar escopos, ela não exige nada extra do token.
+`apps.api.autenticacao.scope_delegation.validate_scope_delegation(user, scopes)`
+impede que uma API key receba mais poder do que o usuário responsável possui:
+cada scope concreto exige a permission Django equivalente
+(`user.has_perm(...)`); o wildcard global `*` exige superuser ou a permission
+especial `autenticacao.grant_unrestricted_apikey`. Falhas geram
+`APIError(auth.scope_not_delegable)`.
 
 ## Declarando uma rota pública
 

@@ -4,6 +4,7 @@ from rest_framework.viewsets import GenericViewSet
 
 import pytest
 
+from apps.api.autenticacao.models import TokenMetaData
 from apps.api.autenticacao.permissions import require_token_scopes
 from apps.api.base.views import UtilsViewSetMixin
 from apps.usuarios.models import Usuario
@@ -25,7 +26,8 @@ class _RecursoDoModelViewSet(UtilsViewSetMixin, GenericViewSet):
 
 
 class _SemRecursoViewSet(UtilsViewSetMixin, GenericViewSet):
-    queryset = Usuario.objects.all()
+    # `TokenMetaData` não herda de `BaseGlobal`: não tem `api_scope_resource`.
+    queryset = TokenMetaData.objects.all()
     permission_classes = [AllowAny]
 
 
@@ -53,8 +55,7 @@ def test_override_scope_resource_tem_prioridade_sobre_o_model():
     assert view.get_scope_resource() == "users"
 
 
-def test_scope_resource_cai_para_o_default_do_model(monkeypatch):
-    monkeypatch.setattr(Usuario, "api_scope_resource", "users", raising=False)
+def test_scope_resource_cai_para_o_default_do_model():
     view = _RecursoDoModelViewSet()
 
     assert view.get_scope_resource() == "users"
