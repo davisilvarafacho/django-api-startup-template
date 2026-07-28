@@ -28,6 +28,7 @@ ENVS = (
     "BACKBLAZE_PUBLIC_BASE_URL",
     # sentry
     "SENTRY_DSN",
+    "SENSITIVE_FIELD_KEYS",
     # hosts
     "DJANGO_ALLOWED_HOSTS",
     "DJANGO_CSRF_TRUSTED_ORIGINS",
@@ -71,6 +72,7 @@ EnviromentVar = Literal[
     "CELERY_RESULT_BACKEND",
     # sentry
     "SENTRY_DSN",
+    "SENSITIVE_FIELD_KEYS",
 ]
 
 
