@@ -3,27 +3,22 @@ from rest_framework.exceptions import AuthenticationFailed
 import pytest
 
 from apps.api.autenticacao.authentications import TypedTokenAuthentication
-from apps.api.autenticacao.models import TokenMetaData, TokenType
+from apps.api.autenticacao.models import AuthToken, TokenType
 
 
 class UsuarioFalso:
     is_active = True
 
 
-class MetadadosFalsos:
-    def __init__(self, token_type):
-        self.type = token_type
-
-
 class TokenFalso:
     def __init__(self, token_type=None):
         self.user = UsuarioFalso()
         if token_type is not None:
-            self.metadata = MetadadosFalsos(token_type)
+            self.type = token_type
 
 
-def test_token_metadata_tem_tipo_com_valores_publicos():
-    field = TokenMetaData._meta.get_field("type")
+def test_auth_token_tem_tipo_com_valores_publicos():
+    field = AuthToken._meta.get_field("type")
 
     assert field.default == TokenType.TOKEN
     assert TokenType.TOKEN == 1
@@ -48,7 +43,7 @@ def test_autenticacao_recusa_token_de_reset_de_senha():
         auth.validate_user(token)
 
 
-def test_autenticacao_trata_token_sem_metadata_como_sessao():
+def test_autenticacao_trata_token_sem_tipo_explicito_como_sessao():
     auth = TypedTokenAuthentication()
     token = TokenFalso()
 

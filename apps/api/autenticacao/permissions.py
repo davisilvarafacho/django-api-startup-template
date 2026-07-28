@@ -34,13 +34,12 @@ class TokenScopePermission(BasePermission):
             return True
 
         auth_token = getattr(request, "auth", None)
-        metadata = getattr(auth_token, "metadata", None)
-        token_type = getattr(metadata, "type", TokenType.TOKEN)
+        token_type = getattr(auth_token, "type", TokenType.TOKEN)
 
         if token_type != TokenType.API_KEY:
             return True
 
-        granted_scopes = set(getattr(metadata, "scopes", []) or [])
+        granted_scopes = set(getattr(auth_token, "scopes", []) or [])
 
         return any(
             matches_scope(granted, required) for required in required_scopes for granted in granted_scopes

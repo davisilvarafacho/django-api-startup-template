@@ -162,12 +162,15 @@ class TokenMetaData(models.Model):
         related_name='metadata',
         primary_key=True
     )
-    type = models.PositiveSmallIntegerField(
-        verbose_name=_('Tipo'),
-        choices=TokenType.choices,
-        default=TokenType.TOKEN,
-        db_index=True,
-        help_text=_('Tipo de uso do token Knox.'),
+
+    # Verificação recente de identidade (step-up auth). Preenchido só quando a
+    # sessão passa por `POST /auth/reauthenticate/`; usado por
+    # `RecentAuthenticationPermission`/`@require_recent_auth`.
+    reauthenticated_at = models.DateTimeField(
+        verbose_name=_('Reautenticado em'),
+        null=True,
+        blank=True,
+        help_text=_('Última vez que esta sessão confirmou a identidade (senha/MFA).'),
     )
 
     # informações do dispositivo
@@ -347,12 +350,6 @@ class TokenMetaData(models.Model):
         blank=True,
         help_text=_("Dados adicionais em formato JSON")
     )
-    scopes = models.JSONField(
-        verbose_name=_('Escopos'),
-        default=list,
-        blank=True,
-        help_text=_("Escopos concedidos ao token API key, como 'org:read'."),
-    )
 
     def mark_as_suspicious(self, reason):
         """Marca o token como suspeito"""
@@ -383,7 +380,7 @@ class TokenMetaData(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.device_name or self.device_type} - {self.token.user.username}"
+        return f"{self.device_name or self.device_type} - {self.token.responsavel}"
 
 
 # class PasswordResetToken(models.Model):

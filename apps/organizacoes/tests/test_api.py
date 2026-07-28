@@ -37,9 +37,15 @@ def client_autenticado(usuario):
     return client
 
 
-def client_com_api_key(usuario, scopes):
-    instance, token = AuthToken.objects.create(user=usuario)
-    TokenMetaData.objects.create(token=instance, type=TokenType.API_KEY, scopes=scopes)
+def client_com_api_key(usuario, scopes, organizacao):
+    instance, token = AuthToken.objects.create(
+        responsavel=usuario,
+        type=TokenType.API_KEY,
+        organization=organizacao,
+        name="Integração de teste",
+        scopes=scopes,
+    )
+    TokenMetaData.objects.create(token=instance)
     client = APIClient()
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
     return client
@@ -292,7 +298,7 @@ def test_api_key_com_scope_teams_read_pode_listar_times():
     organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
     vincular(usuario, organizacao, Papel.MEMBRO)
 
-    response = client_com_api_key(usuario, ["teams:read"]).get(
+    response = client_com_api_key(usuario, ["teams:read"], organizacao).get(
         "/times/",
         **{META_HEADER_ORGANIZACAO: "org-a"},
     )
@@ -305,7 +311,7 @@ def test_api_key_sem_scope_teams_read_e_recusada():
     organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
     vincular(usuario, organizacao, Papel.MEMBRO)
 
-    response = client_com_api_key(usuario, ["organizations:read"]).get(
+    response = client_com_api_key(usuario, ["organizations:read"], organizacao).get(
         "/times/",
         **{META_HEADER_ORGANIZACAO: "org-a"},
     )
@@ -323,7 +329,7 @@ def test_api_key_precisa_do_scope_invitations_accept_para_aceitar_convite():
         expira_em=timezone.now() + timedelta(days=1),
     )
 
-    response = client_com_api_key(usuario, ["teams:read"]).post(
+    response = client_com_api_key(usuario, ["teams:read"], organizacao).post(
         "/convites/aceitar/",
         {"token": convite.token},
         format="json",
@@ -342,7 +348,7 @@ def test_api_key_com_scope_invitations_accept_aceita_convite():
         expira_em=timezone.now() + timedelta(days=1),
     )
 
-    response = client_com_api_key(usuario, ["invitations:accept"]).post(
+    response = client_com_api_key(usuario, ["invitations:accept"], organizacao).post(
         "/convites/aceitar/",
         {"token": convite.token},
         format="json",
