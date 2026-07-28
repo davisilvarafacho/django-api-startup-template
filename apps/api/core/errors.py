@@ -216,6 +216,11 @@ def error_response(code, *, status_code, message=None, field=None, path=None, co
     return JsonResponse(build_error_payload([item]), status=status_code)
 
 
+def error_response_for_api_error(exc):
+    """Constrói a resposta a partir de um `APIError` já levantado fora do DRF."""
+    return JsonResponse(build_error_payload([exc.as_item()]), status=exc.status_code)
+
+
 def flatten_validation_errors(detail, path=()):
     """Achata o `detail` de um `ValidationError` (DRF ou Django) em `APIErrorItem`s.
 

@@ -109,6 +109,20 @@ def test_rota_privada_com_token_invalido_retorna_401(rf, rota_privada):
     assert chamadas == []
 
 
+def test_rota_privada_com_api_error_usa_o_codigo_e_status_do_erro(rf, rota_privada):
+    from apps.api.core.errors import APIError
+
+    erro = APIError(AuthErrorCode.EXPIRED_TOKEN, status_code=401)
+    middleware, chamadas = build_middleware(AutenticadorFalso(erro=erro))
+
+    resposta = middleware(rf.get("/v1/pedidos/"))
+    payload = json.loads(resposta.content)
+
+    assert resposta.status_code == 401
+    assert payload["errors"][0]["code"] == AuthErrorCode.EXPIRED_TOKEN.value
+    assert chamadas == []
+
+
 def test_rota_privada_com_token_valido_resolve_o_usuario(rf, rota_privada):
     usuario = UsuarioFalso()
     middleware, chamadas = build_middleware(AutenticadorFalso(resultado=(usuario, "token-obj")))

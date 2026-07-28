@@ -12,3 +12,7 @@ class OrganizationErrorCode(models.TextChoices):
         "organizations.invitation_email_mismatch",
         _("Este convite pertence a outro e-mail."),
     )
+    TENANT_MISMATCH = (
+        "organizations.tenant_mismatch",
+        _("O header X-Organization não corresponde à organização desta credencial."),
+    )

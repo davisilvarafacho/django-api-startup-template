@@ -12,7 +12,11 @@ class UsuarioFalso:
 
 class TokenFalso:
     def __init__(self, token_type=None):
-        self.user = UsuarioFalso()
+        self.responsavel = UsuarioFalso()
+        self.user = self.responsavel
+        self.expiry = None
+        self.revoked_at = None
+        self.suspended_at = None
         if token_type is not None:
             self.type = token_type
 

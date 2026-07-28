@@ -50,11 +50,32 @@ def test_token_de_sessao_nao_e_limitado_por_scopes():
     assert permission.has_permission(request, ViewComScopes())
 
 
-def test_view_sem_scopes_nao_exige_nada():
+def test_sessao_em_view_sem_scopes_nao_exige_nada():
     permission = permissions.TokenScopePermission()
-    request = RequestFalsa("GET", TokenFalso(TokenType.API_KEY, scopes=[]))
+    request = RequestFalsa("GET", TokenFalso(TokenType.TOKEN, scopes=[]))
 
     assert permission.has_permission(request, object())
+
+
+def test_api_key_em_view_sem_scope_declarado_e_recusada():
+    """Scope é a única autoridade de uma API key: sem scope exigido, fail-closed."""
+    permission = permissions.TokenScopePermission()
+    request = RequestFalsa("GET", TokenFalso(TokenType.API_KEY, scopes=["*"]))
+
+    assert not permission.has_permission(request, object())
+
+
+def test_view_session_only_recusa_api_key_mesmo_com_scope():
+    class ViewSessionOnly:
+        session_only = True
+
+        def get_required_token_scopes(self):
+            return ["organizations:read"]
+
+    permission = permissions.TokenScopePermission()
+    request = RequestFalsa("GET", TokenFalso(TokenType.API_KEY, scopes=["organizations:read"]))
+
+    assert not permission.has_permission(request, ViewSessionOnly())
 
 
 def test_token_scope_permission_esta_nas_permissoes_globais():

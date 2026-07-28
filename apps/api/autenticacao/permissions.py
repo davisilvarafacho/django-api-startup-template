@@ -23,21 +23,31 @@ def require_token_scopes(*scopes):
 
 
 class TokenScopePermission(BasePermission):
-    """Aplica escopos declarados na view apenas para tokens do tipo API key."""
+    """Aplica escopos declarados na view apenas para tokens do tipo API key.
+
+    Para API keys, o scope é a **única** autorização: sem scope exigido pela
+    view a credencial é recusada (fail-closed), já que
+    `CustomDjangoModelPermissions`/`PapelMinimoPermission` ignoram permissions
+    e papel pessoais para esse tipo de token. `view.session_only = True`
+    recusa API keys de saída, antes de qualquer avaliação de scope.
+    """
 
     message = "Token sem escopo suficiente para este endpoint."
     view_attribute = "required_token_scopes"
 
     def has_permission(self, request, view):
-        required_scopes = self.get_required_scopes(request, view)
-        if not required_scopes:
-            return True
-
         auth_token = getattr(request, "auth", None)
         token_type = getattr(auth_token, "type", TokenType.TOKEN)
 
         if token_type != TokenType.API_KEY:
             return True
+
+        if getattr(view, "session_only", False):
+            return False
+
+        required_scopes = self.get_required_scopes(request, view)
+        if not required_scopes:
+            return False
 
         granted_scopes = set(getattr(auth_token, "scopes", []) or [])
 
@@ -142,6 +152,12 @@ class CustomDjangoModelPermissions(DjangoModelPermissions):
             return False
 
         if getattr(view, "_ignore_model_permissions", False):
+            return True
+
+        # Autorização de API key vem só de `TokenScopePermission`: as
+        # permissions Django pessoais do responsável não valem para a key.
+        auth_token = getattr(request, "auth", None)
+        if getattr(auth_token, "type", None) == TokenType.API_KEY:
             return True
 
         queryset = self._queryset(view)

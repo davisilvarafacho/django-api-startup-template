@@ -7,6 +7,8 @@ app lista suas exceções em `public_routes.py` (rotas sem token) ou
 """
 from rest_framework.permissions import BasePermission
 
+from apps.api.autenticacao.errors import AuthErrorCode
+from apps.api.autenticacao.models import TokenType
 from apps.api.core.errors import APIError
 from apps.api.core.route_markers import MARCADOR_SEM_TENANCY, tem_marcador
 from apps.api.core.routes_registry import routes_registry
@@ -15,6 +17,10 @@ from apps.organizacoes.context import definir_organizacao_atual
 from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.models import Papel, Vinculo
 from apps.organizacoes.routes import tenant_free_registry
+
+
+def _is_api_key(request):
+    return getattr(getattr(request, "auth", None), "type", None) == TokenType.API_KEY
 
 
 class TenantPermission(BasePermission):
@@ -48,6 +54,24 @@ class TenantPermission(BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
 
+        auth_token = getattr(request, "auth", None)
+        if _is_api_key(request):
+            # O tenant de uma API key vem só da própria credencial (já validado
+            # contra o header em `resolve_token_organization`). Não usamos o
+            # Vinculo para decidir permissions (autorização é só por scopes),
+            # mas exigimos que ele exista: se o responsável perdeu o vínculo
+            # com a organização, a key fica inutilizável até ele ser retomado.
+            organizacao = auth_token.organization
+            vinculo_ativo = Vinculo.objects.filter(
+                organizacao=organizacao, usuario=auth_token.responsavel, ativo=True
+            ).exists()
+            if not vinculo_ativo:
+                raise APIError(AuthErrorCode.RESPONSIBLE_INACTIVE, status_code=403)
+
+            request.organizacao = organizacao
+            definir_organizacao_atual(organizacao.id)
+            return True
+
         vinculo = (
             Vinculo.objects.select_related("organizacao")
             .filter(organizacao__slug=slug, usuario=request.user, ativo=True)
@@ -66,11 +90,19 @@ class TenantPermission(BasePermission):
 
 
 class PapelMinimoPermission(BasePermission):
-    """Exige um papel minimo por action, usando o vinculo resolvido no tenant."""
+    """Exige um papel minimo por action, usando o vinculo resolvido no tenant.
+
+    Não se aplica a API keys: papel é uma propriedade do vínculo pessoal do
+    responsável, que a autorização de API key deliberadamente ignora (só os
+    scopes da própria credencial mandam).
+    """
 
     message = "Papel insuficiente nesta organização."
 
     def has_permission(self, request, view):
+        if _is_api_key(request):
+            return True
+
         vinculo = getattr(request, "vinculo", None)
         if vinculo is None:
             return False

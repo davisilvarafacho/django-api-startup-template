@@ -15,7 +15,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import AuthenticationFailed
 
-from apps.api.core.errors import error_response
+from apps.api.core.errors import APIError, error_response, error_response_for_api_error
 from apps.api.core.route_markers import MARCADOR_PUBLICA, tem_marcador, view_do_path
 from apps.api.core.routes_registry import routes_registry
 
@@ -70,6 +70,8 @@ class AuthenticationMiddleware:
         """Resolve o usuário ou devolve a resposta de erro que encerra a request."""
         try:
             result = self.run_authenticators(request)
+        except APIError as exc:
+            return error_response_for_api_error(exc)
         except AuthenticationFailed as exc:
             return error_response(
                 AuthErrorCode.INVALID_TOKEN,

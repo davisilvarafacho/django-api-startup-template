@@ -13,3 +13,6 @@ class AuthErrorCode(models.TextChoices):
     INSUFFICIENT_SCOPE = "auth.insufficient_scope", _("Escopo insuficiente para essa operação.")
     REAUTHENTICATION_REQUIRED = "auth.reauthentication_required", _("Reautenticação necessária.")
     SCOPE_NOT_DELEGABLE = "auth.scope_not_delegable", _("Você não pode conceder esse scope.")
+    REVOKED_TOKEN = "auth.revoked_token", _("Token revogado.")
+    API_KEY_SUSPENDED = "auth.api_key_suspended", _("Esta API key está suspensa.")
+    RESPONSIBLE_INACTIVE = "auth.responsible_inactive", _("O responsável por esta credencial está inativo.")
