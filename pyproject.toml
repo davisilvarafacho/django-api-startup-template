@@ -69,7 +69,7 @@ dependencies = [
     "typing-extensions==4.15.0",
     "tzdata==2025.2",
     "ua-parser==1.0.1",
-    "ua-parser-builtins==0.18.0.post1",
+    "ua-parser-builtins==202606",
     "urllib3==2.5.0",
     "user-agents==2.2.0",
     "webencodings==0.5.1",
