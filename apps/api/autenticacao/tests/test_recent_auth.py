@@ -176,9 +176,10 @@ def _client_com_sessao(usuario):
 
 
 def _client_com_api_key(usuario, organizacao=None):
-    from apps.organizacoes.models import Organizacao
+    from apps.organizacoes.models import Organizacao, Papel, Vinculo
 
     organizacao = organizacao or Organizacao.objects.create(nome="Org", slug="org-reauth")
+    Vinculo.objects.create(usuario=usuario, organizacao=organizacao, papel=Papel.MEMBRO)
     instance, token = AuthToken.objects.create(
         responsavel=usuario, type=TokenType.API_KEY, organization=organizacao, name="Integração"
     )

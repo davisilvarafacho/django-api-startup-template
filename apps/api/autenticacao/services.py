@@ -11,6 +11,9 @@ from django.utils import timezone
 
 from knox.models import get_token_model
 
+from apps.api.core.errors import APIError
+
+from .errors import AuthErrorCode
 from .models import TokenMetaData, TokenType
 
 
@@ -74,3 +77,98 @@ def revoke_all_sessions(user, *, actor, exclude_uuid=None):
         queryset = queryset.exclude(uuid=exclude_uuid)
 
     return queryset.update(revoked_at=timezone.now(), revoked_by=actor)
+
+
+def rotate_api_key(current, *, actor):
+    """Rotaciona uma API key: cria uma linha nova e revoga a atual, atomicamente.
+
+    O segredo antigo perde validade imediatamente; a linha revogada permanece
+    para auditoria, apontando `replaced_by` para a nova.
+    """
+    auth_token_model = get_token_model()
+
+    with transaction.atomic():
+        current = auth_token_model.objects.select_for_update().get(pk=current.pk)
+
+        issued = issue_token(
+            responsavel=current.responsavel,
+            token_type=TokenType.API_KEY,
+            created_by=current.created_by,
+            expiry=None,
+            metadata_input={},
+            organization=current.organization,
+            name=current.name,
+            scopes=current.scopes,
+        )
+        # `expiry` do manager é relativo (soma a `timezone.now()`); aqui
+        # preservamos o mesmo prazo absoluto da credencial anterior.
+        issued.instance.expiry = current.expiry
+        issued.instance.save(update_fields=["expiry"])
+
+        current.revoked_at = timezone.now()
+        current.revoked_by = actor
+        current.replaced_by = issued.instance
+        current.save(update_fields=["revoked_at", "revoked_by", "replaced_by"])
+
+    return issued
+
+
+def suspend_api_key(instance, *, actor, reason=""):
+    """Suspende (reversível) uma API key. Manual ou automática (ver `ensure_api_key_still_valid`)."""
+    instance.suspended_at = timezone.now()
+    instance.suspended_by = actor
+    instance.suspension_reason = reason
+    instance.save(update_fields=["suspended_at", "suspended_by", "suspension_reason"])
+    return instance
+
+
+def resume_api_key(instance, *, actor):
+    """Retoma uma API key suspensa; exige responsável ativo e vinculado. Nunca retoma revogada."""
+    if instance.revoked_at is not None:
+        raise APIError(AuthErrorCode.REVOKED_TOKEN, status_code=409)
+
+    from apps.organizacoes.models import Vinculo
+
+    vinculo_ativo = Vinculo.objects.filter(
+        organizacao=instance.organization, usuario=instance.responsavel, ativo=True
+    ).exists()
+
+    if not instance.responsavel.is_active or not vinculo_ativo:
+        raise APIError(AuthErrorCode.RESPONSIBLE_INACTIVE, status_code=409)
+
+    instance.suspended_at = None
+    instance.suspended_by = None
+    instance.suspension_reason = ""
+    instance.save(update_fields=["suspended_at", "suspended_by", "suspension_reason"])
+    return instance
+
+
+def revoke_api_key(instance, *, actor):
+    """Revoga permanentemente uma API key. O registro permanece para auditoria."""
+    instance.revoked_at = timezone.now()
+    instance.revoked_by = actor
+    instance.save(update_fields=["revoked_at", "revoked_by"])
+    return instance
+
+
+def ensure_api_key_still_valid(token):
+    """Suspende automática e idempotentemente uma API key sem responsável ativo/vinculado.
+
+    Chamado a cada request tenant-scoped (`TenantPermission`, onde o vínculo já
+    é resolvido): fail-closed materializado, não só recusado na hora.
+    """
+    if token.type != TokenType.API_KEY or token.suspended_at is not None or token.revoked_at is not None:
+        return token
+
+    from apps.organizacoes.models import Vinculo
+
+    vinculo_ativo = Vinculo.objects.filter(
+        organizacao=token.organization, usuario=token.responsavel, ativo=True
+    ).exists()
+
+    if not token.responsavel.is_active or not vinculo_ativo:
+        token.suspended_at = timezone.now()
+        token.suspension_reason = "Responsável inativo ou sem vínculo na organização."
+        token.save(update_fields=["suspended_at", "suspension_reason"])
+
+    return token

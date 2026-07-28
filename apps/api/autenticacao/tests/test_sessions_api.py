@@ -6,7 +6,7 @@ from knox.models import get_token_model
 from threadlocals.threadlocals import set_current_user, set_thread_variable
 
 from apps.api.autenticacao.models import TokenMetaData, TokenType
-from apps.organizacoes.models import Organizacao
+from apps.organizacoes.models import Organizacao, Papel, Vinculo
 from apps.usuarios.factories import UsuarioFactory
 
 pytestmark = pytest.mark.django_db
@@ -36,6 +36,7 @@ def _sessao(usuario, device_name=""):
 
 def _api_key(usuario):
     organizacao = Organizacao.objects.create(nome="Org", slug="org-sessions-api")
+    Vinculo.objects.create(usuario=usuario, organizacao=organizacao, papel=Papel.MEMBRO)
     instance, token = AuthToken.objects.create(
         responsavel=usuario, type=TokenType.API_KEY, organization=organizacao, name="Integração"
     )

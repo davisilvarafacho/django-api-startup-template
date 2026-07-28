@@ -156,8 +156,11 @@ def test_api_key_com_responsavel_sem_vinculo_na_organizacao_e_recusada():
 
     response = client.get("/times/")
 
-    assert response.status_code == 403
-    assert response.data["errors"][0]["code"] == "auth.responsible_inactive"
+    assert response.status_code == 401
+    assert response.json()["errors"][0]["code"] == "auth.api_key_suspended"
+
+    instance = AuthToken.objects.get(responsavel=usuario, organization=organizacao)
+    assert instance.suspended_at is not None
 
 
 def test_api_key_ignora_permissions_pessoais_do_responsavel():

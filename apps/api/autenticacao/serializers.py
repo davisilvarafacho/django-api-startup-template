@@ -1,11 +1,14 @@
-from django.contrib.auth import authenticate
+from django.contrib.auth import authenticate, get_user_model
 
 from rest_framework import serializers
 
 from apps.api.core.errors import APIError
+from apps.organizacoes.errors import OrganizationErrorCode
+from apps.organizacoes.models import Vinculo
 
 from .errors import AuthErrorCode
 from .recent_auth import user_has_mfa_enabled, verify_mfa_code
+from .scope_delegation import validate_scope_delegation
 
 
 class LoginSerializer(serializers.Serializer):
@@ -94,4 +97,98 @@ class SessionSerializer(serializers.Serializer):
         if device_name is not None:
             instance.metadata.device_name = device_name
             instance.metadata.save(update_fields=["device_name"])
+        return instance
+
+
+class APIKeySerializer(serializers.Serializer):
+    """Saída de uma API key. Nunca inclui `digest`, `token_key` ou o plain token."""
+
+    uuid = serializers.UUIDField(read_only=True)
+    name = serializers.CharField(read_only=True)
+    responsavel = serializers.PrimaryKeyRelatedField(read_only=True)
+    created_by = serializers.PrimaryKeyRelatedField(read_only=True)
+    scopes = serializers.ListField(child=serializers.CharField(), read_only=True)
+    expiry = serializers.DateTimeField(read_only=True, allow_null=True)
+    created_at = serializers.DateTimeField(read_only=True)
+    revoked_at = serializers.DateTimeField(read_only=True, allow_null=True)
+    suspended_at = serializers.DateTimeField(read_only=True, allow_null=True)
+    suspension_reason = serializers.CharField(read_only=True)
+    status = serializers.SerializerMethodField()
+
+    def get_status(self, obj):
+        if obj.revoked_at:
+            return "revoked"
+        if obj.suspended_at:
+            return "suspended"
+        return "active"
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        plain_token = getattr(instance, "token", None)
+        if plain_token is not None:
+            data["token"] = plain_token
+        return data
+
+
+class APIKeyWriteSerializer(APIKeySerializer):
+    """Create/PATCH: valida vínculo do responsável e delega scopes com autoridade do ator."""
+
+    name = serializers.CharField()
+    responsavel = serializers.PrimaryKeyRelatedField(queryset=get_user_model().objects.none())
+    scopes = serializers.ListField(child=serializers.CharField(), required=False, default=list)
+    expiry = serializers.DateTimeField(required=False, allow_null=True)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["responsavel"].queryset = get_user_model().objects.all()
+
+    def validate_scopes(self, scopes):
+        request = self.context["request"]
+        return list(validate_scope_delegation(request.user, scopes))
+
+    def validate_responsavel(self, responsavel):
+        organizacao = self.context["request"].organizacao
+        vinculo_ativo = Vinculo.objects.filter(
+            organizacao=organizacao, usuario=responsavel, ativo=True
+        ).exists()
+        if not vinculo_ativo:
+            raise APIError(
+                OrganizationErrorCode.MEMBERSHIP_REQUIRED,
+                status_code=422,
+                field="responsavel",
+            )
+        return responsavel
+
+    def create(self, validated_data):
+        from .models import TokenType
+        from .services import issue_token
+
+        request = self.context["request"]
+        issued = issue_token(
+            responsavel=validated_data["responsavel"],
+            token_type=TokenType.API_KEY,
+            created_by=request.user,
+            # `issue_token`/o manager tratam `expiry` como relativo (`now() + delta`);
+            # aqui o cliente manda uma data absoluta opcional, então a aplicamos
+            # depois de criado em vez de repassar direto.
+            expiry=None,
+            metadata_input={},
+            organization=request.organizacao,
+            name=validated_data["name"],
+            scopes=validated_data.get("scopes", []),
+        )
+        instance = issued.instance
+        expiry = validated_data.get("expiry")
+        if expiry is not None:
+            instance.expiry = expiry
+            instance.save(update_fields=["expiry"])
+
+        instance.token = issued.plain_token
+        return instance
+
+    def update(self, instance, validated_data):
+        for field_name in ("name", "responsavel", "scopes"):
+            if field_name in validated_data:
+                setattr(instance, field_name, validated_data[field_name])
+        instance.save()
         return instance

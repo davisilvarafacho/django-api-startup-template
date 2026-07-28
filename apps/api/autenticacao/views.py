@@ -13,13 +13,30 @@ from knox.settings import knox_settings
 from posthog import capture, identify_context, new_context
 
 from apps.api.core.errors import APIError
+from apps.organizacoes.permissions import TenantPermission
 
 from .errors import AuthErrorCode
 from .models import TokenType
-from .permissions import TokenScopePermission
+from .permissions import APIKeyPermissions, TokenScopePermission
+from .recent_auth import RecentAuthenticationPermission, require_recent_auth
 from .risk import evaluate_login_risk
-from .serializers import LoginResponseSerializer, LoginSerializer, ReauthenticateSerializer, SessionSerializer
-from .services import issue_token, revoke_all_sessions, revoke_session
+from .serializers import (
+    APIKeySerializer,
+    APIKeyWriteSerializer,
+    LoginResponseSerializer,
+    LoginSerializer,
+    ReauthenticateSerializer,
+    SessionSerializer,
+)
+from .services import (
+    issue_token,
+    resume_api_key,
+    revoke_all_sessions,
+    revoke_api_key,
+    revoke_session,
+    rotate_api_key,
+    suspend_api_key,
+)
 from .utils import build_token_metadata
 
 # Nunca importar `knox.models.AuthToken` diretamente: o modelo ativo é o
@@ -231,3 +248,83 @@ class LogoutAllView(APIView):
             capture('all_sessions_revoked', properties={'revoked_count': revoked_count})
 
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class APIKeyViewSet(viewsets.ModelViewSet):
+    """CRUD e ciclo de vida de API keys da organização do header.
+
+    Uma API key nunca administra outras credenciais: `session_only` faz o
+    `TokenScopePermission` recusá-la de saída, antes de `APIKeyPermissions`
+    (as permissions humanas explícitas `view_apikey`/`add_apikey`/...).
+    """
+
+    lookup_field = "uuid"
+    permission_classes = [
+        IsAuthenticated,
+        TenantPermission,
+        TokenScopePermission,
+        APIKeyPermissions,
+        RecentAuthenticationPermission,
+    ]
+    session_only = True
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    def get_queryset(self):
+        return (
+            AuthToken.objects.filter(type=TokenType.API_KEY, organization=self.request.organizacao)
+            .select_related("metadata", "responsavel")
+            .order_by("-created_at")
+        )
+
+    def get_serializer_class(self):
+        if self.action in ("create", "partial_update"):
+            return APIKeyWriteSerializer
+        return APIKeySerializer
+
+    def perform_destroy(self, instance):
+        revoke_api_key(instance, actor=self.request.user)
+
+    @require_recent_auth()
+    def create(self, request, *args, **kwargs):
+        return super().create(request, *args, **kwargs)
+
+    @require_recent_auth()
+    def partial_update(self, request, *args, **kwargs):
+        return super().partial_update(request, *args, **kwargs)
+
+    @require_recent_auth()
+    @action(detail=True, methods=["post"])
+    def rotate(self, request, uuid=None):
+        instance = self.get_object()
+        issued = rotate_api_key(instance, actor=request.user)
+        # Plain token só aparece na criação/rotação; não é um campo persistido.
+        issued.instance.token = issued.plain_token
+
+        with new_context():
+            identify_context(str(request.user.pk))
+            capture('api_key_rotated')
+
+        data = self.get_serializer(issued.instance).data
+        return Response(data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"])
+    def suspend(self, request, uuid=None):
+        instance = self.get_object()
+        suspend_api_key(instance, actor=request.user, reason=request.data.get("reason", ""))
+
+        with new_context():
+            identify_context(str(request.user.pk))
+            capture('api_key_suspended')
+
+        return Response(self.get_serializer(instance).data)
+
+    @action(detail=True, methods=["post"])
+    def resume(self, request, uuid=None):
+        instance = self.get_object()
+        resume_api_key(instance, actor=request.user)
+
+        with new_context():
+            identify_context(str(request.user.pk))
+            capture('api_key_resumed')
+
+        return Response(self.get_serializer(instance).data)

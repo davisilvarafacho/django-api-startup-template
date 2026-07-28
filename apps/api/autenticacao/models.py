@@ -133,6 +133,16 @@ class AuthToken(CreationAuditMixin):
                 name="auth_token_api_key_exige_organizacao",
             ),
         ]
+        # Permissions humanas explícitas de gerenciamento de API key. Não são os
+        # defaults do model (`view_authtoken`/`add_authtoken`/...): ser criador ou
+        # responsável de uma key não concede autoridade administrativa sobre ela.
+        permissions = [
+            ("view_apikey", "Pode ver API keys"),
+            ("add_apikey", "Pode criar API keys"),
+            ("change_apikey", "Pode alterar API keys"),
+            ("delete_apikey", "Pode revogar API keys"),
+            ("rotate_apikey", "Pode rotacionar API keys"),
+        ]
 
     def __str__(self):
         return f"{self.digest} : {self.responsavel}"

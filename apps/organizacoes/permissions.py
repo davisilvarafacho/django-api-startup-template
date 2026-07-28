@@ -61,13 +61,15 @@ class TenantPermission(BasePermission):
             # Vinculo para decidir permissions (autorização é só por scopes),
             # mas exigimos que ele exista: se o responsável perdeu o vínculo
             # com a organização, a key fica inutilizável até ele ser retomado.
-            organizacao = auth_token.organization
-            vinculo_ativo = Vinculo.objects.filter(
-                organizacao=organizacao, usuario=auth_token.responsavel, ativo=True
-            ).exists()
-            if not vinculo_ativo:
-                raise APIError(AuthErrorCode.RESPONSIBLE_INACTIVE, status_code=403)
+            # `ensure_api_key_still_valid` materializa a suspensão (fail-closed
+            # com trilha de auditoria) em vez de só recusar na hora.
+            from apps.api.autenticacao.services import ensure_api_key_still_valid
 
+            ensure_api_key_still_valid(auth_token)
+            if auth_token.suspended_at is not None:
+                raise APIError(AuthErrorCode.API_KEY_SUSPENDED, status_code=401)
+
+            organizacao = auth_token.organization
             request.organizacao = organizacao
             definir_organizacao_atual(organizacao.id)
             return True
