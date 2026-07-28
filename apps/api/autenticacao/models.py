@@ -238,6 +238,9 @@ class TokenMetaData(models.Model):
         ordering = ['-last_used']
         verbose_name = _('Metadado de token')
         verbose_name_plural = _('Metadados de tokens')
+        permissions = [
+            ("grant_unrestricted_apikey", _("Pode conceder API keys com scope irrestrito (*)")),
+        ]
 
     def __str__(self):
         return f"{self.device_name or self.device_type} - {self.token.user.username}"

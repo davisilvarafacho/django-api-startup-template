@@ -12,3 +12,4 @@ class AuthErrorCode(models.TextChoices):
     PERMISSION_DENIED = "auth.permission_denied", _("Você não tem permissão para executar essa ação.")
     INSUFFICIENT_SCOPE = "auth.insufficient_scope", _("Escopo insuficiente para essa operação.")
     REAUTHENTICATION_REQUIRED = "auth.reauthentication_required", _("Reautenticação necessária.")
+    SCOPE_NOT_DELEGABLE = "auth.scope_not_delegable", _("Você não pode conceder esse scope.")

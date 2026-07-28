@@ -111,6 +111,24 @@ class ScopeRegistry:
     def lookup(self, resource):
         return self._resources.get(resource)
 
+    def display_permissions_for(self, user):
+        """Traduz as permissions Django concedidas a `user` para `resource:action`.
+
+        Útil para exibir, na linguagem pública, o que um usuário pode delegar
+        a uma API key (ver `apps.api.autenticacao.scope_delegation`).
+        """
+        scopes = []
+        for resource, definition in self._resources.items():
+            if definition.model is None:
+                continue
+
+            app_label = definition.model._meta.app_label
+            for action, codename in definition.action_permissions.items():
+                if user.has_perm(f"{app_label}.{codename}"):
+                    scopes.append(f"{resource}:{action}")
+
+        return scopes
+
     def all_resources(self):
         return dict(self._resources)
 
