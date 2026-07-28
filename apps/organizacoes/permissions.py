@@ -5,13 +5,14 @@ Está em `DEFAULT_PERMISSION_CLASSES`, então **toda** rota exige um
 app lista suas exceções em `public_routes.py` (rotas sem token) ou
 `tenant_free_routes.py` (rotas com token, sem organização).
 """
-from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import BasePermission
 
+from apps.api.core.errors import APIError
 from apps.api.core.route_markers import MARCADOR_SEM_TENANCY, tem_marcador
 from apps.api.core.routes_registry import routes_registry
 from apps.organizacoes.constants import HEADER_ORGANIZACAO
 from apps.organizacoes.context import definir_organizacao_atual
+from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.models import Papel, Vinculo
 from apps.organizacoes.routes import tenant_free_registry
 
@@ -38,7 +39,11 @@ class TenantPermission(BasePermission):
 
         slug = getattr(request, "organizacao_slug", None)
         if not slug:
-            raise ValidationError({HEADER_ORGANIZACAO: "Header obrigatório."})
+            raise APIError(
+                OrganizationErrorCode.HEADER_REQUIRED,
+                status_code=422,
+                field=HEADER_ORGANIZACAO,
+            )
 
         if not request.user or not request.user.is_authenticated:
             return False
@@ -50,7 +55,7 @@ class TenantPermission(BasePermission):
         )
 
         if vinculo is None:
-            raise PermissionDenied(self.message)
+            raise APIError(OrganizationErrorCode.MEMBERSHIP_REQUIRED, status_code=403, message=self.message)
 
         request.organizacao = vinculo.organizacao
         request.vinculo = vinculo
@@ -71,7 +76,10 @@ class PapelMinimoPermission(BasePermission):
             return False
 
         papel_minimo = self.get_papel_minimo(view)
-        return vinculo.tem_papel_minimo(papel_minimo)
+        if not vinculo.tem_papel_minimo(papel_minimo):
+            raise APIError(OrganizationErrorCode.ROLE_INSUFFICIENT, status_code=403, message=self.message)
+
+        return True
 
     def get_papel_minimo(self, view):
         papeis_por_action = getattr(view, "papeis_por_action", {})

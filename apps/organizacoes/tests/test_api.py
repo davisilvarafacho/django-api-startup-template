@@ -138,6 +138,119 @@ def test_gestor_cria_convite_na_organizacao_do_header():
     assert response.data["token"] == convite.token
 
 
+def test_header_de_organizacao_ausente_retorna_422():
+    usuario = UsuarioFactory()
+    org_a = Organizacao.objects.create(nome="Org A", slug="org-a")
+    vincular(usuario, org_a, Papel.MEMBRO)
+
+    response = client_autenticado(usuario).get("/times/")
+
+    assert response.status_code == 422
+    assert response.data["errors"][0]["code"] == "organizations.header_required"
+    assert response.data["errors"][0]["field"] == "X-Organization"
+
+
+def test_usuario_sem_vinculo_ativo_na_organizacao_retorna_403():
+    usuario = UsuarioFactory()
+    Organizacao.objects.create(nome="Org A", slug="org-a")
+
+    response = client_autenticado(usuario).get(
+        "/times/",
+        **{META_HEADER_ORGANIZACAO: "org-a"},
+    )
+
+    assert response.status_code == 403
+    assert response.data["errors"][0]["code"] == "organizations.membership_required"
+
+
+def test_papel_insuficiente_para_criar_time_retorna_403():
+    usuario = UsuarioFactory()
+    organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
+    vincular(usuario, organizacao, Papel.MEMBRO)
+
+    response = client_autenticado(usuario).post(
+        "/times/",
+        {"nome": "Produto"},
+        format="json",
+        **{META_HEADER_ORGANIZACAO: "org-a"},
+    )
+
+    assert response.status_code == 403
+    assert response.data["errors"][0]["code"] == "organizations.role_insufficient"
+
+
+def test_convite_com_papel_acima_do_proprio_e_recusado():
+    usuario = UsuarioFactory()
+    organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
+    vincular(usuario, organizacao, Papel.GESTOR)
+
+    response = client_autenticado(usuario).post(
+        "/convites/",
+        {"email": "nova@example.com", "papel": Papel.PROPRIETARIO},
+        format="json",
+        **{META_HEADER_ORGANIZACAO: "org-a"},
+    )
+
+    assert response.status_code == 422
+    assert response.data["errors"][0]["code"] == "organizations.role_insufficient"
+    assert response.data["errors"][0]["field"] == "papel"
+
+
+def test_aceitar_convite_com_token_invalido_retorna_422():
+    usuario = UsuarioFactory()
+
+    response = client_autenticado(usuario).post(
+        "/convites/aceitar/",
+        {"token": "token-que-nao-existe"},
+        format="json",
+    )
+
+    assert response.status_code == 422
+    assert response.data["errors"][0]["code"] == "organizations.invitation_invalid"
+    assert response.data["errors"][0]["field"] == "token"
+
+
+def test_aceitar_convite_ja_utilizado_retorna_422():
+    usuario = UsuarioFactory(email="nova@example.com")
+    organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
+    convite = Convite.objects.create(
+        organizacao=organizacao,
+        email=usuario.email,
+        papel=Papel.MEMBRO,
+        expira_em=timezone.now() + timedelta(days=1),
+        aceito_em=timezone.now(),
+    )
+
+    response = client_autenticado(usuario).post(
+        "/convites/aceitar/",
+        {"token": convite.token},
+        format="json",
+    )
+
+    assert response.status_code == 422
+    assert response.data["errors"][0]["code"] == "organizations.invitation_expired"
+
+
+def test_aceitar_convite_de_outro_email_retorna_422():
+    usuario = UsuarioFactory(email="usuario@example.com")
+    organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
+    convite = Convite.objects.create(
+        organizacao=organizacao,
+        email="outro@example.com",
+        papel=Papel.MEMBRO,
+        expira_em=timezone.now() + timedelta(days=1),
+    )
+
+    response = client_autenticado(usuario).post(
+        "/convites/aceitar/",
+        {"token": convite.token},
+        format="json",
+    )
+
+    assert response.status_code == 422
+    assert response.data["errors"][0]["code"] == "organizations.invitation_email_mismatch"
+
+
 def test_usuario_convidado_aceita_convite_sem_header_de_organizacao():
     usuario = UsuarioFactory(email="nova@example.com")
     organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")

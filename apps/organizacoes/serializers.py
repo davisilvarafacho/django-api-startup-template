@@ -1,8 +1,9 @@
 from django.db import transaction
-from django.utils.translation import gettext_lazy as _
 
 from rest_framework import serializers
 
+from apps.api.core.errors import APIError
+from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.models import Convite, Organizacao, Papel, Time, Vinculo
 
 
@@ -72,7 +73,12 @@ class VinculoSerializer(serializers.ModelSerializer):
     def validate_papel(self, papel):
         request = self.context["request"]
         if papel > request.vinculo.papel:
-            raise serializers.ValidationError(_("Você não pode conceder um papel acima do seu."))
+            raise APIError(
+                OrganizationErrorCode.ROLE_INSUFFICIENT,
+                status_code=422,
+                field="papel",
+                message="Você não pode conceder um papel acima do seu.",
+            )
         return papel
 
 
@@ -105,7 +111,12 @@ class ConviteCreateSerializer(ConviteSerializer):
     def validate_papel(self, papel):
         request = self.context["request"]
         if papel > request.vinculo.papel:
-            raise serializers.ValidationError(_("Você não pode convidar alguém para um papel acima do seu."))
+            raise APIError(
+                OrganizationErrorCode.ROLE_INSUFFICIENT,
+                status_code=422,
+                field="papel",
+                message="Você não pode convidar alguém para um papel acima do seu.",
+            )
         return papel
 
 
@@ -116,14 +127,18 @@ class AceitarConviteSerializer(serializers.Serializer):
         try:
             convite = Convite.objects.select_related("organizacao").get(token=token)
         except Convite.DoesNotExist as exc:
-            raise serializers.ValidationError(_("Convite inválido.")) from exc
+            raise APIError(
+                OrganizationErrorCode.INVITATION_INVALID, status_code=422, field="token"
+            ) from exc
 
         if not convite.pendente:
-            raise serializers.ValidationError(_("Convite expirado ou já utilizado."))
+            raise APIError(OrganizationErrorCode.INVITATION_EXPIRED, status_code=422, field="token")
 
         usuario = self.context["request"].user
         if convite.email.lower() != usuario.email.lower():
-            raise serializers.ValidationError(_("Este convite pertence a outro e-mail."))
+            raise APIError(
+                OrganizationErrorCode.INVITATION_EMAIL_MISMATCH, status_code=422, field="token"
+            )
 
         return convite
 

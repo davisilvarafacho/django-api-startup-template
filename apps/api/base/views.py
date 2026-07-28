@@ -12,6 +12,8 @@ from rest_framework.viewsets import GenericViewSet, ModelViewSet
 
 from threadlocals.threadlocals import get_request_variable
 
+from apps.api.core.errors import APIError, CoreErrorCode
+
 from .handlers import ativar_registro, inativar_registro
 
 
@@ -163,11 +165,12 @@ class BaseModelViewSet(UtilsViewSetMixin, ModelViewSet):
             instance = self.get_object()
             self.perform_destroy(instance)
             return Response(status=status.HTTP_204_NO_CONTENT)
-        except ProtectedError:
-            return Response(
-                {"mensagem": "Esse registro já foi utilizado pelo sistema"},
-                status=status.HTTP_409_CONFLICT,
-            )
+        except ProtectedError as exc:
+            raise APIError(
+                CoreErrorCode.CONFLICT,
+                status_code=status.HTTP_409_CONFLICT,
+                message="Esse registro já foi utilizado pelo sistema.",
+            ) from exc
 
     @action(methods=["get"], detail=True)
     def form(self, request, *args, **kwargs):
@@ -199,16 +202,19 @@ class BaseModelViewSet(UtilsViewSetMixin, ModelViewSet):
         persistido.
         """
         if not isinstance(request.data, list):
-            return Response(
-                {"mensagem": "Envie uma lista de objetos para atualizar."},
-                status=status.HTTP_400_BAD_REQUEST,
+            raise APIError(
+                CoreErrorCode.BAD_REQUEST,
+                status_code=status.HTTP_400_BAD_REQUEST,
+                message="Envie uma lista de objetos para atualizar.",
             )
 
         ids = [item.get("id") for item in request.data]
         if not all(ids):
-            return Response(
-                {"mensagem": "Cada objeto deve conter o campo 'id'."},
-                status=status.HTTP_400_BAD_REQUEST,
+            raise APIError(
+                CoreErrorCode.BAD_REQUEST,
+                status_code=status.HTTP_400_BAD_REQUEST,
+                message="Cada objeto deve conter o campo 'id'.",
+                field="id",
             )
 
         instances = {obj.pk: obj for obj in self.filter_queryset(self.get_queryset()).filter(pk__in=ids)}
@@ -217,9 +223,11 @@ class BaseModelViewSet(UtilsViewSetMixin, ModelViewSet):
         for item in request.data:
             instance = instances.get(item.get("id"))
             if instance is None:
-                return Response(
-                    {"mensagem": f"Registro {item.get('id')} não encontrado."},
-                    status=status.HTTP_404_NOT_FOUND,
+                raise APIError(
+                    CoreErrorCode.NOT_FOUND,
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    message=f"Registro {item.get('id')} não encontrado.",
+                    field="id",
                 )
             serializer = self.get_serializer(instance, data=item, partial=True)
             serializer.is_valid(raise_exception=True)
