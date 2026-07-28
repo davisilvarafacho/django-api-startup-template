@@ -8,7 +8,12 @@ class CoreConfig(AppConfig):
     name = 'apps.api.core'
 
     def ready(self):
+        from .errors import discover_error_codes
         from .routes_registry import routes_registry
+
+        # Precisa vir antes de qualquer outra coisa: o exception handler e o
+        # system check de códigos de erro dependem do registry já populado.
+        discover_error_codes()
 
         # Varre os BUSINESS_APPS atrás de `public_routes.PUBLIC_ROUTES`. Sem isso
         # o AuthenticationMiddleware não sabe quais rotas dispensam token.
