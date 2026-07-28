@@ -1,8 +1,14 @@
+from django.contrib.auth import authenticate
 from django.utils import timezone
+
+from rest_framework import serializers
 
 import serpy
 
 from apps.api.base.serializers import BaseModelSerpySerializer
+from apps.api.core.errors import APIError
+
+from .errors import AuthErrorCode
 
 
 class AuthTokenSerializer(BaseModelSerpySerializer):
@@ -33,3 +39,44 @@ class AuthTokenSerializer(BaseModelSerpySerializer):
         # Por padrão, Knox não guarda isso
         # Veja implementação alternativa abaixo
         return
+
+
+class LoginSerializer(serializers.Serializer):
+    """Valida credenciais e os metadados opcionais de dispositivo enviados no login."""
+
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True, trim_whitespace=False)
+    device_name = serializers.CharField(required=False, allow_blank=True, default="")
+    app_version = serializers.CharField(required=False, allow_blank=True, default="")
+    fcm_token = serializers.CharField(required=False, allow_blank=True, default="")
+
+    def validate(self, attrs):
+        user = authenticate(username=attrs["email"], password=attrs["password"])
+
+        if user is None:
+            raise APIError(AuthErrorCode.INVALID_CREDENTIALS, status_code=401)
+
+        if not user.is_active:
+            raise APIError(AuthErrorCode.USER_INACTIVE, status_code=401)
+
+        attrs["user"] = user
+        return attrs
+
+
+class SessionDeviceSerializer(serializers.Serializer):
+    type = serializers.CharField()
+    name = serializers.CharField()
+    location = serializers.CharField()
+
+
+class LoginSessionSerializer(serializers.Serializer):
+    uuid = serializers.UUIDField()
+    device = SessionDeviceSerializer()
+
+
+class LoginResponseSerializer(serializers.Serializer):
+    """Formato de saída do login: `token` só aparece aqui, nunca em listagens."""
+
+    token = serializers.CharField()
+    expiry = serializers.DateTimeField(allow_null=True)
+    session = LoginSessionSerializer()

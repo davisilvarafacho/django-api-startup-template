@@ -16,3 +16,4 @@ class AuthErrorCode(models.TextChoices):
     REVOKED_TOKEN = "auth.revoked_token", _("Token revogado.")
     API_KEY_SUSPENDED = "auth.api_key_suspended", _("Esta API key está suspensa.")
     RESPONSIBLE_INACTIVE = "auth.responsible_inactive", _("O responsável por esta credencial está inativo.")
+    TOKEN_LIMIT_EXCEEDED = "auth.token_limit_exceeded", _("Limite de sessões ativas excedido.")
