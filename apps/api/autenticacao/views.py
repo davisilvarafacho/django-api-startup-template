@@ -10,13 +10,17 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 import posthog
-from knox.models import AuthToken, get_token_model
+from knox.models import get_token_model
 from knox.views import LoginView as KnoxLoginView
 from posthog import capture, identify_context, new_context
 
 from .models import TokenMetaData
 from .serializers import AuthTokenSerializer as CustomAuthTokenSerializer
 from .utils import get_client_ip, get_geolocation_data, parse_user_agent
+
+# Nunca importar `knox.models.AuthToken` diretamente: o modelo ativo é o
+# swappable definido em `settings.KNOX_TOKEN_MODEL`.
+AuthToken = get_token_model()
 
 # class LoginView(KnoxLoginView):
 #     permission_classes = (AllowAny,)
@@ -54,7 +58,7 @@ class LoginView(KnoxLoginView):
         response = self.get_post_response(request, token, instance)
 
         # pega o token recém-criado
-        token = AuthToken.objects.filter(user=user).latest('created')
+        token = AuthToken.objects.filter(responsavel=user).latest('created_at')
 
         # extrai informações do dispositivo
         user_agent = request.META.get('HTTP_USER_AGENT', '')
@@ -129,7 +133,7 @@ class LoginView(KnoxLoginView):
         # pega tokens recentes do usuário (últimos 7 dias)
 
         recent_tokens = TokenMetaData.objects.filter(
-            token__user=user,
+            token__responsavel=user,
             first_used__gte=timezone.now() - timedelta(days=7)
         ).exclude(
             token=new_metadata.token
@@ -173,7 +177,7 @@ class AuthTokenViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = CustomAuthTokenSerializer
 
     def get_queryset(self):
-        return AuthToken.objects.filter(user=self.request.user).order_by("-created")
+        return AuthToken.objects.filter(responsavel=self.request.user).order_by("-created_at")
 
     @action(detail=False, methods=["get"])
     def current(self, request):

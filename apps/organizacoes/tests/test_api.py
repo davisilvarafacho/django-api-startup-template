@@ -7,7 +7,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 import pytest
-from knox.models import AuthToken
+from knox.models import get_token_model
 from threadlocals.threadlocals import set_current_user, set_thread_variable
 
 from apps.api.autenticacao.models import TokenMetaData, TokenType
@@ -16,6 +16,8 @@ from apps.organizacoes.models import Convite, Organizacao, Papel, Time, Vinculo
 from apps.usuarios.factories import UsuarioFactory
 
 pytestmark = pytest.mark.django_db
+
+AuthToken = get_token_model()
 
 
 @pytest.fixture(autouse=True)

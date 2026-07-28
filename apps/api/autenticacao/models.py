@@ -1,8 +1,15 @@
+import uuid as uuid_lib
+
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 from auditlog.registry import auditlog
+from knox import crypto
+from knox.settings import CONSTANTS, knox_settings
+
+from apps.api.base.models import CreationAuditMixin
 
 
 class TokenType(models.IntegerChoices):
@@ -11,13 +18,146 @@ class TokenType(models.IntegerChoices):
     API_KEY = 999, _('API key')
 
 
+class AuthTokenManager(models.Manager):
+    """Mantém a assinatura do manager do Knox, mas persiste em `responsavel`."""
+
+    def create(self, user=None, expiry=knox_settings.TOKEN_TTL, prefix=knox_settings.TOKEN_PREFIX, **kwargs):
+        responsavel = kwargs.pop("responsavel", user)
+        plain_token = prefix + crypto.create_token_string()
+        digest = crypto.hash_token(plain_token)
+        expires_at = timezone.now() + expiry if expiry is not None else None
+
+        instance = super().create(
+            digest=digest,
+            token_key=plain_token[:CONSTANTS.TOKEN_KEY_LENGTH],
+            responsavel=responsavel,
+            expiry=expires_at,
+            **kwargs,
+        )
+        return instance, plain_token
+
+
+class AuthToken(CreationAuditMixin):
+    """Token próprio, compatível com o contrato do `knox.AuthToken` (swappable).
+
+    Cobre sessão (`TokenType.TOKEN`), reset de senha (`RESET_PASSWORD`) e API
+    key (`API_KEY`) num único modelo. `responsavel` é o usuário autenticável
+    (para o Knox e para `request.user`); `created_by` — herdado do mixin — é
+    quem emitiu a credencial, útil quando um admin cria uma API key para
+    outra pessoa.
+    """
+
+    objects = AuthTokenManager()
+
+    uuid = models.UUIDField(
+        verbose_name=_("UUID"), default=uuid_lib.uuid4, unique=True, editable=False, db_index=True
+    )
+
+    digest = models.CharField(verbose_name=_("digest"), max_length=CONSTANTS.DIGEST_LENGTH, primary_key=True)
+    token_key = models.CharField(
+        verbose_name=_("chave do token"),
+        max_length=CONSTANTS.MAXIMUM_TOKEN_PREFIX_LENGTH + CONSTANTS.TOKEN_KEY_LENGTH,
+        db_index=True,
+    )
+
+    responsavel = models.ForeignKey(
+        verbose_name=_("responsável"),
+        to=settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="auth_token_set",
+    )
+
+    expiry = models.DateTimeField(verbose_name=_("expira em"), null=True, blank=True)
+
+    type = models.PositiveSmallIntegerField(
+        verbose_name=_("tipo"),
+        choices=TokenType.choices,
+        default=TokenType.TOKEN,
+        db_index=True,
+    )
+    name = models.CharField(verbose_name=_("nome"), max_length=100, blank=True)
+    organization = models.ForeignKey(
+        verbose_name=_("organização"),
+        to="organizacoes.Organizacao",
+        on_delete=models.PROTECT,
+        related_name="api_keys",
+        null=True,
+        blank=True,
+    )
+    scopes = models.JSONField(
+        verbose_name=_("escopos"),
+        default=list,
+        blank=True,
+        help_text=_("Escopos `resource:action` concedidos a uma API key."),
+    )
+
+    revoked_at = models.DateTimeField(verbose_name=_("revogado em"), null=True, blank=True)
+    revoked_by = models.ForeignKey(
+        verbose_name=_("revogado por"),
+        to=settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+
+    suspended_at = models.DateTimeField(verbose_name=_("suspenso em"), null=True, blank=True)
+    suspended_by = models.ForeignKey(
+        verbose_name=_("suspenso por"),
+        to=settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+    suspension_reason = models.CharField(verbose_name=_("motivo da suspensão"), max_length=255, blank=True)
+
+    replaced_by = models.OneToOneField(
+        verbose_name=_("substituído por"),
+        to="self",
+        on_delete=models.SET_NULL,
+        related_name="replaces",
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        swappable = "KNOX_TOKEN_MODEL"
+        db_table = "auth_token"
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    (models.Q(type=TokenType.API_KEY) & models.Q(organization__isnull=False))
+                    | (~models.Q(type=TokenType.API_KEY) & models.Q(organization__isnull=True))
+                ),
+                name="auth_token_api_key_exige_organizacao",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.digest} : {self.responsavel}"
+
+    # ---- compatibilidade interna com o Knox (nunca públicos na API) ----
+    @property
+    def user(self):
+        return self.responsavel
+
+    @user.setter
+    def user(self, value):
+        self.responsavel = value
+
+    @property
+    def created(self):
+        return self.created_at
+
+
 class TokenMetaData(models.Model):
-    """Metadados completos para tokens Knox"""
+    """Metadados operacionais do uso de uma credencial (1:1 com o token)."""
 
     # token relacionado
     token = models.OneToOneField(
         verbose_name=_('Token'),
-        to="knox.AuthToken",
+        to=settings.KNOX_TOKEN_MODEL,
         on_delete=models.CASCADE,
         related_name='metadata',
         primary_key=True
