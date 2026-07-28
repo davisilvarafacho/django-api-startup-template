@@ -1,12 +1,10 @@
-from django.conf import settings
 from django.contrib.auth.hashers import make_password
 from django.contrib.auth.models import AbstractUser, UserManager
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
-from auditlog.registry import auditlog
-
 from apps.api.base.models import BaseGlobal
+from utils.logs import register
 
 
 class UsuarioManager(UserManager):
@@ -58,7 +56,7 @@ class Usuario(BaseGlobal, AbstractUser):
         verbose_name_plural = _("Usuários")
 
 
-auditlog.register(
+register(
     Usuario,
-    exclude_fields=[*settings.BASE_AUDITLOG_EXCLUDE_FIELDS, "password", "last_login"],
+    exclude_fields=["password", "last_login"],
 )

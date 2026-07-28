@@ -1,8 +1,7 @@
-from django.conf import settings
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
-from auditlog.registry import auditlog
+from utils.logs import register
 
 
 class TokenType(models.IntegerChoices):
@@ -466,4 +465,4 @@ class TokenMetaData(models.Model):
 #         )
 
 
-auditlog.register(TokenMetaData, exclude_fields=[*settings.BASE_AUDITLOG_EXCLUDE_FIELDS])
+register(TokenMetaData)
