@@ -43,7 +43,7 @@ class Papel(models.IntegerChoices):
 
 
 class Organizacao(BaseGlobal):
-    owner = None
+    created_by = None
 
     nome = models.CharField(_("nome"), max_length=150)
     slug = models.SlugField(_("slug"), max_length=60, unique=True)
@@ -88,7 +88,7 @@ class Vinculo(BaseGlobal):
     ele próprio define).
     """
 
-    owner = None
+    created_by = None
 
     organizacao = models.ForeignKey(
         Organizacao,
@@ -125,7 +125,7 @@ class Vinculo(BaseGlobal):
 class Convite(BaseGlobal):
     """Convite para um e-mail entrar numa organização com um papel."""
 
-    owner = None
+    created_by = None
 
     organizacao = models.ForeignKey(
         Organizacao,

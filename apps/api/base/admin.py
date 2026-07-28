@@ -9,7 +9,7 @@ ADMIN_PAGE_SIZE = 50
 
 class BaseModelAdmin(admin.ModelAdmin):
     list_per_page = ADMIN_PAGE_SIZE
-    readonly_fields = ('data_criacao', 'hora_criacao', 'data_ultima_alteracao', 'hora_ultima_alteracao', 'owner')
+    readonly_fields = ('created_at', 'last_modified_at', 'created_by')
     actions = ('clone_records', 'ativar_registros', 'inativar_registros')
 
     def get_actions(self, request):

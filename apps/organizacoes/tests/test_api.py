@@ -84,8 +84,8 @@ def test_times_sao_filtrados_pela_organizacao_do_header():
     org_b = Organizacao.objects.create(nome="Org B", slug="org-b")
     vincular(usuario, org_a, Papel.MEMBRO)
     vincular(usuario, org_b, Papel.MEMBRO)
-    Time.objects.create(organizacao=org_a, nome="Produto", owner=usuario)
-    Time.objects.create(organizacao=org_b, nome="Financeiro", owner=usuario)
+    Time.objects.create(organizacao=org_a, nome="Produto", created_by=usuario)
+    Time.objects.create(organizacao=org_b, nome="Financeiro", created_by=usuario)
 
     response = client_autenticado(usuario).get(
         "/times/",

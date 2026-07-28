@@ -36,7 +36,7 @@ class UsuarioManager(UserManager):
 
 class Usuario(BaseGlobal, AbstractUser):
     username = None
-    owner = None
+    created_by = None
 
     first_name = models.CharField(_("nome"), max_length=30)
     last_name = models.CharField(_("sobrenome"), max_length=40)

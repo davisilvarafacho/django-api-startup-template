@@ -315,10 +315,8 @@ LOGGING = build_logging(CONFIG_ENVIRONMENT, LOG_LEVEL, LOGGING_ROOT)
 
 # base
 BASE_AUDITLOG_EXCLUDE_FIELDS = [
-    "data_ultima_alteracao",
-    "hora_ultima_alteracao",
-    "data_criacao",
-    "hora_criacao",
+    "created_at",
+    "last_modified_at",
 ]
 
 
