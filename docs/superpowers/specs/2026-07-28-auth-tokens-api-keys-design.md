@@ -417,6 +417,11 @@ Os endpoints usarão a base padronizada de erros da API, incluindo:
 - `auth.reauthentication_required`;
 - `organizations.tenant_mismatch`.
 
+Esses códigos serão membros de `models.TextChoices` definidos no `errors.py`
+do app proprietário, principalmente
+`apps/api/autenticacao/errors.py` e `apps/organizacoes/errors.py`. Views,
+serializers, services e permissions não usarão códigos como strings soltas.
+
 ## Auditoria e observabilidade
 
 Eventos auditados:

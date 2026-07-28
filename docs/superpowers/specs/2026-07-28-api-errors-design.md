@@ -77,13 +77,37 @@ Exemplo de validação aninhada:
 
 ## Códigos
 
-Os códigos serão definidos em enums por domínio, registrados num registry
-central:
+Os códigos serão definidos obrigatoriamente como subclasses de
+`django.db.models.TextChoices`, registradas num registry central:
 
 - `ValidationErrorCode`
 - `AuthErrorCode`
 - `OrganizationErrorCode`
 - demais enums adicionados pelos apps
+
+Cada app manterá seus códigos no arquivo `errors.py`:
+
+```text
+apps/api/core/errors.py
+apps/api/autenticacao/errors.py
+apps/organizacoes/errors.py
+```
+
+Exemplo:
+
+```python
+from django.db import models
+from django.utils.translation import gettext_lazy as _
+
+
+class AuthErrorCode(models.TextChoices):
+    INVALID_CREDENTIALS = "auth.invalid_credentials", _("E-mail ou senha inválidos.")
+    INVALID_TOKEN = "auth.invalid_token", _("Token inválido.")
+```
+
+O valor do `TextChoices` é o código estável enviado ao cliente. O label é a
+mensagem padrão traduzível e poderá ser substituído por uma mensagem mais
+específica no ponto em que o erro for criado.
 
 Exemplos:
 
@@ -103,6 +127,7 @@ O registry deve:
 
 - rejeitar códigos duplicados;
 - validar o formato `dominio.erro`;
+- rejeitar códigos soltos que não pertençam a um `TextChoices` registrado;
 - permitir descoberta para documentação;
 - falhar por system check antes de servir a aplicação quando houver
   inconsistência.
@@ -131,7 +156,7 @@ Os `ValidationError` do DRF serão normalizados para `422`.
 
 Exceção base para erros deliberados da aplicação. Deve receber:
 
-- código registrado;
+- membro de um `TextChoices` registrado;
 - status HTTP;
 - mensagem traduzível;
 - campo/caminho opcionais;
@@ -206,4 +231,3 @@ Os testes devem cobrir:
 - documentação OpenAPI;
 - ausência de traceback e dados sensíveis em respostas `500`;
 - ausência de segredos em `context` e logs.
-
