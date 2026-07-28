@@ -57,6 +57,12 @@ para comportar múltiplos arquivos de teste.
   originalmente utilizada.
 - **Devem** ficar sempre no começo do arquivo `models.py` (não em arquivo separado).
 
+**Exceção — códigos de erro da API:** códigos de erro são `models.TextChoices`, mas
+ficam obrigatoriamente em `<app>/errors.py` (nunca em `models.py`), registrados em
+`apps.api.core.errors.error_codes` via descoberta automática. Toda falha da API é
+levantada com `APIError(code, status_code=...)`, nunca com uma string solta — ver
+`docs/superpowers/specs/2026-07-28-api-errors-design.md`.
+
 ### 2.2. Ordem dos Argumentos dos Fields
 
 Os argumentos de cada `Field` **devem** seguir uma ordem fixa, sempre declarada de
