@@ -60,7 +60,7 @@ _Atualizado em 2026-07-29._
 
 ### Batch 3 — DevEx / CI
 - **pre-commit** (ruff + hooks básicos).
-- **GitHub Actions** por cadência: `ci.yml` (lint + `makemigrations --check` + pytest com Postgres/Redis) e `security.yml` (pip-audit + bandit + trivy) + `dependabot.yml`.
+- **GitHub Actions** por cadência: `ci.yml` (lint + pytest com Postgres/Redis) e `security.yml` (pip-audit + bandit + trivy) + `dependabot.yml`; `makemigrations --check` está suspenso até o reset integral pré-lançamento.
 - **Codecov** + cobertura (`pytest-cov`), gate de patch 80% em código novo.
 - **Makefile** e arquivos padrão do GitHub (CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, templates).
 - **factory_boy** (`UsuarioFactory`) + testes DB-less (lookup, env).
@@ -110,6 +110,8 @@ _Atualizado em 2026-07-29._
 - ✅ **Envelope de erros unificado** (`{"errors": [...], "request_id": ...}`) para DRF, middlewares e handlers de status HTTP do Django.
 - ✅ **Gestão de sessões** (`/auth/sessions/`, `/auth/logout*`) e **autenticação recente/step-up** (`@require_recent_auth`, `/auth/reauthenticate/`).
 - ✅ **API keys por organização** (`/auth/api_keys/`): CRUD, rotação atômica, suspensão manual/automática (fail-closed quando o responsável perde o vínculo) e retomada; UUID como identificador público; plain token exibido só na criação/rotação.
+- ⚠️ Migrations permanecem congeladas nesta fase: CI e testes usam
+  `--nomigrations`; o histórico será recriado integralmente antes do lançamento.
 - ⏳ **Cache de permissão**.
 - ⏳ **MFA/2FA** + checagem de senha vazada (HaveIBeenPwned) — pontos de integração já existem como stubs seguros (`user_has_mfa_enabled`/`verify_mfa_code`).
 - ⏳ **Field-level permissions** (serializers dinâmicos por papel).

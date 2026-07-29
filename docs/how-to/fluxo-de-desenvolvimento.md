@@ -44,12 +44,14 @@ gh pr create --fill                    # o PULL_REQUEST_TEMPLATE preenche a base
 ```
 
 Antes de abrir o PR, garanta o que o `CONTRIBUTING.md` exige: `make lint`,
-`make test` e `make docs` verdes, sem migrações pendentes.
+`make test` e `make docs` verdes. Até o reset integral pré-lançamento, os testes
+rodam sem migrations e elas não devem ser alteradas.
 
 ## O pull request
 
 1. **CI** roda três jobs — `commits` (valida Conventional Commits do range),
-   `lint` (ruff, versões, migrações, docs) e `test` (pytest + cobertura Codecov).
+   `lint` (ruff, versões, docs) e `test` (pytest sem migrations + cobertura
+   Codecov). O gate de migrations volta após o reset integral pré-lançamento.
    Todos precisam passar.
 2. **Review**: pelo menos uma aprovação.
 3. **Squash merge**: cada PR vira um único commit na `main`. Mantém o histórico

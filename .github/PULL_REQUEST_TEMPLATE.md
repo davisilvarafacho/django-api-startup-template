@@ -11,7 +11,7 @@
 ## Checklist
 
 - [ ] `make lint` e `make test` verdes
-- [ ] Sem migrações pendentes (`makemigrations --check --dry-run`)
+- [ ] Política temporária de migrations respeitada (sem alterações até o reset pré-lançamento)
 - [ ] Cobertura do código novo mantida
 - [ ] Documentação/ADR atualizados quando aplicável
 - [ ] Commits seguem Conventional Commits
