@@ -10,7 +10,6 @@ import sentry_sdk
 
 from api.configure_enviroment import configure_enviroment
 from api.logging_config import build_logging
-from libs.serpy.mp import *
 from utils.env import get_bool_from_env, get_env_var, get_list_from_env
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
