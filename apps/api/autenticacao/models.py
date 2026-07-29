@@ -194,6 +194,9 @@ class AuthToken(CreationAuditMixin):
     class Meta:
         swappable = "KNOX_TOKEN_MODEL"
         db_table = "auth_token"
+        ordering = ("-created_at",)
+        verbose_name = _("Token de autenticação")
+        verbose_name_plural = _("Tokens de autenticação")
         constraints = [
             models.CheckConstraint(
                 condition=(

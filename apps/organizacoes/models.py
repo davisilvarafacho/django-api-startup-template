@@ -42,7 +42,6 @@ class Papel(models.IntegerChoices):
 
 
 class Organizacao(BaseGlobal):
-    created_by = None
     api_scope_resource = "organizations"
 
     nome = models.CharField(_("nome"), max_length=150)
@@ -90,7 +89,6 @@ class Vinculo(BaseGlobal):
     ele próprio define).
     """
 
-    created_by = None
     api_scope_resource = "memberships"
 
     organizacao = models.ForeignKey(
@@ -128,7 +126,6 @@ class Vinculo(BaseGlobal):
 class Convite(BaseGlobal):
     """Convite para um e-mail entrar numa organização com um papel."""
 
-    created_by = None
     api_scope_resource = "invitations"
     api_scope_custom_actions = {"accept": "can_accept_convite"}
 

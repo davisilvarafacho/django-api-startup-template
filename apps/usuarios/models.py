@@ -34,7 +34,6 @@ class UsuarioManager(UserManager):
 
 class Usuario(BaseGlobal, AbstractUser):
     username = None
-    created_by = None
     api_scope_resource = "users"
 
     first_name = models.CharField(_("nome"), max_length=30)

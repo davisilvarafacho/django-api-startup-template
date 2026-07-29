@@ -103,6 +103,11 @@ A classe `Meta` de cada model **deve** declarar, no mínimo, os seguintes atribu
   - Exemplo concreto: as actions `ativar`/`inativar` do `BaseModelViewSet` usam a
     permissão `can_toggle_<model>` (ex.: `can_toggle_produto`).
 
+Credenciais swappable podem usar o nome do recurso administrado no sufixo
+(`*_apikey`) em vez do nome técnico do model (`*_authtoken`). Isso mantém
+separadas as permissions humanas de administração de API keys das permissions
+default sobre a tabela unificada de tokens.
+
 ### 2.4. Herança
 
 - Todo model **deve** herdar da classe base do projeto (`Base`).
@@ -118,6 +123,17 @@ A classe `Meta` de cada model **deve** declarar, no mínimo, os seguintes atribu
   - Utilitários: `clonar()`, `as_dict()`, `get_fields()` e afins.
   - `api_scope_resource = None` por padrão — ver §2.7 para expor o model como
     recurso público de scopes/permissions.
+
+**Exceções arquiteturais explícitas:**
+
+- Modelos do control plane de identidade/tenancy (`Usuario`, `Organizacao`,
+  `Vinculo` e `Convite`) herdam de `BaseGlobal`: precisam ser consultados antes
+  de existir contexto RLS, mas mantêm `created_by`, `created_at` e
+  `last_modified_at`.
+- Modelos de credencial que implementam contratos externos (como o
+  `AuthToken` swappable do Knox) podem herdar diretamente do mixin mínimo
+  necessário. A exceção deve estar documentada no model e não remove os campos
+  comuns de autoria/timestamps aplicáveis.
 
 ### 2.5. Métodos Obrigatórios
 
@@ -145,6 +161,10 @@ A classe `Meta` de cada model **deve** declarar, no mínimo, os seguintes atribu
 - Actions CRUD (`read`/`create`/`update`/`delete`) são derivadas automaticamente
   da action do ViewSet; actions customizadas declaram o scope com
   `@require_token_scopes("recurso:action")`.
+- Cada action customizada também deve declarar no model a tradução interna para
+  uma permission Django, via
+  `api_scope_custom_actions = {"action": "can_action_model"}`. O registry nunca
+  considera delegável uma action sem codename correspondente.
 - Wildcards: `resource:*` (qualquer action do recurso) e `*` (qualquer recurso).
   Delegar `*` a uma API key exige superuser ou a permission
   `autenticacao.grant_unrestricted_apikey` — ver
@@ -159,6 +179,10 @@ A classe `Meta` de cada model **deve** declarar, no mínimo, os seguintes atribu
 ### 3.1. Herança
 
 - Todo serializer **deve** herdar da classe base apropriada do projeto.
+
+Serializers de comandos, envelopes e credenciais que não representam um
+`Base` persistente podem herdar de `serializers.Serializer`; devem declarar os
+campos explicitamente e nunca expor digest, prefixo ou segredo de token.
 
 ### 3.2. Serializer Externo Padrão
 
@@ -182,6 +206,11 @@ A classe `Meta` de cada model **deve** declarar, no mínimo, os seguintes atribu
 
 - Toda view de modelo **deve** herdar da classe `BaseModelViewSet` do projeto.
 
+**Exceção:** endpoints de infraestrutura/credenciais e ViewSets do control
+plane pré-RLS podem usar as bases do DRF quando as actions genéricas herdadas
+de `BaseModelViewSet` ampliariam indevidamente a superfície pública. Nesses
+casos, queryset, permissions, scopes e métodos HTTP devem ser explícitos.
+
 ### 4.2. Serializer por Ação
 
 - Quando uma única classe atende todas as ações, defina `serializer_class`.
@@ -193,6 +222,9 @@ A classe `Meta` de cada model **deve** declarar, no mínimo, os seguintes atribu
 ### 4.3. Filtros
 
 - Toda view **deve** definir explicitamente um `filterset_class`.
+
+A regra não se aplica a endpoints de comando sem filtros nem aos ViewSets
+excepcionais acima quando não existe uma interface pública de filtragem.
 
 ### 4.4. Actions Herdadas do `BaseModelViewSet`
 

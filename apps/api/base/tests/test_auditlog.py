@@ -45,6 +45,12 @@ def test_base_global_define_campos_de_auditoria():
             BaseGlobal._meta.get_field(antigo)
 
 
+def test_modelos_de_control_plane_mantem_created_by_padrao():
+    for model in (Usuario, Organizacao, Vinculo, Convite):
+        field = model._meta.get_field("created_by")
+        assert field.remote_field.on_delete is models.PROTECT
+
+
 def test_internal_e_read_only_fields_usam_os_novos_nomes():
     assert BaseGlobal.get_internal_fields() == ["last_modified_at"]
     assert BaseGlobal.get_read_only_fields() == ["ativo", "created_at", "created_by"]
@@ -59,11 +65,11 @@ def _limpar_usuario_atual():
 @pytest.mark.django_db
 def test_created_by_e_preenchido_automaticamente_pelo_usuario_atual():
     autor = UsuarioFactory()
-    organizacao = Organizacao.objects.create(nome="Org", slug="org-audit-autor")
-
     set_current_user(autor)
+    organizacao = Organizacao.objects.create(nome="Org", slug="org-audit-autor")
     time = Time.objects.create(organizacao=organizacao, nome="Produto")
 
+    assert organizacao.created_by == autor
     assert time.created_by == autor
 
 
