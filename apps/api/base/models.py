@@ -123,6 +123,8 @@ class BaseGlobal(CreationAuditMixin):
     ]
     extra_read_only_fields = []
 
+    extra_write_only_fields = []
+
     queryset_deferred_fields = []
 
     clone_reset_fields = ("created_at", "last_modified_at")
@@ -197,6 +199,10 @@ class BaseGlobal(CreationAuditMixin):
     @classmethod
     def get_read_only_fields(cls):
         return cls.read_only_fields + cls.extra_read_only_fields
+
+    @classmethod
+    def get_write_only_fields(cls):
+        return list(cls.extra_write_only_fields)
 
     @classmethod
     def get_queryset_deferred_fields(cls):

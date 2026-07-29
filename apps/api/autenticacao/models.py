@@ -5,11 +5,11 @@ from django.db import models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
-from auditlog.registry import auditlog
 from knox import crypto
 from knox.settings import CONSTANTS, knox_settings
 
 from apps.api.base.models import CreationAuditMixin
+from utils.logs import register
 
 
 class TokenType(models.IntegerChoices):
@@ -616,4 +616,4 @@ class TokenMetaData(models.Model):
 #         )
 
 
-auditlog.register(TokenMetaData, exclude_fields=[*settings.BASE_AUDITLOG_EXCLUDE_FIELDS])
+register(TokenMetaData)
