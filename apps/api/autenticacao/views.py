@@ -5,6 +5,7 @@ from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle, ScopedRateThrottle, UserRateThrottle
 from rest_framework.views import APIView
 
 import posthog
@@ -61,6 +62,8 @@ class LoginView(APIView):
     """
 
     permission_classes = (AllowAny,)
+    throttle_classes = [AnonRateThrottle, ScopedRateThrottle]
+    throttle_scope = "auth_login"
 
     @document_login
     def post(self, request):
@@ -152,6 +155,8 @@ class ReauthenticateView(APIView):
 
     permission_classes = [IsAuthenticated, TokenScopePermission]
     session_only = True
+    throttle_classes = [UserRateThrottle, ScopedRateThrottle]
+    throttle_scope = "auth_reauthenticate"
 
     @document_reauthenticate
     def post(self, request):

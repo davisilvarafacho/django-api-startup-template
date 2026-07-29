@@ -4,6 +4,7 @@ from datetime import timedelta
 from django.utils import timezone
 
 from rest_framework.test import APIClient
+from rest_framework.throttling import ScopedRateThrottle, UserRateThrottle
 
 import pytest
 from knox.models import get_token_model
@@ -12,6 +13,7 @@ from threadlocals.threadlocals import set_current_user, set_thread_variable
 from apps.api.autenticacao.errors import AuthErrorCode
 from apps.api.autenticacao.models import TokenMetaData, TokenType
 from apps.api.autenticacao.recent_auth import RecentAuthenticationPermission, require_recent_auth
+from apps.api.autenticacao.views import ReauthenticateView
 from apps.api.core.errors import APIError
 from apps.usuarios.factories import UsuarioFactory
 
@@ -202,6 +204,18 @@ def test_reauthenticate_com_senha_correta_atualiza_a_sessao(usuario):
     assert response.status_code == 204
     token = AuthToken.objects.get(responsavel=usuario)
     assert token.metadata.reauthenticated_at is not None
+
+
+def test_reauthenticate_tem_throttle_especifico(settings):
+    assert ReauthenticateView.throttle_scope == "auth_reauthenticate"
+    assert ReauthenticateView.throttle_classes == [
+        UserRateThrottle,
+        ScopedRateThrottle,
+    ]
+    assert (
+        settings.REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]["auth_reauthenticate"]
+        == "5/min"
+    )
 
 
 @pytest.mark.django_db

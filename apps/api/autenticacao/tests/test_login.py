@@ -4,11 +4,13 @@ from unittest.mock import patch
 from django.contrib.auth.signals import user_logged_in
 
 from rest_framework.test import APIClient
+from rest_framework.throttling import AnonRateThrottle, ScopedRateThrottle
 
 import pytest
 from threadlocals.threadlocals import set_current_user, set_thread_variable
 
 from apps.api.autenticacao.models import AuthToken, TokenMetaData, TokenType
+from apps.api.autenticacao.views import LoginView
 from apps.usuarios.factories import UsuarioFactory
 
 pytestmark = pytest.mark.django_db
@@ -53,6 +55,12 @@ def test_login_com_credenciais_validas_emite_token_de_sessao(client, usuario):
     token = AuthToken.objects.get(responsavel=usuario)
     assert token.type == TokenType.TOKEN
     assert token.metadata.device_name == "Notebook"
+
+
+def test_login_tem_throttle_especifico(settings):
+    assert LoginView.throttle_scope == "auth_login"
+    assert LoginView.throttle_classes == [AnonRateThrottle, ScopedRateThrottle]
+    assert settings.REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]["auth_login"] == "10/min"
 
 
 def test_login_com_senha_invalida_e_recusado(client, usuario):
