@@ -6,7 +6,7 @@ com o que **já foi implementado** e o que está **planejado**, em ondas (batche
 **Legenda:** ✅ feito · 🚧 em andamento · ⏳ planejado · 🧠 brainstorm próprio antes de
 codar · 🔎 estudar antes · ⏸️ adiado
 
-_Atualizado em 2026-07-24._
+_Atualizado em 2026-07-29._
 
 ---
 
@@ -23,7 +23,7 @@ _Atualizado em 2026-07-24._
 | Batch 5 | Autenticação & permissões | 🚧 |
 | Batch 6 | Multi-tenancy | ✅ |
 | Batch 7 | Observabilidade | ✅ |
-| Batch 8 | Domínio & segurança | ⏳ |
+| Batch 8 | Domínio & segurança | 🚧 |
 | Batch 9 | API avançada | ⏳ |
 | Batch 10 | Escala de banco | ⏳ |
 | Batch 11 | DevEx & operação (restante) | ⏳ |
@@ -107,10 +107,11 @@ _Atualizado em 2026-07-24._
 - ⏳ **MFA/2FA** + checagem de senha vazada (HaveIBeenPwned).
 - ⏳ **Field-level permissions** (serializers dinâmicos por papel).
 - ⏳ Ciclo de vida de conta: verificação de e-mail, social auth, desativação/exclusão, gestão de sessões e dispositivos.
+- 🧠 **Permissões/rules por plano** — definir o contrato entre assinatura, plano e políticas antes de implementar.
 
 ### Batch 8 — Domínio & segurança
 - Base de código de **notificações** (providers plugáveis, templates, preferências).
-- Lib para **dados sensíveis** (field-level encryption).
+- ✅ Lib para **dados sensíveis** (field-level encryption): wrapper `encrypt(...)`, keyring/rotação Fernet, write-only no DRF e exclusão automática do auditlog.
 - **Validação de upload** genérica e plugável.
 - **Money handling** + **metadata framework** (JSON key-value por modelo).
 - **Idempotency keys** em POST (evita duplicidade em retry de rede/pagamento).
@@ -133,12 +134,15 @@ _Atualizado em 2026-07-24._
 - **Devcontainer** para onboarding.
 - **Runbooks** operacionais.
 - Política de **deprecação de API** (changelog de API + header `Sunset`).
+- Ambiente local completo com **Nginx**, Postgres e Redis.
 
 ---
 
 ## 🧠 Brainstorms próprios (antes de implementar)
 - **Webhooks de saída** — framework open source próprio.
 - **URLs assinadas** para arquivos privados (auth base que gera e valida token).
+- **Billing por seat e plano** — checkout com abstração de gateway plugável; começar por Stripe e Asaas, desenhando o registry para múltiplos providers.
+- **Compose de observabilidade dedicado** (`docker-compose.otel.yml`) — decidir a separação entre a stack local padrão e Tempo/Loki/Prometheus/Grafana.
 
 ## 🔎 A estudar
 - **Soft delete real**: existe o campo `ativo`, mas o `destroy` apaga fisicamente.
@@ -152,8 +156,3 @@ _Atualizado em 2026-07-24._
 ## ⏸️ Adiado
 - **LGPD** (bloco próprio): PII, retenção/expurgo, exportação, direito ao esquecimento, consentimento, scrub de PII.
 - Arquitetura de **plugins / integrações**.
-
-## Brainstorm do dev
-
-- Permissões/rules via plano
-- Checkout por seat e plano, default stripe - classe de abstração backend plugavel na frente - lib para conectar 5 ou mais providers de cara - stripe, assas, etc
