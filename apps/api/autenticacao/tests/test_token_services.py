@@ -49,9 +49,10 @@ def test_issue_token_cria_token_e_metadata_na_mesma_transacao(usuario, metadata_
 
 @pytest.mark.django_db
 def test_issue_token_de_api_key_grava_organizacao_e_scopes(usuario, metadata_input):
-    from apps.organizacoes.models import Organizacao
+    from apps.organizacoes.models import Organizacao, Vinculo
 
     organizacao = Organizacao.objects.create(nome="Org", slug="org-issue-token")
+    Vinculo.objects.create(usuario=usuario, organizacao=organizacao)
 
     issued = issue_token(
         responsavel=usuario,

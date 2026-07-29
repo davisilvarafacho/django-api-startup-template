@@ -1,6 +1,7 @@
 import uuid as uuid_lib
 
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db import models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
@@ -23,6 +24,21 @@ class AuthTokenManager(models.Manager):
 
     def create(self, user=None, expiry=knox_settings.TOKEN_TTL, prefix=knox_settings.TOKEN_PREFIX, **kwargs):
         responsavel = kwargs.pop("responsavel", user)
+        token_type = kwargs.get("type", TokenType.TOKEN)
+        name = kwargs.get("name", "")
+        if isinstance(name, str):
+            name = name.strip()
+            kwargs["name"] = name
+
+        validate_token_configuration(
+            responsavel=responsavel,
+            token_type=token_type,
+            created_by=kwargs.get("created_by") or kwargs.get("created_by_id"),
+            organization=kwargs.get("organization") or kwargs.get("organization_id"),
+            name=name,
+            scopes=kwargs.get("scopes", ()),
+        )
+
         plain_token = prefix + crypto.create_token_string()
         digest = crypto.hash_token(plain_token)
         expires_at = timezone.now() + expiry if expiry is not None else None
@@ -35,6 +51,60 @@ class AuthTokenManager(models.Manager):
             **kwargs,
         )
         return instance, plain_token
+
+
+def validate_token_configuration(
+    *,
+    responsavel,
+    token_type,
+    created_by,
+    organization,
+    name,
+    scopes,
+):
+    """Valida os campos que diferenciam uma API key dos demais tokens."""
+    if token_type != TokenType.API_KEY:
+        if organization is not None or name or scopes:
+            raise ValidationError(
+                "Tokens de sessão/reset não aceitam organization, name ou scopes."
+            )
+        return
+
+    errors = {}
+    if organization is None:
+        errors["organization"] = "API key exige uma organização."
+    if not name or not str(name).strip():
+        errors["name"] = "API key exige um nome."
+    if created_by is None:
+        errors["created_by"] = "API key exige o usuário que a criou."
+    if responsavel is None or not getattr(responsavel, "is_active", False):
+        errors["responsavel"] = "API key exige um responsável ativo."
+
+    if not isinstance(scopes, (list, tuple)):
+        errors["scopes"] = "Scopes precisam ser uma lista."
+    else:
+        from apps.api.core.scope_registry import validate_registered_scope
+
+        try:
+            for scope in scopes:
+                validate_registered_scope(scope)
+        except (ImproperlyConfigured, TypeError, ValueError) as exc:
+            errors["scopes"] = str(exc)
+
+    if organization is not None and responsavel is not None:
+        from apps.organizacoes.models import Vinculo
+
+        if not Vinculo.objects.filter(
+            organizacao=organization,
+            usuario=responsavel,
+            ativo=True,
+        ).exists():
+            errors["responsavel"] = (
+                "O responsável precisa ter vínculo ativo com a organização."
+            )
+
+    if errors:
+        raise ValidationError(errors)
 
 
 class AuthToken(CreationAuditMixin):
@@ -132,6 +202,23 @@ class AuthToken(CreationAuditMixin):
                 ),
                 name="auth_token_api_key_exige_organizacao",
             ),
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(type=TokenType.API_KEY)
+                    | (
+                        models.Q(created_by__isnull=False)
+                        & ~models.Q(name="")
+                    )
+                ),
+                name="auth_token_api_key_exige_nome_e_criador",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(type=TokenType.API_KEY)
+                    | (models.Q(name="") & models.Q(scopes=[]))
+                ),
+                name="auth_token_sessao_sem_campos_de_api_key",
+            ),
         ]
         # Permissions humanas explícitas de gerenciamento de API key. Não são os
         # defaults do model (`view_authtoken`/`add_authtoken`/...): ser criador ou
@@ -145,7 +232,7 @@ class AuthToken(CreationAuditMixin):
         ]
 
     def __str__(self):
-        return f"{self.digest} : {self.responsavel}"
+        return f"{self.get_type_display()} {self.uuid}"
 
     # ---- compatibilidade interna com o Knox (nunca públicos na API) ----
     @property

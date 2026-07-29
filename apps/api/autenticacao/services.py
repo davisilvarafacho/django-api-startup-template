@@ -15,7 +15,7 @@ from apps.api.core.errors import APIError
 
 from .audit import emit_api_key_event
 from .errors import AuthErrorCode
-from .models import TokenMetaData, TokenType
+from .models import TokenMetaData, TokenType, validate_token_configuration
 
 
 @dataclass(frozen=True)
@@ -105,36 +105,55 @@ def create_api_key(*, responsavel, created_by, name, scopes, organization, expir
 
 def update_api_key(instance, *, actor, name=None, responsavel=None, scopes=None):
     """Altera nome/responsável/scopes; audita mudança de responsável e de scopes."""
-    update_fields = []
+    next_name = instance.name if name is None else name.strip()
+    next_responsavel = instance.responsavel if responsavel is None else responsavel
+    next_scopes = instance.scopes if scopes is None else list(scopes)
+    validate_token_configuration(
+        responsavel=next_responsavel,
+        token_type=instance.type,
+        created_by=instance.created_by,
+        organization=instance.organization,
+        name=next_name,
+        scopes=next_scopes,
+    )
 
-    if name is not None and name != instance.name:
-        instance.name = name
+    update_fields = []
+    events = []
+
+    if name is not None and next_name != instance.name:
+        instance.name = next_name
         update_fields.append("name")
 
     if responsavel is not None and responsavel != instance.responsavel:
-        emit_api_key_event(
-            "responsible_changed",
-            instance=instance,
-            actor=actor,
-            previous_responsavel_id=instance.responsavel_id,
-            new_responsavel_id=responsavel.pk,
+        events.append(
+            (
+                "responsible_changed",
+                {
+                    "previous_responsavel_id": instance.responsavel_id,
+                    "new_responsavel_id": responsavel.pk,
+                },
+            )
         )
         instance.responsavel = responsavel
         update_fields.append("responsavel")
 
-    if scopes is not None and list(scopes) != instance.scopes:
-        emit_api_key_event(
-            "scopes_changed",
-            instance=instance,
-            actor=actor,
-            previous_scopes=instance.scopes,
-            new_scopes=list(scopes),
+    if scopes is not None and next_scopes != instance.scopes:
+        events.append(
+            (
+                "scopes_changed",
+                {
+                    "previous_scopes": instance.scopes,
+                    "new_scopes": next_scopes,
+                },
+            )
         )
-        instance.scopes = list(scopes)
+        instance.scopes = next_scopes
         update_fields.append("scopes")
 
     if update_fields:
         instance.save(update_fields=update_fields)
+        for event, properties in events:
+            emit_api_key_event(event, instance=instance, actor=actor, **properties)
 
     return instance
 
@@ -150,10 +169,38 @@ def rotate_api_key(current, *, actor):
     with transaction.atomic():
         current = auth_token_model.objects.select_for_update().get(pk=current.pk)
 
+        if current.type != TokenType.API_KEY:
+            raise APIError(AuthErrorCode.INVALID_TOKEN, status_code=409)
+        if current.revoked_at is not None:
+            raise APIError(AuthErrorCode.REVOKED_TOKEN, status_code=409)
+        if current.suspended_at is not None:
+            raise APIError(AuthErrorCode.API_KEY_SUSPENDED, status_code=409)
+        if current.expiry is not None and current.expiry <= timezone.now():
+            raise APIError(AuthErrorCode.EXPIRED_TOKEN, status_code=409)
+
+        from apps.organizacoes.models import Vinculo
+
+        vinculo_ativo = Vinculo.objects.filter(
+            organizacao=current.organization,
+            usuario=current.responsavel,
+            ativo=True,
+        ).exists()
+        if not current.responsavel.is_active or not vinculo_ativo:
+            raise APIError(AuthErrorCode.RESPONSIBLE_INACTIVE, status_code=409)
+
+        validate_token_configuration(
+            responsavel=current.responsavel,
+            token_type=current.type,
+            created_by=current.created_by,
+            organization=current.organization,
+            name=current.name,
+            scopes=current.scopes,
+        )
+
         issued = issue_token(
             responsavel=current.responsavel,
             token_type=TokenType.API_KEY,
-            created_by=current.created_by,
+            created_by=actor,
             expiry=None,
             metadata_input={},
             organization=current.organization,

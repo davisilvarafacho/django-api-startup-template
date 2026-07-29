@@ -1,6 +1,8 @@
 """Eventos auditáveis do ciclo de vida de API keys (`audit.emit_api_key_event`)."""
 from unittest.mock import patch
 
+from django.db import IntegrityError
+
 import pytest
 from knox.models import get_token_model
 from threadlocals.threadlocals import set_current_user, set_thread_variable
@@ -52,7 +54,12 @@ def responsavel(organizacao):
 
 def _api_key(responsavel, organizacao, **campos):
     instance, token = AuthToken.objects.create(
-        responsavel=responsavel, type=TokenType.API_KEY, organization=organizacao, name="Integração", **campos
+        responsavel=responsavel,
+        type=TokenType.API_KEY,
+        created_by=responsavel,
+        organization=organizacao,
+        name="Integração",
+        **campos,
     )
     TokenMetaData.objects.create(token=instance)
     return instance, token
@@ -163,6 +170,23 @@ def test_update_sem_mudancas_nao_emite_evento(ator, organizacao, responsavel):
 
     with patch("apps.api.autenticacao.audit.capture") as capture_mock:
         update_api_key(instance, actor=ator, name=instance.name, scopes=["teams:read"])
+
+    capture_mock.assert_not_called()
+
+
+def test_update_nao_emite_evento_quando_persistencia_falha(
+    ator,
+    organizacao,
+    responsavel,
+):
+    instance, _token = _api_key(responsavel, organizacao, scopes=["teams:read"])
+
+    with (
+        patch.object(instance, "save", side_effect=IntegrityError("boom")),
+        patch("apps.api.autenticacao.audit.capture") as capture_mock,
+        pytest.raises(IntegrityError),
+    ):
+        update_api_key(instance, actor=ator, scopes=["organizations:read"])
 
     capture_mock.assert_not_called()
 

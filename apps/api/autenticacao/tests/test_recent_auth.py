@@ -181,7 +181,11 @@ def _client_com_api_key(usuario, organizacao=None):
     organizacao = organizacao or Organizacao.objects.create(nome="Org", slug="org-reauth")
     Vinculo.objects.create(usuario=usuario, organizacao=organizacao, papel=Papel.MEMBRO)
     instance, token = AuthToken.objects.create(
-        responsavel=usuario, type=TokenType.API_KEY, organization=organizacao, name="Integração"
+        responsavel=usuario,
+        type=TokenType.API_KEY,
+        created_by=usuario,
+        organization=organizacao,
+        name="Integração",
     )
     TokenMetaData.objects.create(token=instance)
     client = APIClient()

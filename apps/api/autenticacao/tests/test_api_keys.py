@@ -79,7 +79,12 @@ def _com_header(client, organizacao):
 
 def _client_api_key(usuario, organizacao, scopes=()):
     instance, token = AuthToken.objects.create(
-        responsavel=usuario, type=TokenType.API_KEY, organization=organizacao, name="Outra key", scopes=list(scopes)
+        responsavel=usuario,
+        type=TokenType.API_KEY,
+        created_by=usuario,
+        organization=organizacao,
+        name="Outra key",
+        scopes=list(scopes),
     )
     TokenMetaData.objects.create(token=instance)
     client = APIClient()
@@ -266,7 +271,11 @@ def test_resume_recusa_quando_responsavel_perdeu_o_vinculo(organizacao):
     vinculo = Vinculo.objects.create(usuario=responsavel_local, organizacao=organizacao, papel=Papel.MEMBRO)
 
     instance, _token = AuthToken.objects.create(
-        responsavel=responsavel_local, type=TokenType.API_KEY, organization=organizacao, name="Key"
+        responsavel=responsavel_local,
+        type=TokenType.API_KEY,
+        created_by=responsavel_local,
+        organization=organizacao,
+        name="Key",
     )
     TokenMetaData.objects.create(token=instance)
     suspend_api_key(instance, actor=responsavel_local, reason="manual")
@@ -293,6 +302,7 @@ def test_rotacao_atomica_via_service_preserva_organizacao_e_scopes(organizacao, 
     instance, _token = AuthToken.objects.create(
         responsavel=responsavel,
         type=TokenType.API_KEY,
+        created_by=responsavel,
         organization=organizacao,
         name="Integração",
         scopes=["teams:read"],
@@ -307,3 +317,82 @@ def test_rotacao_atomica_via_service_preserva_organizacao_e_scopes(organizacao, 
     instance.refresh_from_db()
     assert instance.revoked_at is not None
     assert instance.replaced_by_id == issued.instance.pk
+
+
+@pytest.mark.parametrize(
+    ("field", "error_code"),
+    [
+        ("revoked_at", AuthErrorCode.REVOKED_TOKEN),
+        ("suspended_at", AuthErrorCode.API_KEY_SUSPENDED),
+    ],
+)
+def test_rotacao_recusa_api_key_inativa(
+    organizacao,
+    responsavel,
+    field,
+    error_code,
+):
+    instance, _token = AuthToken.objects.create(
+        responsavel=responsavel,
+        type=TokenType.API_KEY,
+        created_by=responsavel,
+        organization=organizacao,
+        name="Integração",
+    )
+    setattr(instance, field, timezone.now())
+    instance.save(update_fields=[field])
+
+    with pytest.raises(APIError) as exc:
+        rotate_api_key(instance, actor=responsavel)
+
+    assert exc.value.code == error_code
+    assert AuthToken.objects.filter(organization=organizacao).count() == 1
+
+
+def test_rotacao_recusa_api_key_expirada(organizacao, responsavel):
+    instance, _token = AuthToken.objects.create(
+        responsavel=responsavel,
+        type=TokenType.API_KEY,
+        created_by=responsavel,
+        organization=organizacao,
+        name="Integração",
+        expiry=timedelta(seconds=-1),
+    )
+
+    with pytest.raises(APIError) as exc:
+        rotate_api_key(instance, actor=responsavel)
+
+    assert exc.value.code == AuthErrorCode.EXPIRED_TOKEN
+    assert AuthToken.objects.filter(organization=organizacao).count() == 1
+
+
+def test_rotacao_recusa_api_key_cujo_responsavel_perdeu_vinculo(
+    organizacao,
+    responsavel,
+):
+    instance, _token = AuthToken.objects.create(
+        responsavel=responsavel,
+        type=TokenType.API_KEY,
+        created_by=responsavel,
+        organization=organizacao,
+        name="Integração",
+    )
+    Vinculo.objects.filter(
+        usuario=responsavel,
+        organizacao=organizacao,
+    ).update(ativo=False)
+
+    with pytest.raises(APIError) as exc:
+        rotate_api_key(instance, actor=responsavel)
+
+    assert exc.value.code == AuthErrorCode.RESPONSIBLE_INACTIVE
+    assert AuthToken.objects.filter(organization=organizacao).count() == 1
+
+
+def test_rotacao_recusa_token_que_nao_e_api_key(responsavel):
+    instance, _token = AuthToken.objects.create(user=responsavel)
+
+    with pytest.raises(APIError) as exc:
+        rotate_api_key(instance, actor=responsavel)
+
+    assert exc.value.code == AuthErrorCode.INVALID_TOKEN

@@ -41,6 +41,7 @@ def client_com_api_key(usuario, scopes, organizacao):
     instance, token = AuthToken.objects.create(
         responsavel=usuario,
         type=TokenType.API_KEY,
+        created_by=usuario,
         organization=organizacao,
         name="Integração de teste",
         scopes=scopes,

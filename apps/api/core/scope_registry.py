@@ -218,6 +218,16 @@ def required_django_permissions(scope):
     return permissions
 
 
+def validate_registered_scope(scope):
+    """Valida que um scope usa recurso e action existentes no registry."""
+    resource, action = parse_scope(scope)
+    if resource == "*":
+        return
+
+    definition = _get_definition(resource)
+    _codenames_for_action(definition, action)
+
+
 def _get_definition(resource):
     definition = scope_registry.lookup(resource)
     if definition is None:

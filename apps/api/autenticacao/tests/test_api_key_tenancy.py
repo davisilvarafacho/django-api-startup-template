@@ -33,6 +33,7 @@ def _client_com_api_key(*, responsavel, organizacao, scopes=("teams:read",), **c
     instance, token = AuthToken.objects.create(
         responsavel=responsavel,
         type=TokenType.API_KEY,
+        created_by=responsavel,
         organization=organizacao,
         name="Integração",
         scopes=list(scopes),
@@ -136,10 +137,13 @@ def test_api_key_suspensa_e_recusada():
 
 
 def test_api_key_com_responsavel_inativo_e_recusada():
-    usuario = UsuarioFactory(is_active=False)
+    usuario = UsuarioFactory()
     organizacao = _organizacao("org-tenancy-inativo")
+    _vincular(usuario, organizacao)
 
     client = _client_com_api_key(responsavel=usuario, organizacao=organizacao)
+    usuario.is_active = False
+    usuario.save(update_fields=["is_active"])
 
     response = client.get("/times/")
 
@@ -150,9 +154,11 @@ def test_api_key_com_responsavel_inativo_e_recusada():
 def test_api_key_com_responsavel_sem_vinculo_na_organizacao_e_recusada():
     usuario = UsuarioFactory()
     organizacao = _organizacao("org-tenancy-sem-vinculo")
-    # Nenhum Vinculo criado propositalmente.
+    vinculo = _vincular(usuario, organizacao)
 
     client = _client_com_api_key(responsavel=usuario, organizacao=organizacao)
+    vinculo.ativo = False
+    vinculo.save(update_fields=["ativo"])
 
     response = client.get("/times/")
 
