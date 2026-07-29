@@ -13,6 +13,7 @@ from knox.models import get_token_model
 
 from apps.api.core.errors import APIError
 
+from .audit import emit_api_key_event
 from .errors import AuthErrorCode
 from .models import TokenMetaData, TokenType
 
@@ -79,6 +80,65 @@ def revoke_all_sessions(user, *, actor, exclude_uuid=None):
     return queryset.update(revoked_at=timezone.now(), revoked_by=actor)
 
 
+def create_api_key(*, responsavel, created_by, name, scopes, organization, expiry=None):
+    """Emite uma API key e audita a criação. Único ponto de entrada para o serializer."""
+    issued = issue_token(
+        responsavel=responsavel,
+        token_type=TokenType.API_KEY,
+        created_by=created_by,
+        # `issue_token`/o manager tratam `expiry` como relativo (`now() + delta`);
+        # aqui o cliente manda uma data absoluta opcional, então a aplicamos
+        # depois de criado em vez de repassar direto.
+        expiry=None,
+        metadata_input={},
+        organization=organization,
+        name=name,
+        scopes=list(scopes),
+    )
+    if expiry is not None:
+        issued.instance.expiry = expiry
+        issued.instance.save(update_fields=["expiry"])
+
+    emit_api_key_event("create", instance=issued.instance, actor=created_by)
+    return issued
+
+
+def update_api_key(instance, *, actor, name=None, responsavel=None, scopes=None):
+    """Altera nome/responsável/scopes; audita mudança de responsável e de scopes."""
+    update_fields = []
+
+    if name is not None and name != instance.name:
+        instance.name = name
+        update_fields.append("name")
+
+    if responsavel is not None and responsavel != instance.responsavel:
+        emit_api_key_event(
+            "responsible_changed",
+            instance=instance,
+            actor=actor,
+            previous_responsavel_id=instance.responsavel_id,
+            new_responsavel_id=responsavel.pk,
+        )
+        instance.responsavel = responsavel
+        update_fields.append("responsavel")
+
+    if scopes is not None and list(scopes) != instance.scopes:
+        emit_api_key_event(
+            "scopes_changed",
+            instance=instance,
+            actor=actor,
+            previous_scopes=instance.scopes,
+            new_scopes=list(scopes),
+        )
+        instance.scopes = list(scopes)
+        update_fields.append("scopes")
+
+    if update_fields:
+        instance.save(update_fields=update_fields)
+
+    return instance
+
+
 def rotate_api_key(current, *, actor):
     """Rotaciona uma API key: cria uma linha nova e revoga a atual, atomicamente.
 
@@ -110,6 +170,7 @@ def rotate_api_key(current, *, actor):
         current.replaced_by = issued.instance
         current.save(update_fields=["revoked_at", "revoked_by", "replaced_by"])
 
+    emit_api_key_event("rotate", instance=issued.instance, actor=actor, replaces_uuid=str(current.uuid))
     return issued
 
 
@@ -119,6 +180,7 @@ def suspend_api_key(instance, *, actor, reason=""):
     instance.suspended_by = actor
     instance.suspension_reason = reason
     instance.save(update_fields=["suspended_at", "suspended_by", "suspension_reason"])
+    emit_api_key_event("suspend", instance=instance, actor=actor, reason=reason)
     return instance
 
 
@@ -140,6 +202,7 @@ def resume_api_key(instance, *, actor):
     instance.suspended_by = None
     instance.suspension_reason = ""
     instance.save(update_fields=["suspended_at", "suspended_by", "suspension_reason"])
+    emit_api_key_event("resume", instance=instance, actor=actor)
     return instance
 
 
@@ -148,6 +211,7 @@ def revoke_api_key(instance, *, actor):
     instance.revoked_at = timezone.now()
     instance.revoked_by = actor
     instance.save(update_fields=["revoked_at", "revoked_by"])
+    emit_api_key_event("revoke", instance=instance, actor=actor)
     return instance
 
 
@@ -170,5 +234,6 @@ def ensure_api_key_still_valid(token):
         token.suspended_at = timezone.now()
         token.suspension_reason = "Responsável inativo ou sem vínculo na organização."
         token.save(update_fields=["suspended_at", "suspension_reason"])
+        emit_api_key_event("suspend", instance=token, actor=None, reason=token.suspension_reason, automatic=True)
 
     return token

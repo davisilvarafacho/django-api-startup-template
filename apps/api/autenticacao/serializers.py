@@ -160,35 +160,28 @@ class APIKeyWriteSerializer(APIKeySerializer):
         return responsavel
 
     def create(self, validated_data):
-        from .models import TokenType
-        from .services import issue_token
+        from .services import create_api_key
 
         request = self.context["request"]
-        issued = issue_token(
+        issued = create_api_key(
             responsavel=validated_data["responsavel"],
-            token_type=TokenType.API_KEY,
             created_by=request.user,
-            # `issue_token`/o manager tratam `expiry` como relativo (`now() + delta`);
-            # aqui o cliente manda uma data absoluta opcional, então a aplicamos
-            # depois de criado em vez de repassar direto.
-            expiry=None,
-            metadata_input={},
-            organization=request.organizacao,
             name=validated_data["name"],
             scopes=validated_data.get("scopes", []),
+            organization=request.organizacao,
+            expiry=validated_data.get("expiry"),
         )
         instance = issued.instance
-        expiry = validated_data.get("expiry")
-        if expiry is not None:
-            instance.expiry = expiry
-            instance.save(update_fields=["expiry"])
-
         instance.token = issued.plain_token
         return instance
 
     def update(self, instance, validated_data):
-        for field_name in ("name", "responsavel", "scopes"):
-            if field_name in validated_data:
-                setattr(instance, field_name, validated_data[field_name])
-        instance.save()
-        return instance
+        from .services import update_api_key
+
+        return update_api_key(
+            instance,
+            actor=self.context["request"].user,
+            name=validated_data.get("name"),
+            responsavel=validated_data.get("responsavel"),
+            scopes=validated_data.get("scopes"),
+        )

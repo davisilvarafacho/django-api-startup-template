@@ -40,6 +40,11 @@ class AuthTokenAdmin(admin.ModelAdmin):
     def has_add_permission(self, request):
         return False
 
+    def has_delete_permission(self, request, obj=None):
+        # Revogação é lógica (`revoked_at`) e permanente; o registro nunca é
+        # apagado, nem pelo admin.
+        return False
+
     @admin.display(description="Estado")
     def estado(self, obj):
         if obj.revoked_at:

@@ -40,3 +40,23 @@ registrado em `apps.api.core.errors.error_codes`; um system check falha o
 startup se houver formato inválido ou duplicidade. Ver a implementação em
 `apps/api/core/errors.py` e a spec normativa em
 `docs/superpowers/specs/2026-07-28-api-errors-design.md`.
+
+## Autenticação
+
+Todas as URLs usam `_` (nunca `-`) em palavras compostas. Detalhes de cada
+mecanismo estão em `docs/explanation/autenticacao.md`.
+
+| Rota | Descrição |
+| --- | --- |
+| `POST /auth/login/` | Emite uma sessão; devolve `token` uma única vez |
+| `POST /auth/reauthenticate/` | Step-up: confirma a senha da sessão atual |
+| `POST /auth/logout/` | Revoga logicamente a sessão atual |
+| `POST /auth/logout_all/` | Revoga logicamente todas as sessões |
+| `/auth/sessions/` | CRUD read-mostly das sessões do usuário autenticado |
+| `/auth/api_keys/` | CRUD e ciclo de vida (`rotate`/`suspend`/`resume`) de API keys da organização do header `X-Organization` |
+
+Erros comuns desses endpoints: `auth.invalid_credentials`,
+`auth.reauthentication_required`, `auth.expired_token`, `auth.revoked_token`,
+`auth.api_key_suspended`, `auth.responsible_inactive`,
+`auth.scope_not_delegable`, `organizations.tenant_mismatch`,
+`organizations.membership_required`.

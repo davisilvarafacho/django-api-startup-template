@@ -101,12 +101,16 @@ _Atualizado em 2026-07-24._
 ### Batch 5 — Autenticação & permissões 🚧
 - ✅ **`django-guardian` + `django-rules`** (setup extensível, object-level).
 - ✅ Papéis estilo **Saleor** (ordem crescente) somados às permissions do Django.
-- ✅ Tipagem operacional de `knox.AuthToken` via `TokenMetaData.type` (1=token, 2=reset_password, 999=api_key); reset password não autentica API.
-- ✅ **Scoped API tokens**: `TokenMetaData.scopes` + `TokenScopePermission` global via `required_token_scopes` na view.
+- ✅ Modelo de token **swappable** (`settings.KNOX_TOKEN_MODEL = "autenticacao.AuthToken"`), não mais proxy: `AuthToken.type` (1=token, 2=reset_password, 999=api_key); reset password não autentica API.
+- ✅ **Scoped API tokens**: `AuthToken.scopes` + `TokenScopePermission` global; scopes falam `resource:action` (`apps.api.core.scope_registry`), traduzido para `app_label.codename` do Django.
+- ✅ **Delegação de scope**: uma API key nunca recebe mais poder do que o responsável que a criou possui (`validate_scope_delegation`).
+- ✅ **Envelope de erros unificado** (`{"errors": [...], "request_id": ...}`) para DRF, middlewares e handlers de status HTTP do Django.
+- ✅ **Gestão de sessões** (`/auth/sessions/`, `/auth/logout*`) e **autenticação recente/step-up** (`@require_recent_auth`, `/auth/reauthenticate/`).
+- ✅ **API keys por organização** (`/auth/api_keys/`): CRUD, rotação atômica, suspensão manual/automática (fail-closed quando o responsável perde o vínculo) e retomada; UUID como identificador público; plain token exibido só na criação/rotação.
 - ⏳ **Cache de permissão**.
-- ⏳ **MFA/2FA** + checagem de senha vazada (HaveIBeenPwned).
+- ⏳ **MFA/2FA** + checagem de senha vazada (HaveIBeenPwned) — pontos de integração já existem como stubs seguros (`user_has_mfa_enabled`/`verify_mfa_code`).
 - ⏳ **Field-level permissions** (serializers dinâmicos por papel).
-- ⏳ Ciclo de vida de conta: verificação de e-mail, social auth, desativação/exclusão, gestão de sessões e dispositivos.
+- ⏳ Ciclo de vida de conta: verificação de e-mail, social auth, desativação/exclusão.
 
 ### Batch 8 — Domínio & segurança
 - Base de código de **notificações** (providers plugáveis, templates, preferências).

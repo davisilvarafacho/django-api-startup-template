@@ -20,6 +20,14 @@ from .models import TokenType
 from .permissions import APIKeyPermissions, TokenScopePermission
 from .recent_auth import RecentAuthenticationPermission, require_recent_auth
 from .risk import evaluate_login_risk
+from .schema import (
+    document_api_key_create,
+    document_api_key_resume,
+    document_api_key_rotate,
+    document_api_key_suspend,
+    document_login,
+    document_reauthenticate,
+)
 from .serializers import (
     APIKeySerializer,
     APIKeyWriteSerializer,
@@ -54,6 +62,7 @@ class LoginView(APIView):
 
     permission_classes = (AllowAny,)
 
+    @document_login
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -144,6 +153,7 @@ class ReauthenticateView(APIView):
     permission_classes = [IsAuthenticated, TokenScopePermission]
     session_only = True
 
+    @document_reauthenticate
     def post(self, request):
         serializer = ReauthenticateSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
@@ -284,6 +294,7 @@ class APIKeyViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         revoke_api_key(instance, actor=self.request.user)
 
+    @document_api_key_create
     @require_recent_auth()
     def create(self, request, *args, **kwargs):
         return super().create(request, *args, **kwargs)
@@ -292,6 +303,7 @@ class APIKeyViewSet(viewsets.ModelViewSet):
     def partial_update(self, request, *args, **kwargs):
         return super().partial_update(request, *args, **kwargs)
 
+    @document_api_key_rotate
     @require_recent_auth()
     @action(detail=True, methods=["post"])
     def rotate(self, request, uuid=None):
@@ -300,31 +312,19 @@ class APIKeyViewSet(viewsets.ModelViewSet):
         # Plain token só aparece na criação/rotação; não é um campo persistido.
         issued.instance.token = issued.plain_token
 
-        with new_context():
-            identify_context(str(request.user.pk))
-            capture('api_key_rotated')
-
         data = self.get_serializer(issued.instance).data
         return Response(data, status=status.HTTP_201_CREATED)
 
+    @document_api_key_suspend
     @action(detail=True, methods=["post"])
     def suspend(self, request, uuid=None):
         instance = self.get_object()
         suspend_api_key(instance, actor=request.user, reason=request.data.get("reason", ""))
-
-        with new_context():
-            identify_context(str(request.user.pk))
-            capture('api_key_suspended')
-
         return Response(self.get_serializer(instance).data)
 
+    @document_api_key_resume
     @action(detail=True, methods=["post"])
     def resume(self, request, uuid=None):
         instance = self.get_object()
         resume_api_key(instance, actor=request.user)
-
-        with new_context():
-            identify_context(str(request.user.pk))
-            capture('api_key_resumed')
-
         return Response(self.get_serializer(instance).data)
