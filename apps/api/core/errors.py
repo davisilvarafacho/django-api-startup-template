@@ -34,6 +34,18 @@ logger = logging.getLogger("api.errors")
 
 # `dominio.erro`, sempre em inglês, minúsculo e com `_` como separador interno.
 CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
+REDACTED_CONTEXT_VALUE = "[REDACTED]"
+SENSITIVE_CONTEXT_KEY_PARTS = (
+    "api_key",
+    "authorization",
+    "cookie",
+    "credential",
+    "digest",
+    "password",
+    "secret",
+    "senha",
+    "token",
+)
 
 
 class CoreErrorCode(models.TextChoices):
@@ -152,7 +164,33 @@ def check_error_code_registry(app_configs, **kwargs):
 
 
 def _is_registered_choice(code):
-    return isinstance(code, models.TextChoices)
+    return (
+        isinstance(code, models.TextChoices)
+        and error_codes.lookup(code.value) is code
+    )
+
+
+def _is_sensitive_context_key(key):
+    normalized = str(key).casefold().replace("-", "_")
+    return any(part in normalized for part in SENSITIVE_CONTEXT_KEY_PARTS)
+
+
+def sanitize_error_context(value):
+    """Remove segredos de estruturas que serão devolvidas no envelope público."""
+    if isinstance(value, Mapping):
+        return {
+            key: (
+                REDACTED_CONTEXT_VALUE
+                if _is_sensitive_context_key(key)
+                else sanitize_error_context(item)
+            )
+            for key, item in value.items()
+        }
+
+    if isinstance(value, (list, tuple)):
+        return [sanitize_error_context(item) for item in value]
+
+    return value
 
 
 class APIError(APIException):
@@ -166,14 +204,14 @@ class APIError(APIException):
     def __init__(self, code, *, status_code, message=None, field=None, path=None, context=None):
         if not _is_registered_choice(code):
             raise ImproperlyConfigured(
-                f"{code!r} precisa ser um membro de uma subclasse de models.TextChoices."
+                f"{code!r} precisa ser um membro de models.TextChoices registrado em error_codes."
             )
 
         self.code = code.value
         self.message = message if message is not None else code.label
         self.field = field
         self.path = tuple(path) if path else None
-        self.context = dict(context) if context else {}
+        self.context = sanitize_error_context(dict(context)) if context else {}
         self.status_code = status_code
 
         super().__init__(detail=self.message, code=self.code)
@@ -191,7 +229,7 @@ class APIError(APIException):
 def build_error_item(code, *, message=None, field=None, path=None, context=None):
     if not _is_registered_choice(code):
         raise ImproperlyConfigured(
-            f"{code!r} precisa ser um membro de uma subclasse de models.TextChoices."
+            f"{code!r} precisa ser um membro de models.TextChoices registrado em error_codes."
         )
 
     return APIErrorItem(
@@ -199,13 +237,19 @@ def build_error_item(code, *, message=None, field=None, path=None, context=None)
         message=str(message) if message is not None else str(code.label),
         field=field,
         path=tuple(path) if path else None,
-        context=dict(context) if context else {},
+        context=sanitize_error_context(dict(context)) if context else {},
     )
 
 
 def build_error_payload(items, *, request_id=None):
+    serialized_items = []
+    for item in items:
+        serialized = asdict(item)
+        serialized["context"] = sanitize_error_context(serialized["context"])
+        serialized_items.append(serialized)
+
     return {
-        "errors": [asdict(item) for item in items],
+        "errors": serialized_items,
         "request_id": request_id if request_id is not None else get_request_id(),
     }
 

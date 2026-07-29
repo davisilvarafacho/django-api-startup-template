@@ -10,6 +10,7 @@ from apps.api.core.errors import (
     ErrorCodeRegistry,
     ValidationErrorCode,
     build_error_item,
+    build_error_payload,
     discover_error_codes,
     error_codes,
 )
@@ -24,16 +25,16 @@ class NotTextChoices(models.IntegerChoices):
 
 
 def test_api_error_usa_valor_e_label_do_textchoices():
-    error = APIError(ExampleErrorCode.INVALID, status_code=422)
+    error = APIError(ValidationErrorCode.INVALID, status_code=422)
 
-    assert error.code == "example.invalid"
+    assert error.code == "validation.invalid"
     assert str(error.message) == "Valor inválido."
     assert error.status_code == 422
 
 
 def test_api_error_aceita_mensagem_campo_path_e_contexto_customizados():
     error = APIError(
-        ExampleErrorCode.INVALID,
+        ValidationErrorCode.INVALID,
         status_code=422,
         message="Mensagem específica.",
         field="email",
@@ -59,10 +60,56 @@ def test_api_error_rejeita_choices_que_nao_seja_textchoices():
         APIError(NotTextChoices.ONE, status_code=422)
 
 
-def test_build_error_item_usa_label_quando_mensagem_nao_informada():
-    item = build_error_item(ExampleErrorCode.INVALID)
+def test_api_error_rejeita_textchoices_nao_registrado():
+    with pytest.raises(ImproperlyConfigured, match="registrado"):
+        APIError(ExampleErrorCode.INVALID, status_code=422)
 
-    assert item == APIErrorItem(code="example.invalid", message="Valor inválido.")
+
+def test_build_error_item_usa_label_quando_mensagem_nao_informada():
+    item = build_error_item(ValidationErrorCode.INVALID)
+
+    assert item == APIErrorItem(code="validation.invalid", message="Valor inválido.")
+
+
+def test_build_error_item_rejeita_textchoices_nao_registrado():
+    with pytest.raises(ImproperlyConfigured, match="registrado"):
+        build_error_item(ExampleErrorCode.INVALID)
+
+
+def test_api_error_sanitiza_segredos_recursivamente_no_contexto():
+    error = APIError(
+        ValidationErrorCode.INVALID,
+        status_code=422,
+        context={
+            "token": "plain-token",
+            "details": {
+                "password_confirmation": "senha",
+                "safe": "pode aparecer",
+            },
+            "items": [{"authorization": "Bearer segredo"}],
+        },
+    )
+
+    assert error.as_item().context == {
+        "token": "[REDACTED]",
+        "details": {
+            "password_confirmation": "[REDACTED]",
+            "safe": "pode aparecer",
+        },
+        "items": [{"authorization": "[REDACTED]"}],
+    }
+
+
+def test_payload_sanitiza_contexto_de_item_construido_diretamente():
+    item = APIErrorItem(
+        code="validation.invalid",
+        message="Inválido",
+        context={"refresh_token": "segredo"},
+    )
+
+    payload = build_error_payload([item], request_id="req-1")
+
+    assert payload["errors"][0]["context"] == {"refresh_token": "[REDACTED]"}
 
 
 def test_registry_rejeita_codigo_duplicado():
