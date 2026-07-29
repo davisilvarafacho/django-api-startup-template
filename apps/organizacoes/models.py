@@ -130,6 +130,7 @@ class Convite(BaseGlobal):
 
     created_by = None
     api_scope_resource = "invitations"
+    api_scope_custom_actions = {"accept": "can_accept_convite"}
 
     organizacao = models.ForeignKey(
         Organizacao,
@@ -200,6 +201,9 @@ class Convite(BaseGlobal):
     class Meta:
         db_table = "convite"
         ordering = ["-id"]
+        permissions = [
+            ("can_accept_convite", "Pode aceitar convite"),
+        ]
         verbose_name = _("Convite")
         verbose_name_plural = _("Convites")
 

@@ -1,7 +1,10 @@
 from django.conf import settings
 
+import pytest
+
 from apps.api.autenticacao import permissions
 from apps.api.autenticacao.models import AuthToken, TokenType
+from apps.api.core.errors import APIError
 
 
 class TokenFalso:
@@ -40,7 +43,10 @@ def test_api_key_sem_scope_da_view_e_recusada():
     permission = permissions.TokenScopePermission()
     request = RequestFalsa("POST", TokenFalso(TokenType.API_KEY, scopes=["org:read"]))
 
-    assert not permission.has_permission(request, ViewComScopes())
+    with pytest.raises(APIError) as exc:
+        permission.has_permission(request, ViewComScopes())
+
+    assert exc.value.code == "auth.insufficient_scope"
 
 
 def test_token_de_sessao_nao_e_limitado_por_scopes():
@@ -62,7 +68,10 @@ def test_api_key_em_view_sem_scope_declarado_e_recusada():
     permission = permissions.TokenScopePermission()
     request = RequestFalsa("GET", TokenFalso(TokenType.API_KEY, scopes=["*"]))
 
-    assert not permission.has_permission(request, object())
+    with pytest.raises(APIError) as exc:
+        permission.has_permission(request, object())
+
+    assert exc.value.code == "auth.insufficient_scope"
 
 
 def test_view_session_only_recusa_api_key_mesmo_com_scope():
@@ -111,4 +120,24 @@ def test_get_required_token_scopes_da_view_tem_prioridade_sobre_o_atributo_legad
     request = RequestFalsa("GET", TokenFalso(TokenType.API_KEY, scopes=["org:read"]))
 
     # `organizations:read` (do método), não `org:read` (do atributo legado).
-    assert not permission.has_permission(request, ViewComAmbos())
+    with pytest.raises(APIError) as exc:
+        permission.has_permission(request, ViewComAmbos())
+
+    assert exc.value.code == "auth.insufficient_scope"
+
+
+def test_api_key_precisa_satisfazer_todos_os_scopes_exigidos():
+    class ViewComDoisScopes:
+        def get_required_token_scopes(self):
+            return ["organizations:read", "teams:read"]
+
+    permission = permissions.TokenScopePermission()
+    request = RequestFalsa(
+        "GET",
+        TokenFalso(TokenType.API_KEY, scopes=["organizations:read"]),
+    )
+
+    with pytest.raises(APIError) as exc:
+        permission.has_permission(request, ViewComDoisScopes())
+
+    assert exc.value.code == "auth.insufficient_scope"

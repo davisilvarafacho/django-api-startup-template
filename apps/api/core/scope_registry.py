@@ -85,7 +85,7 @@ class ScopeRegistry:
         self._resources: dict[str, ScopeDefinition] = {}
         self.discovered = False
 
-    def register(self, resource, *, model=None, custom_actions=()):
+    def register(self, resource, *, model=None, custom_actions=None):
         if not SCOPE_TOKEN_PATTERN.match(resource):
             raise ImproperlyConfigured(f"Nome de recurso de scope inválido: '{resource}'.")
 
@@ -98,6 +98,23 @@ class ScopeRegistry:
             action_permissions = {
                 action.value: f"{prefix}_{model_name}" for action, prefix in CRUD_DJANGO_PREFIXES.items()
             }
+
+        custom_actions = custom_actions or {}
+        if not isinstance(custom_actions, Mapping):
+            raise ImproperlyConfigured(
+                f"Actions customizadas de '{resource}' devem mapear action para codename Django."
+            )
+
+        for action, codename in custom_actions.items():
+            if not SCOPE_TOKEN_PATTERN.match(action):
+                raise ImproperlyConfigured(f"Action de scope inválida: '{action}'.")
+            if not SCOPE_TOKEN_PATTERN.match(codename):
+                raise ImproperlyConfigured(f"Codename Django inválido: '{codename}'.")
+            if action in action_permissions:
+                raise ImproperlyConfigured(
+                    f"Action de scope duplicada para '{resource}': '{action}'."
+                )
+            action_permissions[action] = codename
 
         definition = ScopeDefinition(
             resource=resource,
@@ -166,7 +183,11 @@ def discover_scope_resources(registry=None, *, force=False):
         resource = getattr(model, "api_scope_resource", None)
         if resource is None:
             continue
-        registry.register(resource, model=model)
+        registry.register(
+            resource,
+            model=model,
+            custom_actions=getattr(model, "api_scope_custom_actions", None),
+        )
 
     registry.discovered = True
     return registry

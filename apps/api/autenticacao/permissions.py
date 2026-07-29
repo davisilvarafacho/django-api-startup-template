@@ -3,8 +3,10 @@ from django.core.exceptions import ImproperlyConfigured
 from rest_framework import exceptions
 from rest_framework.permissions import BasePermission, DjangoModelPermissions, IsAdminUser
 
+from apps.api.core.errors import APIError
 from apps.api.core.scope_registry import matches_scope
 
+from .errors import AuthErrorCode
 from .models import TokenType
 
 
@@ -47,13 +49,17 @@ class TokenScopePermission(BasePermission):
 
         required_scopes = self.get_required_scopes(request, view)
         if not required_scopes:
-            return False
+            raise APIError(AuthErrorCode.INSUFFICIENT_SCOPE, status_code=403)
 
         granted_scopes = set(getattr(auth_token, "scopes", []) or [])
 
-        return any(
-            matches_scope(granted, required) for required in required_scopes for granted in granted_scopes
-        )
+        if not all(
+            any(matches_scope(granted, required) for granted in granted_scopes)
+            for required in required_scopes
+        ):
+            raise APIError(AuthErrorCode.INSUFFICIENT_SCOPE, status_code=403)
+
+        return True
 
     def get_required_scopes(self, request, view):
         get_required_token_scopes = getattr(view, "get_required_token_scopes", None)

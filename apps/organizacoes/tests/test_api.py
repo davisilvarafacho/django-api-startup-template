@@ -317,6 +317,7 @@ def test_api_key_sem_scope_teams_read_e_recusada():
     )
 
     assert response.status_code == status.HTTP_403_FORBIDDEN
+    assert response.data["errors"][0]["code"] == "auth.insufficient_scope"
 
 
 def test_api_key_precisa_do_scope_invitations_accept_para_aceitar_convite():
@@ -337,6 +338,7 @@ def test_api_key_precisa_do_scope_invitations_accept_para_aceitar_convite():
     )
 
     assert response.status_code == status.HTTP_403_FORBIDDEN
+    assert response.data["errors"][0]["code"] == "auth.insufficient_scope"
 
 
 def test_api_key_com_scope_invitations_accept_aceita_convite():

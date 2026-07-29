@@ -10,7 +10,7 @@ from apps.api.core.scope_registry import (
     required_django_permissions,
     scope_registry,
 )
-from apps.organizacoes.models import Time
+from apps.organizacoes.models import Convite, Time
 from apps.usuarios.factories import UsuarioFactory
 
 
@@ -83,6 +83,17 @@ def test_registry_deriva_permissoes_crud_do_model():
     }
 
 
+def test_registry_mapeia_action_customizada_para_permission_django():
+    registry = ScopeRegistry()
+    definition = registry.register(
+        "invitations",
+        model=Convite,
+        custom_actions={"accept": "can_accept_convite"},
+    )
+
+    assert definition.action_permissions["accept"] == "can_accept_convite"
+
+
 def test_registry_lookup():
     registry = ScopeRegistry()
     registry.register("teams", model=Time)
@@ -139,6 +150,10 @@ def test_discover_scope_resources_e_idempotente_e_sem_inconsistencias():
     discover_scope_resources(force=True)
 
     assert scope_registry.check() == []
+    assert (
+        scope_registry.lookup("invitations").action_permissions["accept"]
+        == "can_accept_convite"
+    )
 
     # Chamar de novo não deve levantar por recurso duplicado.
     discover_scope_resources()

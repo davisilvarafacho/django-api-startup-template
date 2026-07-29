@@ -5,7 +5,7 @@ import pytest
 from apps.api.autenticacao.scope_delegation import validate_scope_delegation
 from apps.api.core.errors import APIError
 from apps.api.core.scope_registry import ScopeRegistry
-from apps.organizacoes.models import Time
+from apps.organizacoes.models import Convite, Time
 from apps.usuarios.factories import UsuarioFactory
 from apps.usuarios.models import Usuario
 
@@ -15,6 +15,11 @@ def registro_isolado(monkeypatch):
     registry = ScopeRegistry()
     registry.register("teams", model=Time)
     registry.register("users", model=Usuario)
+    registry.register(
+        "invitations",
+        model=Convite,
+        custom_actions={"accept": "can_accept_convite"},
+    )
     monkeypatch.setattr("apps.api.core.scope_registry.scope_registry", registry)
     return registry
 
@@ -42,6 +47,16 @@ def test_usuario_delega_scope_que_possui(registro_isolado):
     usuario = _com_permissao(usuario, "organizacoes", "view_time")
 
     assert validate_scope_delegation(usuario, ["teams:read"]) == ("teams:read",)
+
+
+@pytest.mark.django_db
+def test_usuario_delega_action_customizada_que_possui(registro_isolado):
+    usuario = UsuarioFactory()
+    usuario = _com_permissao(usuario, "organizacoes", "can_accept_convite")
+
+    assert validate_scope_delegation(usuario, ["invitations:accept"]) == (
+        "invitations:accept",
+    )
 
 
 @pytest.mark.django_db
