@@ -22,6 +22,9 @@ class OrganizacaoSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "papel"]
 
     def get_papel(self, obj):
+        if self.context.get("include_personal_role") is False:
+            return None
+
         vinculos_por_organizacao = self.context.get("vinculos_por_organizacao", {})
         vinculo = vinculos_por_organizacao.get(obj.id)
         if vinculo:
@@ -138,6 +141,14 @@ class AceitarConviteSerializer(serializers.Serializer):
         if convite.email.lower() != usuario.email.lower():
             raise APIError(
                 OrganizationErrorCode.INVITATION_EMAIL_MISMATCH, status_code=422, field="token"
+            )
+
+        request_organization = getattr(self.context["request"], "organizacao", None)
+        if request_organization is not None and convite.organizacao_id != request_organization.id:
+            raise APIError(
+                OrganizationErrorCode.TENANT_MISMATCH,
+                status_code=409,
+                field="token",
             )
 
         return convite

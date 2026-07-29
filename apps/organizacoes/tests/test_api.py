@@ -322,6 +322,7 @@ def test_api_key_sem_scope_teams_read_e_recusada():
 def test_api_key_precisa_do_scope_invitations_accept_para_aceitar_convite():
     usuario = UsuarioFactory(email="precisa-scope@example.com")
     organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
+    vincular(usuario, organizacao)
     convite = Convite.objects.create(
         organizacao=organizacao,
         email=usuario.email,
@@ -341,6 +342,7 @@ def test_api_key_precisa_do_scope_invitations_accept_para_aceitar_convite():
 def test_api_key_com_scope_invitations_accept_aceita_convite():
     usuario = UsuarioFactory(email="com-scope@example.com")
     organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
+    vincular(usuario, organizacao)
     convite = Convite.objects.create(
         organizacao=organizacao,
         email=usuario.email,

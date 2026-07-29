@@ -11,7 +11,7 @@ from threadlocals.threadlocals import set_current_user, set_thread_variable
 
 from apps.api.autenticacao.models import TokenMetaData, TokenType
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
-from apps.organizacoes.models import Organizacao, Papel, Vinculo
+from apps.organizacoes.models import Convite, Organizacao, Papel, Vinculo
 from apps.usuarios.factories import UsuarioFactory
 
 pytestmark = pytest.mark.django_db
@@ -174,3 +174,42 @@ def test_api_key_ignora_permissions_pessoais_do_responsavel():
     response = client.post("/times/", {"nome": "Produto"}, format="json")
 
     assert response.status_code == 403
+
+
+def test_api_key_lista_somente_a_organizacao_da_propria_credencial():
+    usuario = UsuarioFactory()
+    organizacao = _organizacao("org-da-api-key")
+    outra_organizacao = _organizacao("org-pessoal-do-responsavel")
+    _vincular(usuario, organizacao)
+    _vincular(usuario, outra_organizacao)
+
+    response = _client_com_api_key(
+        responsavel=usuario,
+        organizacao=organizacao,
+        scopes=["organizations:read"],
+    ).get("/organizacoes/")
+
+    assert response.status_code == 200
+    assert [item["slug"] for item in response.data["resultados"]] == [organizacao.slug]
+
+
+def test_api_key_nao_aceita_convite_de_outra_organizacao():
+    usuario = UsuarioFactory()
+    organizacao = _organizacao("org-da-api-key-convite")
+    outra_organizacao = _organizacao("org-do-convite")
+    _vincular(usuario, organizacao)
+    convite = Convite.objects.create(
+        organizacao=outra_organizacao,
+        email=usuario.email,
+        papel=Papel.MEMBRO,
+        convidado_por=UsuarioFactory(),
+    )
+
+    response = _client_com_api_key(
+        responsavel=usuario,
+        organizacao=organizacao,
+        scopes=["invitations:accept"],
+    ).post("/convites/aceitar/", {"token": convite.token}, format="json")
+
+    assert response.status_code == 409
+    assert response.data["errors"][0]["code"] == "organizations.tenant_mismatch"

@@ -3,6 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.api.autenticacao.models import TokenType
 from apps.api.autenticacao.permissions import TokenScopePermission, require_token_scopes
 from apps.api.core.scope_mixins import ScopeResourceMixin
 from apps.organizacoes.models import Convite, Organizacao, Papel, Time, Vinculo
@@ -25,12 +26,16 @@ class OrganizacaoViewSet(
     viewsets.GenericViewSet,
 ):
     serializer_class = OrganizacaoSerializer
-    permission_classes = [IsAuthenticated, TokenScopePermission]
+    permission_classes = [IsAuthenticated, TenantPermission, TokenScopePermission]
     # Sem `queryset` estático (depende do usuário autenticado); a superfície
     # pública corresponde ao model mesmo assim.
     scope_resource = "organizations"
 
     def get_queryset(self):
+        auth_token = getattr(self.request, "auth", None)
+        if getattr(auth_token, "type", None) == TokenType.API_KEY:
+            return Organizacao.objects.filter(pk=auth_token.organization_id, ativo=True)
+
         organizacao_ids = Vinculo.objects.filter(
             usuario=self.request.user,
             ativo=True,
@@ -40,6 +45,11 @@ class OrganizacaoViewSet(
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
+        auth_token = getattr(self.request, "auth", None)
+        if getattr(auth_token, "type", None) == TokenType.API_KEY:
+            context["include_personal_role"] = False
+            return context
+
         vinculos = Vinculo.objects.filter(
             usuario=self.request.user,
             ativo=True,
@@ -116,7 +126,7 @@ class ConviteViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action == "aceitar":
-            return [IsAuthenticated(), TokenScopePermission()]
+            return [IsAuthenticated(), TenantPermission(), TokenScopePermission()]
         return super().get_permissions()
 
     def get_queryset(self):

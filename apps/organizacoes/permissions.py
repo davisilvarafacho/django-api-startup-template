@@ -34,6 +34,25 @@ class TenantPermission(BasePermission):
 
     def has_permission(self, request, view):
         path = request.path_info
+        auth_token = getattr(request, "auth", None)
+
+        # Rotas sem tenant continuam presas ao tenant quando a credencial é
+        # uma API key. A isenção existe para sessões pessoais (por exemplo,
+        # listar organizações), nunca para ampliar a organização fixa da key.
+        if _is_api_key(request):
+            if not request.user or not request.user.is_authenticated:
+                return False
+
+            from apps.api.autenticacao.services import ensure_api_key_still_valid
+
+            ensure_api_key_still_valid(auth_token)
+            if auth_token.suspended_at is not None:
+                raise APIError(AuthErrorCode.API_KEY_SUSPENDED, status_code=401)
+
+            organizacao = auth_token.organization
+            request.organizacao = organizacao
+            definir_organizacao_atual(organizacao.id)
+            return True
 
         # Sem token não há vínculo a validar; isenção explícita idem.
         # O DRF já entrega a view resolvida, então aqui não é preciso resolver a URL.
@@ -53,26 +72,6 @@ class TenantPermission(BasePermission):
 
         if not request.user or not request.user.is_authenticated:
             return False
-
-        auth_token = getattr(request, "auth", None)
-        if _is_api_key(request):
-            # O tenant de uma API key vem só da própria credencial (já validado
-            # contra o header em `resolve_token_organization`). Não usamos o
-            # Vinculo para decidir permissions (autorização é só por scopes),
-            # mas exigimos que ele exista: se o responsável perdeu o vínculo
-            # com a organização, a key fica inutilizável até ele ser retomado.
-            # `ensure_api_key_still_valid` materializa a suspensão (fail-closed
-            # com trilha de auditoria) em vez de só recusar na hora.
-            from apps.api.autenticacao.services import ensure_api_key_still_valid
-
-            ensure_api_key_still_valid(auth_token)
-            if auth_token.suspended_at is not None:
-                raise APIError(AuthErrorCode.API_KEY_SUSPENDED, status_code=401)
-
-            organizacao = auth_token.organization
-            request.organizacao = organizacao
-            definir_organizacao_atual(organizacao.id)
-            return True
 
         vinculo = (
             Vinculo.objects.select_related("organizacao")
