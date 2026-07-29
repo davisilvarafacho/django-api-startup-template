@@ -23,7 +23,7 @@ _Atualizado em 2026-07-29._
 | Batch 5 | Autenticação & permissões | 🚧 |
 | Batch 6 | Multi-tenancy | ✅ |
 | Batch 7 | Observabilidade | ✅ |
-| Batch 8 | Domínio & segurança | ⏳ |
+| Batch 8 | Domínio & segurança | 🚧 |
 | Batch 9 | API avançada | ⏳ |
 | Batch 10 | Escala de banco | ⏳ |
 | Batch 11 | DevEx & operação (restante) | ⏳ |
@@ -97,7 +97,7 @@ _Atualizado em 2026-07-29._
 
 ---
 
-## ⏳ Planejado
+## 🚧 Em andamento
 
 ### Batch 5 — Autenticação & permissões 🚧
 - ✅ **`django-guardian` + `django-rules`** (setup extensível, object-level).
@@ -110,20 +110,29 @@ _Atualizado em 2026-07-29._
 - ✅ **Envelope de erros unificado** (`{"errors": [...], "request_id": ...}`) para DRF, middlewares e handlers de status HTTP do Django.
 - ✅ **Gestão de sessões** (`/auth/sessions/`, `/auth/logout*`) e **autenticação recente/step-up** (`@require_recent_auth`, `/auth/reauthenticate/`).
 - ✅ **API keys por organização** (`/auth/api_keys/`): CRUD, rotação atômica, suspensão manual/automática (fail-closed quando o responsável perde o vínculo) e retomada; UUID como identificador público; plain token exibido só na criação/rotação.
-- ⚠️ Migrations permanecem congeladas nesta fase: CI e testes usam
-  `--nomigrations`; o histórico será recriado integralmente antes do lançamento.
-- ⏳ **Cache de permissão**.
-- ⏳ **MFA/2FA** + checagem de senha vazada (HaveIBeenPwned) — pontos de integração já existem como stubs seguros (`user_has_mfa_enabled`/`verify_mfa_code`).
-- ⏳ **Field-level permissions** (serializers dinâmicos por papel).
-- ⏳ Ciclo de vida de conta: verificação de e-mail, social auth, desativação/exclusão.
+- ⏳ Para fechar o batch:
+  - **Cache de permissions** com invalidação ao alterar papéis, vínculos, grupos
+    ou permissões.
+  - **MFA/2FA** + checagem de senha vazada (HaveIBeenPwned); os pontos de
+    integração já existem como stubs seguros
+    (`user_has_mfa_enabled()`/`verify_mfa_code()`).
+  - **Field-level permissions** com serializers dinâmicos por papel.
+  - **Ciclo de vida de conta**: verificação de e-mail, social auth,
+    desativação e exclusão.
+- ⚠️ Pendência operacional: migrations permanecem congeladas nesta fase; CI e
+  testes usam `--nomigrations`. O histórico será recriado integralmente antes
+  do lançamento e o gate `makemigrations --check --dry-run` será restaurado.
 
-### Batch 8 — Domínio & segurança
-- Base de código de **notificações** (providers plugáveis, templates, preferências).
-- Lib para **dados sensíveis** (field-level encryption).
-- **Validação de upload** genérica e plugável.
-- **Money handling** + **metadata framework** (JSON key-value por modelo).
-- **Idempotency keys** em POST (evita duplicidade em retry de rede/pagamento).
-- **`django-anymail`**: abstração de e-mail multi-provider (hoje a base está acoplada ao Resend).
+### Batch 8 — Domínio & segurança 🚧
+- ✅ Lib para **dados sensíveis**: field-level encryption com keyring,
+  integração com DRF/auditlog e rotação em lote.
+- ⏳ Base de código de **notificações** (providers plugáveis, templates, preferências).
+- ⏳ **Validação de upload** genérica e plugável.
+- ⏳ **Money handling** + **metadata framework** (JSON key-value por modelo).
+- ⏳ **Idempotency keys** em POST (evita duplicidade em retry de rede/pagamento).
+- ⏳ **`django-anymail`**: abstração de e-mail multi-provider (hoje a base está acoplada ao Resend).
+
+## ⏳ Planejado
 
 ### Batch 9 — API avançada
 - `select_related` / `prefetch_related` sistematizados no `BaseViewSet`.
