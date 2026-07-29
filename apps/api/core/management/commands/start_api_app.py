@@ -6,6 +6,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.core.management.base import CommandError
+from django.core.management.templates import TemplateCommand
 
 APP_TEMPLATE_DIR = Path(__file__).resolve().parent / "app_template"
 
@@ -65,3 +66,47 @@ def insert_business_app(source, dotted_path):
     entries.insert(posicao, nova_linha)
     bloco = "BUSINESS_APPS = [\n" + "\n".join(entries) + "\n]"
     return source[: match.start()] + bloco + source[match.end() :]
+
+
+class Command(TemplateCommand):
+    help = "Cria um app da API já no formato exigido pela convenção do projeto."
+    missing_args_message = "Informe o nome do app."
+
+    def add_arguments(self, parser):
+        parser.add_argument("name", help="Nome do app novo.")
+
+    def handle(self, **options):
+        app_name = options.pop("name")
+
+        base_dir = Path(settings.BASE_DIR)
+        destination = base_dir / "apps" / app_name
+
+        if destination.exists():
+            raise CommandError(f"'{destination}' já existe.")
+
+        dotted_path = ".".join(destination.relative_to(base_dir).parts)
+
+        # Antes de criar arquivo nenhum: um app que não entra em BUSINESS_APPS é
+        # um app órfão, pior que nenhum app.
+        caminho_settings = settings_module_path()
+        source = caminho_settings.read_text(encoding="utf-8")
+        registrado = insert_business_app(source, dotted_path)
+
+        destination.mkdir(parents=True)
+
+        options["template"] = str(APP_TEMPLATE_DIR)
+        options["extensions"] = ["py"]
+        options["files"] = []
+        options["app_dotted_path"] = dotted_path
+        super().handle("app", app_name, str(destination), **options)
+
+        # `subapps/` não pode vir do template: git não versiona diretório vazio.
+        (destination / "subapps").mkdir()
+
+        if registrado is None:
+            self.stdout.write(self.style.WARNING(f"'{dotted_path}' já estava em BUSINESS_APPS."))
+        else:
+            caminho_settings.write_text(registrado, encoding="utf-8")
+            self.stdout.write(self.style.SUCCESS(f"'{dotted_path}' registrado em BUSINESS_APPS."))
+
+        self.stdout.write(self.style.SUCCESS(f"App criado em {destination.relative_to(base_dir)}/"))
