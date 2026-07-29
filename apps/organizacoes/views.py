@@ -30,6 +30,7 @@ class OrganizacaoViewSet(
     # Sem `queryset` estático (depende do usuário autenticado); a superfície
     # pública corresponde ao model mesmo assim.
     scope_resource = "organizations"
+    session_only_actions = {"create"}
 
     def get_queryset(self):
         auth_token = getattr(self.request, "auth", None)

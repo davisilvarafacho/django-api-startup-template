@@ -87,6 +87,23 @@ def test_view_session_only_recusa_api_key_mesmo_com_scope():
     assert not permission.has_permission(request, ViewSessionOnly())
 
 
+def test_action_session_only_recusa_api_key_mesmo_com_scope():
+    class ViewComActionSessionOnly:
+        action = "create"
+        session_only_actions = {"create"}
+
+        def get_required_token_scopes(self):
+            return ["organizations:create"]
+
+    permission = permissions.TokenScopePermission()
+    request = RequestFalsa(
+        "POST",
+        TokenFalso(TokenType.API_KEY, scopes=["organizations:create"]),
+    )
+
+    assert not permission.has_permission(request, ViewComActionSessionOnly())
+
+
 def test_token_scope_permission_esta_nas_permissoes_globais():
     permission_classes = settings.REST_FRAMEWORK["DEFAULT_PERMISSION_CLASSES"]
 
@@ -139,5 +156,18 @@ def test_api_key_precisa_satisfazer_todos_os_scopes_exigidos():
 
     with pytest.raises(APIError) as exc:
         permission.has_permission(request, ViewComDoisScopes())
+
+    assert exc.value.code == "auth.insufficient_scope"
+
+
+def test_api_key_com_scope_persistido_invalido_falha_fechado():
+    permission = permissions.TokenScopePermission()
+    request = RequestFalsa(
+        "GET",
+        TokenFalso(TokenType.API_KEY, scopes=["scope-invalido"]),
+    )
+
+    with pytest.raises(APIError) as exc:
+        permission.has_permission(request, ViewComGetRequiredTokenScopes())
 
     assert exc.value.code == "auth.insufficient_scope"

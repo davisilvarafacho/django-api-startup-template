@@ -199,6 +199,26 @@ def test_api_key_lista_somente_a_organizacao_da_propria_credencial():
     assert [item["slug"] for item in response.data["resultados"]] == [organizacao.slug]
 
 
+def test_api_key_nao_cria_outra_organizacao():
+    usuario = UsuarioFactory()
+    organizacao = _organizacao("org-da-api-key-criacao")
+    _vincular(usuario, organizacao)
+
+    response = _client_com_api_key(
+        responsavel=usuario,
+        organizacao=organizacao,
+        scopes=["organizations:create"],
+    ).post(
+        "/organizacoes/",
+        {"nome": "Outro tenant", "slug": "outro-tenant"},
+        format="json",
+    )
+
+    assert response.status_code == 403
+    assert response.data["errors"][0]["code"] == "auth.permission_denied"
+    assert not Organizacao.objects.filter(slug="outro-tenant").exists()
+
+
 def test_api_key_nao_aceita_convite_de_outra_organizacao():
     usuario = UsuarioFactory()
     organizacao = _organizacao("org-da-api-key-convite")
