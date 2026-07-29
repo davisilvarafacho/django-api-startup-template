@@ -6,7 +6,7 @@ com o que **já foi implementado** e o que está **planejado**, em ondas (batche
 **Legenda:** ✅ feito · 🚧 em andamento · ⏳ planejado · 🧠 brainstorm próprio antes de
 codar · 🔎 estudar antes · ⏸️ adiado
 
-_Atualizado em 2026-07-24._
+_Atualizado em 2026-07-29._
 
 ---
 
@@ -43,7 +43,8 @@ _Atualizado em 2026-07-24._
 ### Batch 2 — Fila de tarefas, cache e throttling
 - **Celery + Redis** + `django-celery-beat` (agendador via banco); tasks eager em teste.
 - **Cache Redis** (`django-redis`); correção do **cachalot** (cache compartilhado → invalidação entre workers).
-- **Throttling** do DRF (anon 100/h, user 1000/h, escopo `auth`).
+- **Throttling** do DRF (anon 100/h, user 1000/h) + limites próprios de
+  autenticação (`auth_login` 10/min e `auth_reauthenticate` 5/min).
 - **`docker-compose`** (Postgres, Redis, web, worker, beat).
 - Postura de cache definida (**opção A**): cachalot opt-in + primitivos explícitos + HTTP/TTL como espinha dorsal.
 
@@ -103,7 +104,9 @@ _Atualizado em 2026-07-24._
 - ✅ Papéis estilo **Saleor** (ordem crescente) somados às permissions do Django.
 - ✅ Modelo de token **swappable** (`settings.KNOX_TOKEN_MODEL = "autenticacao.AuthToken"`), não mais proxy: `AuthToken.type` (1=token, 2=reset_password, 999=api_key); reset password não autentica API.
 - ✅ **Scoped API tokens**: `AuthToken.scopes` + `TokenScopePermission` global; scopes falam `resource:action` (`apps.api.core.scope_registry`), traduzido para `app_label.codename` do Django.
-- ✅ **Delegação de scope**: uma API key nunca recebe mais poder do que o responsável que a criou possui (`validate_scope_delegation`).
+- ✅ **Delegação de scope**: uma API key nunca recebe mais poder do que o ator que
+  a cria ou altera possui (`validate_scope_delegation`); actions customizadas
+  também são mapeadas para permissions Django.
 - ✅ **Envelope de erros unificado** (`{"errors": [...], "request_id": ...}`) para DRF, middlewares e handlers de status HTTP do Django.
 - ✅ **Gestão de sessões** (`/auth/sessions/`, `/auth/logout*`) e **autenticação recente/step-up** (`@require_recent_auth`, `/auth/reauthenticate/`).
 - ✅ **API keys por organização** (`/auth/api_keys/`): CRUD, rotação atômica, suspensão manual/automática (fail-closed quando o responsável perde o vínculo) e retomada; UUID como identificador público; plain token exibido só na criação/rotação.

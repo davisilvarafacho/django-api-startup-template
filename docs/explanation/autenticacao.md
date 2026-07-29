@@ -77,7 +77,8 @@ tokens do tipo `999` (`API_KEY`); tokens de sessão continuam dependendo das
 permissions normais do Django/guardian/rules.
 
 `TokenScopePermission` roda globalmente antes das permissões de modelo. Se a view
-não exigir nenhum scope, o token não precisa de nada extra.
+não exigir nenhum scope, uma API key é recusada por padrão
+(`auth.insufficient_scope`); sessões pessoais não são limitadas por scopes.
 
 ### A linguagem pública: `resource:action`
 
@@ -125,6 +126,15 @@ def aceitar(self, request):
     ...
 ```
 
+O model registra a tradução da action para a permission Django usada na
+delegação:
+
+```python
+api_scope_custom_actions = {"accept": "can_accept_convite"}
+```
+
+Declarar apenas o decorator não torna a action delegável.
+
 ### Compatibilidade
 
 O atributo estático legado ainda funciona quando a view não define
@@ -139,8 +149,8 @@ required_token_scopes = {"GET": ["org:read"], "POST": ["org:write"]}
 ### Delegação: um usuário só concede o que ele mesmo pode fazer
 
 `apps.api.autenticacao.scope_delegation.validate_scope_delegation(user, scopes)`
-impede que uma API key receba mais poder do que o usuário responsável possui:
-cada scope concreto exige a permission Django equivalente
+impede que uma API key receba mais poder do que o ator que a cria ou altera:
+cada scope concreto exige a permission Django equivalente do concedente
 (`user.has_perm(...)`); o wildcard global `*` exige superuser ou a permission
 especial `autenticacao.grant_unrestricted_apikey`. Falhas geram
 `APIError(auth.scope_not_delegable)`.
@@ -204,6 +214,10 @@ ainda não existe: `user_has_mfa_enabled()`/`verify_mfa_code()` são stubs
 seguros) e atualiza `TokenMetaData.reauthenticated_at` da sessão atual. Uma
 API key nunca satisfaz o requisito — só sessão pode reautenticar.
 
+Login e reautenticação têm throttles próprios, além dos limites globais:
+`auth_login` (`10/min` por origem anônima) e `auth_reauthenticate` (`5/min`
+por usuário).
+
 ## API keys (`/auth/api_keys/`)
 
 Uma API key é um `AuthToken` do tipo `999`, presa a exatamente uma
@@ -230,6 +244,9 @@ própria credencial (`resolve_token_organization` em
 `organizations.tenant_mismatch` (409). `TenantPermission` também não usa o
 `Vinculo` do responsável para decidir autorização de API key (isso é só por
 scope), mas exige que ele exista e esteja ativo.
+Mesmo em rotas normalmente sem tenant, a key continua presa à organização da
+credencial: a listagem de organizações devolve apenas essa organização e um
+convite de outro tenant é recusado.
 
 ### Suspensão automática (fail-closed)
 

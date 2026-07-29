@@ -58,5 +58,6 @@ mecanismo estão em `docs/explanation/autenticacao.md`.
 Erros comuns desses endpoints: `auth.invalid_credentials`,
 `auth.reauthentication_required`, `auth.expired_token`, `auth.revoked_token`,
 `auth.api_key_suspended`, `auth.responsible_inactive`,
-`auth.scope_not_delegable`, `organizations.tenant_mismatch`,
+`auth.insufficient_scope`, `auth.scope_not_delegable`,
+`organizations.tenant_mismatch`,
 `organizations.membership_required`.

@@ -274,7 +274,14 @@ O `BaseModelViewSet` mapeia:
 - `destroy` para `resource:delete`.
 
 Actions personalizadas declaram scopes próprios, como `reports:export` e
-`payments:refund`.
+`payments:refund`. Cada action também declara no model seu codename Django
+correspondente, por exemplo:
+
+```python
+api_scope_custom_actions = {"accept": "can_accept_convite"}
+```
+
+Uma action sem esse mapeamento não é delegável.
 
 ### Registry e linguagem unificada
 
@@ -401,7 +408,7 @@ O novo desenho separa:
 - policy/permissions;
 - views finas que coordenam o caso de uso.
 
-O login, logout e formato do header `Authorization: Token ...` permanecem
+O login, logout e formato do header `Authorization: Bearer ...` permanecem
 compatíveis com os clientes atuais.
 
 ## Erros
