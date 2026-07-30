@@ -131,7 +131,7 @@ _Atualizado em 2026-07-30._
 ### Batch 11 — DevEx & operação (restante)
 - **Fixtures / seeds / demo data** via management command.
 - **Devcontainer** para onboarding.
-- **Runbooks** operacionais.
+- ⏸️ **Runbooks** operacionais (adiado).
 - Política de **deprecação de API** (changelog de API + header `Sunset`).
 
 ---
@@ -152,6 +152,7 @@ _Atualizado em 2026-07-30._
 ## ⏸️ Adiado
 - **LGPD** (bloco próprio): PII, retenção/expurgo, exportação, direito ao esquecimento, consentimento, scrub de PII.
 - Arquitetura de **plugins / integrações**.
+- **Runbooks operacionais** (item do Batch 11).
 
 ## Brainstorm do dev
 

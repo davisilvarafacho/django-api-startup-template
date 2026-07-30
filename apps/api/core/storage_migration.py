@@ -20,9 +20,7 @@ def resolve_storage(identifier: str) -> Storage:
     try:
         storage_class = import_string(identifier)
     except (ImportError, AttributeError) as exc:
-        raise ValueError(
-            f"{identifier!r} is neither a STORAGES alias nor an importable storage class."
-        ) from exc
+        raise ValueError(f"{identifier!r} is neither a STORAGES alias nor an importable storage class.") from exc
 
     if not isinstance(storage_class, type) or not issubclass(storage_class, Storage):
         raise ValueError(f"{identifier!r} does not identify a Django Storage class.")
@@ -30,9 +28,7 @@ def resolve_storage(identifier: str) -> Storage:
     try:
         return storage_class()
     except Exception as exc:
-        raise ValueError(
-            f"Could not instantiate storage class {identifier!r} without arguments: {exc}"
-        ) from exc
+        raise ValueError(f"Could not instantiate storage class {identifier!r} without arguments: {exc}") from exc
 
 
 @dataclass(frozen=True)
@@ -93,6 +89,8 @@ def _iter_storage_files(
 
         try:
             directories, files = storage.listdir(current_directory)
+            sorted_files = sorted(files)
+            sorted_directories = sorted(directories)
         except Exception as exc:
             issue = MigrationIssue(current_directory or ".", f"Could not list directory: {exc}")
             result.errors.append(issue)
@@ -100,7 +98,7 @@ def _iter_storage_files(
                 on_event("error", issue.object_name, "")
             return
 
-        for file_name in sorted(files):
+        for file_name in sorted_files:
             try:
                 yield _join_child(current_directory, file_name)
             except ValueError as exc:
@@ -109,7 +107,7 @@ def _iter_storage_files(
                 if on_event:
                     on_event("error", issue.object_name, "")
 
-        for directory_name in sorted(directories):
+        for directory_name in sorted_directories:
             try:
                 child_directory = _join_child(current_directory, directory_name)
             except ValueError as exc:
@@ -171,16 +169,18 @@ def migrate_storage_objects(
             source_size = source.size(source_name)
             with source.open(source_name, "rb") as source_file:
                 saved_name = destination.save(destination_name, source_file)
-            if saved_name != destination_name:
-                raise OSError(
-                    f"Destination saved {destination_name!r} as unexpected name {saved_name!r}."
-                )
-            destination_size = destination.size(saved_name)
-            if destination_size != source_size:
-                raise OSError(
-                    f"Size mismatch for {destination_name!r}: source={source_size}, "
-                    f"destination={destination_size}."
-                )
+            try:
+                if saved_name != destination_name:
+                    raise OSError(f"Destination saved {destination_name!r} as unexpected name {saved_name!r}.")
+                destination_size = destination.size(saved_name)
+                if destination_size != source_size:
+                    raise OSError(f"Size mismatch for {destination_name!r}: source={source_size}, destination={destination_size}.")
+            except Exception as verification_error:
+                try:
+                    destination.delete(saved_name)
+                except Exception as cleanup_error:
+                    raise OSError(f"{verification_error} Cleanup of {saved_name!r} also failed: {cleanup_error}") from verification_error
+                raise
             result.copied += 1
             if on_event:
                 on_event("copied", source_name, destination_name)
