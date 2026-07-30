@@ -14,6 +14,10 @@ x-app-environment: &app-environment
   REDIS_HOST: redis
   REDIS_PORT: "6379"
   POSTHOG_DISABLED: "True"
+  # `make run` respeita RUN_HOST/RUN_PORT. Dentro do container o runserver
+  # precisa escutar em 0.0.0.0, senão o nginx não alcança o serviço `app`.
+  RUN_HOST: 0.0.0.0
+  RUN_PORT: "8000"
 
 x-app-build: &app-build
   context: ..
@@ -24,6 +28,8 @@ services:
     build: *app-build
     command: sleep infinity
     environment: *app-environment
+    expose:
+      - "8000"
     volumes:
       - ..:/workspace:cached
     depends_on:
@@ -31,6 +37,25 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  # Mesmo proxy do docker-compose.yml, com o server block de desenvolvimento:
+  # a API é sempre acessada por http://localhost:8000 (via nginx), em qualquer
+  # ambiente. Suba o runserver com `make run` dentro do container `app`.
+  nginx:
+    image: nginx:1.29-alpine
+    ports:
+      - "${NGINX_PORT:-8000}:80"
+    volumes:
+      - ../docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../docker/nginx/snippets:/etc/nginx/snippets:ro
+      - ../docker/nginx/sites/development:/etc/nginx/conf.d:ro
+    depends_on:
+      - app
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/nginx-health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   db:
     image: postgres:16-alpine
