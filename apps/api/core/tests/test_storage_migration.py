@@ -68,6 +68,11 @@ class WrongNameStorage(InMemoryStorage):
         return super().save(f"renamed/{name}", content, max_length=max_length)
 
 
+class CleanupFailureStorage(WrongSizeStorage):
+    def delete(self, name):
+        raise OSError("simulated cleanup failure")
+
+
 class UnsupportedSizeStorage(InMemoryStorage):
     def size(self, name):
         raise NotImplementedError("size unsupported")
@@ -154,6 +159,7 @@ def test_size_mismatch_keeps_source_and_records_error():
     assert len(result.errors) == 1
     assert "Size mismatch" in result.errors[0].message
     assert source.exists("different.txt")
+    assert not destination.exists("different.txt")
 
 
 def test_unexpected_saved_name_keeps_source_and_records_error():
@@ -171,6 +177,19 @@ def test_unexpected_saved_name_keeps_source_and_records_error():
     assert len(result.errors) == 1
     assert "unexpected name" in result.errors[0].message
     assert source.exists("renamed.txt")
+    assert not destination.exists("renamed/renamed.txt")
+
+
+def test_verification_error_includes_cleanup_failure():
+    source = make_storage({"different.txt": b"source"})
+    destination = CleanupFailureStorage()
+
+    result = migrate_storage_objects(source, destination, MigrationOptions())
+
+    assert len(result.errors) == 1
+    assert "Size mismatch" in result.errors[0].message
+    assert "simulated cleanup failure" in result.errors[0].message
+    assert destination.exists("different.txt")
 
 
 def test_storage_without_size_is_reported_as_incompatible():
@@ -198,3 +217,35 @@ def test_failure_in_one_file_does_not_stop_following_files():
     assert len(result.errors) == 1
     assert result.errors[0].object_name == "broken.txt"
     assert destination.exists("working.txt")
+
+
+def test_malformed_listdir_result_is_captured_as_error():
+    class MalformedListStorage(InMemoryStorage):
+        def listdir(self, path):
+            return ([],)
+
+    result = migrate_storage_objects(
+        MalformedListStorage(),
+        InMemoryStorage(),
+        MigrationOptions(),
+    )
+
+    assert result.discovered == 0
+    assert len(result.errors) == 1
+    assert "Could not list directory" in result.errors[0].message
+
+
+def test_unsortable_listdir_entries_are_captured_as_error():
+    class UnsortableListStorage(InMemoryStorage):
+        def listdir(self, path):
+            return [], ["file.txt", None]
+
+    result = migrate_storage_objects(
+        UnsortableListStorage(),
+        InMemoryStorage(),
+        MigrationOptions(),
+    )
+
+    assert result.discovered == 0
+    assert len(result.errors) == 1
+    assert "Could not list directory" in result.errors[0].message
