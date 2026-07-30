@@ -34,8 +34,16 @@ worker: ## Sobe o worker do Celery
 beat: ## Sobe o beat do Celery (agendador via banco)
 	uv run celery -A api beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
 
-test: ## Roda a suíte com cobertura (sem migrations até o reset pré-lançamento)
-	uv run --group test pytest --nomigrations
+DATABASE_NAME ?= base
+DATABASE_USER ?= postgres
+DATABASE_PASSWORD ?= postgres
+DATABASE_HOST ?= 127.0.0.1
+DATABASE_PORT ?= 5432
+
+export DATABASE_NAME DATABASE_USER DATABASE_PASSWORD DATABASE_HOST DATABASE_PORT
+
+test: ## Roda a suíte com cobertura
+	uv run --group test pytest
 
 lint: ## Checa lint (ruff)
 	uv run ruff check .
