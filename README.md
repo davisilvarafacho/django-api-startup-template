@@ -50,16 +50,16 @@ BACKBLAZE_BUCKET_NAME="meu-bucket"
 
 Opcionalmente, defina `BACKBLAZE_BUCKET_ID` para evitar a busca pelo nome do bucket, `BACKBLAZE_LOCATION` para usar um prefixo (por exemplo, `media`) e `BACKBLAZE_PUBLIC_BASE_URL` para servir arquivos por um domínio próprio/CDN. Se a última variável não estiver configurada, `FieldFile.url` usa a URL de download do próprio B2. Para buckets privados, use URLs assinadas ou uma camada de entrega autenticada; a URL padrão não concede acesso por si só.
 
-## Emails com Resend
+## Emails com Anymail + Resend
 
-O backend padrão de email usa a API do Resend. Configure uma chave com permissão de envio e um remetente de um domínio verificado no Resend:
+O projeto usa [django-anymail](https://anymail.dev/) como abstração de e-mail e envia pelo Resend por padrão. Configure uma chave com permissão de envio e um remetente de um domínio verificado no Resend:
 
 ```bash
 RESEND_API_KEY="re_..."
 RESEND_FROM_EMAIL="Minha API <nao-responda@exemplo.com>"
 ```
 
-O backend suporta mensagens texto, HTML (`EmailMultiAlternatives`), cópia, cópia oculta, `reply_to`, cabeçalhos extras e anexos comuns do Django.
+Continue usando as APIs padrão do Django. O backend suporta mensagens texto, HTML (`EmailMultiAlternatives`), cópia, cópia oculta, `reply_to`, cabeçalhos extras e anexos comuns do Django.
 
 ## Infraestrutura local (Postgres + Redis + Celery)
 
