@@ -6,9 +6,33 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
-from django.core.files.storage import Storage
+from django.conf import settings
+from django.core.files.storage import Storage, storages
+from django.utils.module_loading import import_string
 
 EventCallback = Callable[[str, str, str], None]
+
+
+def resolve_storage(identifier: str) -> Storage:
+    if identifier in settings.STORAGES:
+        return storages[identifier]
+
+    try:
+        storage_class = import_string(identifier)
+    except (ImportError, AttributeError) as exc:
+        raise ValueError(
+            f"{identifier!r} is neither a STORAGES alias nor an importable storage class."
+        ) from exc
+
+    if not isinstance(storage_class, type) or not issubclass(storage_class, Storage):
+        raise ValueError(f"{identifier!r} does not identify a Django Storage class.")
+
+    try:
+        return storage_class()
+    except Exception as exc:
+        raise ValueError(
+            f"Could not instantiate storage class {identifier!r} without arguments: {exc}"
+        ) from exc
 
 
 @dataclass(frozen=True)
