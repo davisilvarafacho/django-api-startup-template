@@ -35,7 +35,20 @@ para comportar múltiplos arquivos de teste.
             test_*.py
 ```
 
-### 1.3. Pasta `common/`
+### 1.3. Criação de Apps
+
+Apps **devem** ser criados pelo comando do projeto, não pelo `startapp` do Django:
+
+```bash
+python manage.py start_api_app vendas                    # apps/vendas/
+python manage.py start_api_app pedidos --parent vendas   # apps/vendas/subapps/pedidos/
+```
+
+O comando cria a estrutura desta seção (incluindo `tests/` como pacote e um
+`subapps/` para apps do mesmo domínio), e registra o app em `BUSINESS_APPS`. O
+`--parent` aceita o nome de qualquer app já existente, em qualquer profundidade.
+
+### 1.4. Pasta `common/`
 
 A pasta `common/`, na raiz do projeto, é o lugar das **implementações próprias** —
 código que o projeto escreve por conta própria em vez de consumir pronto de uma lib.
@@ -54,7 +67,7 @@ Regras:
 - Cada implementação **deve** ficar em seu próprio módulo/pacote, nomeado pelo que
   implementa (ex.: `common/encrypted_fields.py`, `common/permission_cache.py`).
 
-### 1.4. QuerySets
+### 1.5. QuerySets
 
 - **Obrigatório** utilizar `select_related` (e, quando aplicável, `prefetch_related`)
   para evitar consultas N+1.
