@@ -73,6 +73,19 @@ class CleanupFailureStorage(WrongSizeStorage):
         raise OSError("simulated cleanup failure")
 
 
+class SaveFailureStorage(InMemoryStorage):
+    def __init__(self):
+        super().__init__()
+        self.delete_calls = []
+
+    def save(self, name, content, max_length=None):
+        raise OSError("simulated save failure")
+
+    def delete(self, name):
+        self.delete_calls.append(name)
+        super().delete(name)
+
+
 class UnsupportedSizeStorage(InMemoryStorage):
     def size(self, name):
         raise NotImplementedError("size unsupported")
@@ -190,6 +203,19 @@ def test_verification_error_includes_cleanup_failure():
     assert "Size mismatch" in result.errors[0].message
     assert "simulated cleanup failure" in result.errors[0].message
     assert destination.exists("different.txt")
+
+
+def test_save_failure_keeps_source_without_attempting_destination_cleanup():
+    source = make_storage({"failed.txt": b"source"})
+    destination = SaveFailureStorage()
+
+    result = migrate_storage_objects(source, destination, MigrationOptions(remove_on_success=True))
+
+    assert len(result.errors) == 1
+    assert "simulated save failure" in result.errors[0].message
+    assert source.exists("failed.txt")
+    assert not destination.exists("failed.txt")
+    assert destination.delete_calls == []
 
 
 def test_storage_without_size_is_reported_as_incompatible():

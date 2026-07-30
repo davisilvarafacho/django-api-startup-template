@@ -65,9 +65,10 @@ STORAGES = {
 }
 ```
 
-Tanto o storage de origem quanto o de destino precisam oferecer suporte
-funcional a `listdir()` e `size()`. Uma implementação que não liste diretórios
-ou não informe tamanhos fará o comando terminar com erro.
+O storage de origem precisa oferecer suporte funcional a `listdir()` para que o
+comando descubra os arquivos. Em uma cópia real, origem e destino também
+precisam oferecer `size()` para verificar a cópia. O `--dry-run` não chama
+`size()`, `open()`, `save()` nem `delete()`.
 
 Simule a migração antes de gravar:
 
