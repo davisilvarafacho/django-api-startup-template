@@ -1,0 +1,27 @@
+# Observabilidade (OTLP): Jaeger all-in-one recebe os traces e serve a UI.
+#
+# Subir:  docker compose -f docker-compose.otel.yml up -d
+# UI:     http://localhost:16686
+#
+# Backend rodando fora de docker (runserver):
+#   export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+# Backend em container:
+#   conectar à rede 'observabilidade' e usar OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+#
+# ponytail: armazenamento em memória (some no restart). Se precisar reter histórico,
+# trocar por Grafana Tempo/Elasticsearch — só quando o uso passar de diagnóstico pontual.
+services:
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    container_name: jaeger
+    restart: unless-stopped
+    ports:
+      - "16686:16686" # UI web
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP (usado pelo backend)
+    networks:
+      - observabilidade
+
+networks:
+  observabilidade:
+    name: observabilidade

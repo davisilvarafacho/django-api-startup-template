@@ -27,8 +27,10 @@ def test_exclui_campos_tecnicos_e_credenciais_sem_mutar_a_configuracao_global():
     ]
     assert set(auditlog.get_model_fields(Usuario)["exclude_fields"]) == {
         *campos_base,
+        "is_deleted",
         "password",
         "last_login",
     }
-    for model in (Organizacao, Time, Vinculo, Convite, TokenMetaData):
-        assert auditlog.get_model_fields(model)["exclude_fields"] == campos_base
+    for model in (Organizacao, Time, Vinculo, Convite):
+        assert auditlog.get_model_fields(model)["exclude_fields"] == [*campos_base, "is_deleted"]
+    assert auditlog.get_model_fields(TokenMetaData)["exclude_fields"] == campos_base

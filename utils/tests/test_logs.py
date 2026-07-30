@@ -18,6 +18,7 @@ def test_register_exclui_campos_internos_e_cifrados_sem_mutar_argumento(audit_re
         "hora_ultima_alteracao",
         "data_criacao",
         "hora_criacao",
+        "is_deleted",
         "documento",
         "anotacoes",
         "dados",

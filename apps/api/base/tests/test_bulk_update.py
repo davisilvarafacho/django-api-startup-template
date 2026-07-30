@@ -27,7 +27,7 @@ class _UsuarioViewSet(BaseModelViewSet):
     permission_classes = [AllowAny]
     authentication_classes = []
     filter_backends = []
-    has_ativo_field = False
+    has_is_active_field = False
 
 
 def _bulk_update(payload):
