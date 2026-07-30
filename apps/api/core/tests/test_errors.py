@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from django.core.exceptions import ImproperlyConfigured
 from django.db import models
 from django.utils.translation import gettext_lazy as _
@@ -153,6 +155,24 @@ def test_discover_error_codes_encontra_enums_dos_apps_instalados():
 
     # Idempotente: chamar de novo não deve levantar por duplicidade.
     discover_error_codes()
+
+
+def test_discover_error_codes_propaga_import_quebrado_dentro_do_modulo(
+    tmp_path,
+    monkeypatch,
+):
+    app_package = tmp_path / "app_com_errors_quebrado"
+    app_package.mkdir()
+    (app_package / "__init__.py").write_text("")
+    (app_package / "errors.py").write_text("import dependencia_interna_ausente\n")
+    monkeypatch.syspath_prepend(tmp_path)
+    monkeypatch.setattr(
+        "apps.api.core.errors.apps.get_app_configs",
+        lambda: [SimpleNamespace(name="app_com_errors_quebrado")],
+    )
+
+    with pytest.raises(ModuleNotFoundError, match="dependencia_interna_ausente"):
+        discover_error_codes(ErrorCodeRegistry())
 
 
 def test_check_error_code_registry_passa_sem_inconsistencias():

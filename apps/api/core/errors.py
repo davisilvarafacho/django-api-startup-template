@@ -138,9 +138,12 @@ def discover_error_codes(registry=None, *, force=False):
         registry.reset()
 
     for app_config in apps.get_app_configs():
+        module_name = f"{app_config.name}.errors"
         try:
-            module = import_module(f"{app_config.name}.errors")
-        except ModuleNotFoundError:
+            module = import_module(module_name)
+        except ModuleNotFoundError as exc:
+            if exc.name != module_name:
+                raise
             continue
 
         for name in dir(module):
