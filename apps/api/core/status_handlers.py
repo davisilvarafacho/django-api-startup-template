@@ -1,6 +1,9 @@
 from django.http import JsonResponse
 
 from rest_framework import status
+from rest_framework.views import exception_handler
+
+from apps.api.core.errors import APIError
 
 
 def custom_400_handler(request, exception):
@@ -21,3 +24,15 @@ def custom_403_handler(request, exception):
 
 def custom_500_handler(request):
     return JsonResponse({"mensagem": "Erro interno"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+def custom_exception_handler(exception, context):
+    response = exception_handler(exception, context)
+    if response is None or isinstance(exception, APIError):
+        return response
+
+    response.data = {
+        "code": getattr(exception, "default_code", "error"),
+        "message": str(exception.detail),
+    }
+    return response
