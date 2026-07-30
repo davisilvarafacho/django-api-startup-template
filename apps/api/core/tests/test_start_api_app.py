@@ -191,3 +191,96 @@ def test_destino_existente_falha_sem_escrever_nada(projeto):
 
     assert list((projeto / "apps" / "vendas").iterdir()) == []
     assert "vendas" not in (projeto / "api_settings.py").read_text(encoding="utf-8")
+
+
+def criar_app_falso(diretorio):
+    """Cria o mínimo que faz um diretório ser reconhecido como app pai."""
+    diretorio.mkdir(parents=True)
+    (diretorio / "__init__.py").touch()
+    (diretorio / "apps.py").touch()
+
+
+def test_parent_de_primeiro_nivel_cria_dentro_de_subapps(projeto):
+    criar_app_falso(projeto / "apps" / "vendas")
+
+    call_command("start_api_app", "pedidos", "--parent", "vendas")
+
+    assert (projeto / "apps" / "vendas" / "subapps" / "pedidos" / "apps.py").is_file()
+
+
+def test_parent_cria_o_subapps_ausente_sem_init(projeto):
+    criar_app_falso(projeto / "apps" / "vendas")
+
+    call_command("start_api_app", "pedidos", "--parent", "vendas")
+
+    subapps = projeto / "apps" / "vendas" / "subapps"
+
+    assert subapps.is_dir()
+    assert not (subapps / "__init__.py").exists()
+
+
+def test_parent_de_segundo_nivel_gera_dotted_path_completo(projeto):
+    criar_app_falso(projeto / "apps" / "vendas" / "subapps" / "pedidos")
+
+    call_command("start_api_app", "itens", "--parent", "pedidos")
+
+    destino = projeto / "apps" / "vendas" / "subapps" / "pedidos" / "subapps" / "itens"
+    conteudo = (destino / "apps.py").read_text(encoding="utf-8")
+
+    assert "class ItensConfig(AppConfig):" in conteudo
+    assert 'name = "apps.vendas.subapps.pedidos.subapps.itens"' in conteudo
+    assert '    "apps.vendas.subapps.pedidos.subapps.itens",\n' in (projeto / "api_settings.py").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "parent",
+    ["vendas.subapps.pedidos", "vendas/subapps/pedidos", "apps.vendas.subapps.pedidos"],
+)
+def test_parent_como_caminho_explicito(projeto, parent):
+    criar_app_falso(projeto / "apps" / "vendas" / "subapps" / "pedidos")
+
+    call_command("start_api_app", "itens", "--parent", parent)
+
+    assert (projeto / "apps" / "vendas" / "subapps" / "pedidos" / "subapps" / "itens" / "apps.py").is_file()
+
+
+def test_parent_ambiguo_lista_os_candidatos(projeto):
+    criar_app_falso(projeto / "apps" / "vendas" / "subapps" / "pedidos")
+    criar_app_falso(projeto / "apps" / "estoque" / "subapps" / "pedidos")
+
+    with pytest.raises(CommandError) as erro:
+        call_command("start_api_app", "itens", "--parent", "pedidos")
+
+    mensagem = str(erro.value)
+
+    assert "apps/estoque/subapps/pedidos" in mensagem
+    assert "apps/vendas/subapps/pedidos" in mensagem
+    assert "--parent estoque.subapps.pedidos" in mensagem
+
+
+def test_parent_inexistente_falha_alto(projeto):
+    with pytest.raises(CommandError, match="não encontrado"):
+        call_command("start_api_app", "pedidos", "--parent", "vendas")
+
+
+def test_caminho_explicito_sem_apps_py_falha_alto(projeto):
+    (projeto / "apps" / "vendas" / "subapps" / "pedidos").mkdir(parents=True)
+
+    with pytest.raises(CommandError, match="não é um app"):
+        call_command("start_api_app", "itens", "--parent", "vendas.subapps.pedidos")
+
+
+def test_parent_invalido_nao_escreve_no_settings(projeto):
+    original = (projeto / "api_settings.py").read_text(encoding="utf-8")
+
+    with pytest.raises(CommandError):
+        call_command("start_api_app", "pedidos", "--parent", "vendas")
+
+    assert (projeto / "api_settings.py").read_text(encoding="utf-8") == original
+
+
+def test_diretorios_ignorados_nao_viram_parent(projeto):
+    criar_app_falso(projeto / "apps" / "vendas" / "tests" / "pedidos")
+
+    with pytest.raises(CommandError, match="não encontrado"):
+        call_command("start_api_app", "itens", "--parent", "pedidos")

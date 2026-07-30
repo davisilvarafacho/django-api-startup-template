@@ -74,12 +74,61 @@ class Command(TemplateCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("name", help="Nome do app novo.")
+        parser.add_argument(
+            "--parent",
+            help="Nome do app pai (em qualquer profundidade) ou caminho relativo a apps/; o app novo nasce em <pai>/subapps/.",
+        )
+
+    def find_parent_app(self, apps_root, parent):
+        """Resolve o diretório do app pai a partir do nome ou de um caminho explícito.
+
+        Args:
+            apps_root: O diretório `apps/` do projeto.
+            parent: Nome do app pai, ou caminho relativo a `apps/` quando contém
+                `.` ou `/`.
+
+        Returns:
+            O diretório do app pai.
+
+        Raises:
+            CommandError: Se o pai não existir, não for um app, ou se o nome
+                corresponder a mais de um app.
+        """
+        if "." in parent or "/" in parent:
+            relativo = parent.replace(".", "/").strip("/").removeprefix("apps/")
+            candidato = apps_root / relativo
+            if not (candidato / "apps.py").is_file():
+                raise CommandError(f"'{parent}' não é um app: {candidato / 'apps.py'} não existe.")
+
+            return candidato
+
+        encontrados = sorted(
+            achado.parent
+            for achado in apps_root.rglob("apps.py")
+            if achado.parent.name == parent and not IGNORED_DIRS.intersection(achado.relative_to(apps_root).parts)
+        )
+        if not encontrados:
+            raise CommandError(f"app '{parent}' não encontrado em apps/.")
+
+        if len(encontrados) > 1:
+            candidatos = "\n".join(f"  {achado.relative_to(apps_root.parent)}" for achado in encontrados)
+            sugestao = ".".join(encontrados[0].relative_to(apps_root).parts)
+            raise CommandError(f"mais de um app chamado '{parent}':\n{candidatos}\nuse o caminho completo: --parent {sugestao}")
+
+        return encontrados[0]
 
     def handle(self, **options):
         app_name = options.pop("name")
+        parent = options.pop("parent")
 
         base_dir = Path(settings.BASE_DIR)
-        destination = base_dir / "apps" / app_name
+        apps_root = base_dir / "apps"
+
+        if parent:
+            parent_dir = self.find_parent_app(apps_root, parent)
+            destination = parent_dir / "subapps" / app_name
+        else:
+            destination = apps_root / app_name
 
         if destination.exists():
             raise CommandError(f"'{destination}' já existe.")
