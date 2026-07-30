@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     git \
     libpq-dev \
+    make \
     nodejs \
     npm \
     && rm -rf /var/lib/apt/lists/*
