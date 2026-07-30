@@ -122,6 +122,7 @@ A configuração será centralizada:
 
 ```python
 AUTHORIZATION_CACHE = {
+    "ENABLED": True,
     "ALIAS": "permissions",
     "TIMEOUT": 1800,
     "KEY_PREFIX": "authz:v1",
@@ -131,6 +132,10 @@ AUTHORIZATION_CACHE = {
 O TTL de 1.800 segundos é o padrão de todas as camadas. A estrutura permite
 overrides futuros por camada, mas esta entrega não introduzirá valores
 diferentes.
+
+Com `ENABLED=False`, os mesmos backends e resolvedores consultarão o banco sem
+ler ou escrever cache. Esse kill switch permite comparar comportamento, operar
+incidentes e testar equivalência sem trocar `AUTHENTICATION_BACKENDS`.
 
 Em produção, `CACHES["permissions"]` usará `django-redis` e um URL configurável,
 com fallback para o database lógico `/4`. O projeto já usa:
@@ -144,6 +149,10 @@ com fallback para o database lógico `/4`. O projeto já usa:
 O alias `permissions` não habilitará `IGNORE_EXCEPTIONS`. O store capturará
 falhas de leitura e escrita deliberadamente, enquanto falhas de invalidação
 precisam permanecer observáveis.
+
+`KEY_PREFIX`, ou o `KEY_PREFIX` do próprio alias Django, identificará também o
+ambiente/deployment. Duas instalações que compartilham Redis não poderão usar o
+mesmo prefixo.
 
 Em testes unitários, o alias poderá usar `LocMemCache`. Testes de atomicidade,
 visibilidade entre processos e queda/retorno usarão Redis real.
@@ -180,8 +189,15 @@ como erro de decode.
 
 ### Permissões globais
 
-O snapshot será uma lista ordenada de strings `app_label.codename`, convertida
-para `frozenset` em memória.
+O snapshot separará listas ordenadas de strings `app_label.codename` em:
+
+- permissions diretas do usuário;
+- permissions herdadas de grupos.
+
+O conjunto total será a união das duas listas. Essa separação preserva
+`get_user_permissions()`, `get_group_permissions()` e `get_all_permissions()`
+sem consultas adicionais. As listas serão convertidas para `frozenset` em
+memória.
 
 ### Guardian
 
@@ -225,19 +241,24 @@ os epochs relevantes. Invalidar significa incrementar um contador
 atomicamente; valores da versão anterior permanecem fisicamente no Redis, mas
 ficam inalcançáveis e expiram pelo TTL.
 
-Exemplo conceitual:
+Exemplo conceitual, incluindo database alias:
 
 ```text
 authz:v1:epoch:django:user:42 = 7
-authz:v1:snapshot:django:0:3:42:7 = [...]
+authz:v1:snapshot:django:default:g0:l3:u42:e7 = {...}
 ```
 
 Quando o epoch do usuário muda para 8, novos leitores usam outra chave. Nenhum
 processo escolhe versões manualmente.
 
-Epochs ausentes equivalem a zero. O incremento precisa ser atômico e seguro para
-inicialização concorrente. A abstração de epochs usará as primitivas
-`add`/`incr` do backend e será testada com Redis real.
+Um epoch ausente será inicializado com um seed inteiro aleatório de alta
+entropia usando `add`/`SET NX`; increments posteriores serão atômicos. Não se
+reinicia em zero: se o Redis expulsar somente a chave do epoch e preservar um
+snapshot antigo, um novo seed não poderá voltar a alcançar aquela versão.
+
+Epochs não terão TTL. Snapshots terão. Uma política de eviction `volatile-*` é
+preferível, mas a correção não dependerá dela. Inicialização concorrente,
+perda isolada do epoch e overflow serão cobertos pelos testes com Redis real.
 
 ### Escopos
 
@@ -253,7 +274,8 @@ inicialização concorrente. A abstração de epochs usará as primitivas
   naquele objeto.
 
 As chaves de snapshot incluem o epoch global, o epoch global da camada e os
-epochs específicos do sujeito/objeto necessários.
+epochs específicos do sujeito/objeto necessários. Todas incluem também o
+database alias; nenhuma combinação entre bancos compartilhará snapshot.
 
 Mudanças de grupo com fan-out amplo usam epochs globais em vez de enumerar
 milhões de usuários ou chaves. A granularidade poderá ser refinada futuramente
@@ -284,6 +306,11 @@ Cache local por execução só poderá existir associado ao conjunto de epochs q
 produziu o valor. Os atributos `_perm_cache`, `_user_perm_cache` e
 `_group_perm_cache` do `ModelBackend` não serão reutilizados sem validação de
 versão.
+
+Não haverá lock distribuído ou single-flight nesta primeira versão. Duas
+requests poderão recompor o mesmo snapshot simultaneamente; isso é seguro e
+preferível a bloquear o caminho de autorização. As métricas indicarão se
+stampede se tornar um problema real.
 
 ## Integração com Django, Guardian e Rules
 
@@ -376,12 +403,14 @@ impede que os mesmos modelos sejam cacheados em outros fluxos.
 | Permissions de um grupo alteradas ou limpas | Django global |
 | Grupo excluído ou alterado de forma estrutural | Django global e Guardian global |
 | `is_active` ou `is_superuser` alterado | Epochs daquele usuário em todas as camadas |
+| Usuário excluído | Epochs daquele usuário em todas as camadas |
 | Vínculo criado ou removido | Tenant dos usuários afetados |
 | Papel, estado, usuário ou organização do vínculo alterados | Tenant dos lados anterior e novo |
-| Slug ou estado da organização alterado | Tenant global |
+| Slug, estado ou exclusão da organização | Tenant global |
 | Permission Guardian direta criada, alterada ou removida | Guardian do objeto anterior e novo |
 | Permission Guardian de grupo criada, alterada ou removida | Guardian do objeto anterior e novo |
 | Permission ou ContentType alterado estruturalmente | Epoch global das camadas afetadas |
+| `post_migrate` criar ou sincronizar permissions | Django global e Guardian global |
 
 Signals de `pre_save`/`pre_delete` preservarão IDs anteriores quando necessários.
 Signals `m2m_changed` tratarão `post_add`, `post_remove` e `post_clear`; no caso
@@ -490,6 +519,7 @@ Casos de uso:
 - configuração e defaults;
 - composição e normalização de chaves;
 - inicialização/incremento de epochs;
+- reinicialização segura após perda isolada de uma chave de epoch;
 - envelope positivo, negativo e inválido;
 - hit, miss, retry e limite de churn;
 - falhas de leitura, escrita e invalidação;

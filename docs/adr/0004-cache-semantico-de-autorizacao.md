@@ -36,6 +36,10 @@ epochs global, da camada e do sujeito/objeto. Signals agendam increments em
 `transaction.on_commit()`. Um comando operacional poderá incrementar o epoch
 global em O(1).
 
+Epochs ausentes serão inicializados com seed aleatório de alta entropia, nunca
+reiniciados em zero. Assim, perder somente uma chave de epoch não torna um
+snapshot antigo alcançável novamente.
+
 Falhas de leitura do Redis causam fallback ao banco, nunca concessão por erro.
 Falhas de invalidação são observadas por métrica e log. Aceita-se consistência
 eventual limitada ao TTL restante, no máximo 30 minutos, caso uma invalidação
