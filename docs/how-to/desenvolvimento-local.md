@@ -50,8 +50,8 @@ Os commits devem seguir Conventional Commits, por exemplo `feat: adiciona filtro
 ## Ambiente com Dev Containers
 
 O diretório `.devcontainer/` abre o editor no serviço `app` e sobe também
-PostgreSQL 16, Redis 7 e um worker Celery. O ambiente usa somente credenciais
-locais versionadas e não lê o `.env` do host.
+PostgreSQL 16, Redis 7, um worker Celery e o nginx. O ambiente usa somente
+credenciais locais versionadas e não lê o `.env` do host.
 
 Depois da criação:
 
@@ -60,6 +60,10 @@ make migrate
 uv run python manage.py seed_demo
 make run
 ```
+
+A API responde em `http://localhost:8000` **pelo nginx** — o `RUN_HOST=0.0.0.0`
+do compose faz o `runserver` escutar em todas as interfaces para o proxy
+alcançá-lo. Ver [Proxy reverso com nginx](proxy-nginx.md).
 
 Para inspecionar os serviços a partir do host:
 
