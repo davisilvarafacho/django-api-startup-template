@@ -36,6 +36,8 @@ class Usuario(BaseGlobal, AbstractUser):
     username = None
     owner = None
 
+    extra_write_only_fields = ["password"]
+
     first_name = models.CharField(_("nome"), max_length=30)
     last_name = models.CharField(_("sobrenome"), max_length=40)
     email = models.EmailField(_("email"), unique=True)
