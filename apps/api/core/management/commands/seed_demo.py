@@ -1,4 +1,5 @@
 """Create generic, idempotent demonstration data for local development."""
+
 from django.conf import settings
 from django.contrib.auth.hashers import make_password
 from django.core.management.base import BaseCommand, CommandError
@@ -20,9 +21,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         if settings.IN_PRODUCTION and not options["allow_production"]:
-            raise CommandError(
-                "seed_demo é bloqueado em produção; use --allow-production para confirmar."
-            )
+            raise CommandError("seed_demo é bloqueado em produção; use --allow-production para confirmar.")
 
         with transaction.atomic():
             estados = self._criar_grafo()
@@ -31,13 +30,7 @@ class Command(BaseCommand):
             estado = "criado" if criado else "já existia"
             self.stdout.write(f"{entidade}: {estado}")
 
-        self.stdout.write(
-            self.style.SUCCESS(
-                "Credenciais: demo@example.com / demo123456\n"
-                "Login: POST /auth/login/\n"
-                "Tenant: X-Organization: demo"
-            )
-        )
+        self.stdout.write(self.style.SUCCESS("Credenciais: demo@example.com / demo123456\nLogin: POST /auth/login/\nTenant: X-Organization: demo"))
 
     def _criar_grafo(self):
         organizacao, organizacao_criada = Organizacao.objects.get_or_create(
