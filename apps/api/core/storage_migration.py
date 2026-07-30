@@ -8,7 +8,6 @@ from pathlib import PurePosixPath
 
 from django.core.files.storage import Storage
 
-
 EventCallback = Callable[[str, str, str], None]
 
 
@@ -125,6 +124,26 @@ def migrate_storage_objects(
         result.discovered += 1
         destination_name = _destination_name(source_name, source_prefix, destination_prefix)
         try:
+            destination_exists = destination.exists(destination_name)
+            if destination_exists and not options.overwrite:
+                result.skipped += 1
+                if on_event:
+                    on_event("skipped", source_name, destination_name)
+                continue
+
+            if options.dry_run:
+                result.copied += 1
+                if on_event:
+                    on_event("copy-planned", source_name, destination_name)
+                if options.remove_on_success:
+                    result.removed += 1
+                    if on_event:
+                        on_event("remove-planned", source_name, destination_name)
+                continue
+
+            if destination_exists:
+                destination.delete(destination_name)
+
             source_size = source.size(source_name)
             with source.open(source_name, "rb") as source_file:
                 saved_name = destination.save(destination_name, source_file)
@@ -141,6 +160,12 @@ def migrate_storage_objects(
             result.copied += 1
             if on_event:
                 on_event("copied", source_name, destination_name)
+
+            if options.remove_on_success:
+                source.delete(source_name)
+                result.removed += 1
+                if on_event:
+                    on_event("removed", source_name, destination_name)
         except Exception as exc:
             issue = MigrationIssue(source_name, str(exc))
             result.errors.append(issue)
