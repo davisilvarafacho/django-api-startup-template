@@ -1,4 +1,5 @@
 """Integration tests for the generic local demonstration seed."""
+
 from io import StringIO
 
 from django.core.management import call_command
@@ -78,9 +79,7 @@ def test_seed_demo_e_idempotente_e_preserva_edicoes_manuais():
     usuario.is_staff = True
     usuario.is_superuser = True
     usuario.set_password("senha-editada")
-    usuario.save(
-        update_fields=["first_name", "last_name", "is_staff", "is_superuser", "password"]
-    )
+    usuario.save(update_fields=["first_name", "last_name", "is_staff", "is_superuser", "password"])
     vinculo.papel = Papel.MEMBRO
     vinculo.save(update_fields=["papel"])
     vinculo.times.set([time_extra])
