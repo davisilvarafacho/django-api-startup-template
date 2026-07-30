@@ -7,6 +7,7 @@ import pytest
 
 from apps.api.core.management.commands import start_api_app
 from apps.api.core.management.commands.start_api_app import (
+    business_app_labels,
     insert_business_app,
     settings_module_path,
 )
@@ -71,6 +72,49 @@ def test_preserva_o_resto_do_arquivo():
 def test_bloco_ausente_falha_alto():
     with pytest.raises(CommandError, match="BUSINESS_APPS"):
         insert_business_app("DEBUG = True\n", "apps.faturamento")
+
+
+def test_bloco_vazio_em_uma_linha_nao_e_confundido_com_bloco_ausente():
+    # `BUSINESS_APPS = []` é um formato plausível num settings de template; a
+    # mensagem de erro não pode dar a entender que o bloco simplesmente não
+    # está lá, quando ele está bem ali só que numa forma que o comando não
+    # sabe editar.
+    with pytest.raises(CommandError, match="formato esperado"):
+        insert_business_app("BUSINESS_APPS = []\n", "apps.faturamento")
+
+
+def test_entrada_sem_virgula_final_falha_em_vez_de_corromper():
+    # Reprodução exata do bug relatado: sem a validação, a última entrada sem
+    # vírgula vira concatenação implícita de string com a entrada nova.
+    source = 'BUSINESS_APPS = [\n    "apps.usuarios"\n]\n'
+
+    with pytest.raises(CommandError, match="BUSINESS_APPS"):
+        insert_business_app(source, "apps.zebra")
+
+
+def test_entrada_com_aspas_simples_falha_em_vez_de_duplicar():
+    source = "BUSINESS_APPS = [\n    'apps.usuarios',\n]\n"
+
+    with pytest.raises(CommandError, match="BUSINESS_APPS"):
+        insert_business_app(source, "apps.usuarios")
+
+
+def test_entrada_com_comentario_final_e_aceita_e_ordenada_corretamente():
+    source = 'BUSINESS_APPS = [\n    "apps.organizacoes",  # legado\n    "apps.usuarios",\n]\n'
+
+    resultado = insert_business_app(source, "apps.faturamento")
+
+    assert resultado == ('BUSINESS_APPS = [\n    "apps.faturamento",\n    "apps.organizacoes",  # legado\n    "apps.usuarios",\n]\n')
+
+
+def test_business_app_labels_mapeia_label_ao_dotted_path():
+    assert business_app_labels(SETTINGS_STUB) == {
+        "autenticacao": "apps.api.autenticacao",
+        "base": "apps.api.base",
+        "core": "apps.api.core",
+        "organizacoes": "apps.organizacoes",
+        "usuarios": "apps.usuarios",
+    }
 
 
 @pytest.fixture
@@ -284,3 +328,90 @@ def test_diretorios_ignorados_nao_viram_parent(projeto):
 
     with pytest.raises(CommandError, match="não encontrado"):
         call_command("start_api_app", "itens", "--parent", "pedidos")
+
+
+@pytest.mark.parametrize(
+    "nome",
+    [
+        "123abc",  # não é identificador válido
+        "class",  # keyword: isidentifier() é True, mas não é nome de app válido
+        "../../fora/evil",  # tentativa de path traversal
+        "/tmp/evil",  # caminho absoluto
+        "com espaco",
+    ],
+)
+def test_nome_invalido_nao_cria_nada_nem_altera_settings(projeto, nome):
+    original = (projeto / "api_settings.py").read_text(encoding="utf-8")
+
+    with pytest.raises(CommandError):
+        call_command("start_api_app", nome)
+
+    assert list((projeto / "apps").iterdir()) == []
+    assert (projeto / "api_settings.py").read_text(encoding="utf-8") == original
+
+
+def test_nome_colidindo_com_modulo_importavel_nao_deixa_diretorio_orfao(projeto):
+    # `json` só é rejeitado dentro de `super().handle()`, depois do `mkdir` —
+    # exatamente o caso em que a limpeza em `except Exception` precisa agir.
+    with pytest.raises(CommandError):
+        call_command("start_api_app", "json")
+
+    assert not (projeto / "apps" / "json").exists()
+
+
+def test_bloco_business_apps_ausente_via_call_command_nao_cria_nada(projeto):
+    (projeto / "api_settings.py").write_text("DEBUG = True\n", encoding="utf-8")
+
+    with pytest.raises(CommandError, match="BUSINESS_APPS"):
+        call_command("start_api_app", "vendas")
+
+    assert not (projeto / "apps" / "vendas").exists()
+    assert (projeto / "api_settings.py").read_text(encoding="utf-8") == "DEBUG = True\n"
+
+
+def test_business_apps_malformado_via_call_command_nao_cria_nada(projeto):
+    original = 'BUSINESS_APPS = [\n    "apps.usuarios"\n]\n'
+    (projeto / "api_settings.py").write_text(original, encoding="utf-8")
+
+    with pytest.raises(CommandError, match="BUSINESS_APPS"):
+        call_command("start_api_app", "vendas")
+
+    assert not (projeto / "apps" / "vendas").exists()
+    assert (projeto / "api_settings.py").read_text(encoding="utf-8") == original
+
+
+def test_registro_ja_existente_apenas_avisa_e_cria_o_app(projeto, capsys):
+    settings_com_vendas = SETTINGS_STUB.replace(
+        '    "apps.usuarios",\n',
+        '    "apps.usuarios",\n    "apps.vendas",\n',
+    )
+    (projeto / "api_settings.py").write_text(settings_com_vendas, encoding="utf-8")
+
+    call_command("start_api_app", "vendas")
+
+    assert (projeto / "apps" / "vendas" / "apps.py").is_file()
+    assert (projeto / "api_settings.py").read_text(encoding="utf-8") == settings_com_vendas
+    assert "já estava em BUSINESS_APPS" in capsys.readouterr().out
+
+
+def test_label_duplicado_falha_alto_e_nao_escreve_nada(projeto):
+    criar_app_falso(projeto / "apps" / "vendas")
+    criar_app_falso(projeto / "apps" / "estoque")
+    call_command("start_api_app", "pedidos", "--parent", "vendas")
+    original = (projeto / "api_settings.py").read_text(encoding="utf-8")
+
+    with pytest.raises(CommandError, match="pedidos"):
+        call_command("start_api_app", "pedidos", "--parent", "estoque")
+
+    assert not (projeto / "apps" / "estoque" / "subapps" / "pedidos").exists()
+    assert (projeto / "api_settings.py").read_text(encoding="utf-8") == original
+
+
+def test_parent_vazio_falha_alto_e_nao_escreve_nada(projeto):
+    original = (projeto / "api_settings.py").read_text(encoding="utf-8")
+
+    with pytest.raises(CommandError, match="--parent"):
+        call_command("start_api_app", "vendas", "--parent", "")
+
+    assert not (projeto / "apps" / "vendas").exists()
+    assert (projeto / "api_settings.py").read_text(encoding="utf-8") == original
