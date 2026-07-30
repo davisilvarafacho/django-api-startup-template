@@ -6,7 +6,7 @@ com o que **já foi implementado** e o que está **planejado**, em ondas (batche
 **Legenda:** ✅ feito · 🚧 em andamento · ⏳ planejado · 🧠 brainstorm próprio antes de
 codar · 🔎 estudar antes · ⏸️ adiado
 
-_Atualizado em 2026-07-24._
+_Atualizado em 2026-07-29._
 
 ---
 
@@ -157,3 +157,4 @@ _Atualizado em 2026-07-24._
 
 - Permissões/rules via plano
 - Checkout por seat e plano, default stripe - classe de abstração backend plugavel na frente - lib para conectar 5 ou mais providers de cara - stripe, assas, etc
+- Após o modelo de checkout/planos estar pronto, cache de entitlements para decidir se o plano do usuário libera cada endpoint/feature.
