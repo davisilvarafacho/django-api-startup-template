@@ -333,10 +333,14 @@ Run:
 
 ```bash
 docker compose -f .devcontainer/docker-compose.yml logs --no-color worker
+docker compose -f .devcontainer/docker-compose.yml exec app \
+  uv run celery -A api inspect ping
 ```
 
-Expected: logs contain `celery@`, `ready`, and a Redis transport using host
-`redis`; they contain no connection-refused loop.
+Expected: logs contain `celery@` and a Redis transport using host `redis`, with
+no connection-refused loop. The ping command prints `pong`, proving the worker
+is ready to accept remote-control commands without relying on a version-specific
+Celery startup log line.
 
 - [ ] **Step 5: Confirm Django can start explicitly**
 
@@ -472,8 +476,10 @@ docker compose -f .devcontainer/docker-compose.yml exec app \
   uv run python manage.py seed_demo
 docker compose -f .devcontainer/docker-compose.yml ps
 docker compose -f .devcontainer/docker-compose.yml logs --no-color worker
+docker compose -f .devcontainer/docker-compose.yml exec app \
+  uv run celery -A api inspect ping
 docker compose -f .devcontainer/docker-compose.yml down
 ```
 
-Expected: migrations and seed succeed, all four services run, the worker reports
-ready, and shutdown exits `0`.
+Expected: migrations and seed succeed, all four services run, worker logs show
+the Redis transport, `inspect ping` reports `pong`, and shutdown exits `0`.

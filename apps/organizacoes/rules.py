@@ -34,7 +34,7 @@ def papel_minimo(papel):
         return Vinculo.objects.filter(
             usuario=usuario,
             organizacao_id=organizacao_id,
-            ativo=True,
+            is_active=True,
             papel__gte=papel,
         ).exists()
 

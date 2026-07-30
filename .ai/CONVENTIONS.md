@@ -63,16 +63,16 @@ Os argumentos de cada `Field` **devem** seguir uma ordem fixa, sempre declarada 
 forma formatada (legível):
 
 - **Ordem padrão:**
-  `verbose_name (lazy_gettext)`, `validators`, `blank`, `null`, `default`, `help_text`.
+  `verbose_name (lazy_gettext)`, `validators`, `blank`, `null`, `default`, `help_text`, `db_comment`.
 
 - **`CharField`:**
-  `verbose_name (lazy_gettext)`, `max_length`, `choices?`, `validators?`, `blank`, `null`, `default`, `help_text`.
+  `verbose_name (lazy_gettext)`, `max_length`, `choices?`, `validators?`, `blank`, `null`, `default`, `help_text`, `db_comment`.
 
 - **`IntegerField`:**
-  `verbose_name (lazy_gettext)`, `choices?`, `validators`, `blank`, `null`, `default`, `help_text`.
+  `verbose_name (lazy_gettext)`, `choices?`, `validators`, `blank`, `null`, `default`, `help_text`, `db_comment`.
 
 - **`ForeignKey`:**
-  `verbose_name (lazy_gettext)`, `to`, `on_delete`, `related_name`, `limit_choices_to`, `blank`, `null`, `help_text`.
+  `verbose_name (lazy_gettext)`, `to`, `on_delete`, `related_name`, `limit_choices_to`, `blank`, `null`, `help_text`, `db_comment`.
 
 ### 2.3. Classe Meta
 
@@ -120,6 +120,25 @@ A classe `Meta` de cada model **deve** declarar, no mínimo, os seguintes atribu
 - Campos expostos porém não editáveis são declarados em `extra_read_only_fields`
   (somados aos `read_only_fields` da `Base`). O `BaseModelSerializer` consome ambos
   automaticamente.
+
+### 2.7. `help_text` e `db_comment`
+
+Todo field **deve** declarar sempre `help_text` **e** `db_comment`, com o **mesmo
+valor** nos dois argumentos. O `help_text` documenta o campo na API/admin; o
+`db_comment` leva a mesma descrição para o comentário da coluna no banco, mantendo o
+schema autoexplicativo para quem consulta o banco direto.
+
+```python
+quantidade = models.IntegerField(
+    _("quantidade"),
+    validators=[MinValueValidator(1)],
+    blank=False,
+    null=False,
+    default=1,
+    help_text=_("Quantidade de unidades do produto no item da venda."),
+    db_comment=_("Quantidade de unidades do produto no item da venda."),
+)
+```
 
 ---
 
@@ -245,6 +264,7 @@ Todo ViewSet herda, de graça:
 | QuerySets | `select_related`/`prefetch_related` obrigatórios; `only()`/`values()` para limitar campos |
 | Models | Choices no topo do `models.py`, `IntegerChoices`, docstring referenciando modelo/coluna |
 | Models | Ordem fixa de argumentos por tipo de Field |
+| Models | Todo field com `help_text` **e** `db_comment` (mesmo valor) |
 | Models | `Meta` com `db_table`, `ordering`, `verbose_name`, `verbose_name_plural`, `permissions` |
 | Models | Permissões em inglês, prefixos Django ou `can_`, sufixo = modelo em minúsculas |
 | Models | Herança obrigatória de `Base` e implementação de `__str__` |

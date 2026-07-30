@@ -55,19 +55,36 @@ class BaseQuerySet(RLSQuerySet):
     `BaseGlobal` não são afetados.
     """
 
+    def delete(self):
+        queryset = self.filter(is_deleted=False)
+        deleted_count = queryset.update(is_deleted=True)
+        return deleted_count, {self.model._meta.label: deleted_count}
 
-class CustomManager(models.Manager.from_queryset(BaseQuerySet)):
+
+class BaseManager(models.Manager.from_queryset(BaseQuerySet)):
+    include_deleted = False
+
     def get_queryset(self):
         queryset = super().get_queryset()
         deferred_fields = self.model.get_queryset_deferred_fields()
         if deferred_fields:
             queryset = queryset.defer(*deferred_fields)
+        if not self.include_deleted:
+            queryset = queryset.filter(is_deleted=False)
         return queryset
 
 
-class AtivosManager(models.Manager.from_queryset(BaseQuerySet)):
+class CustomManager(BaseManager):
+    pass
+
+
+class AllObjectsManager(BaseManager):
+    include_deleted = True
+
+
+class AtivosManager(BaseManager):
     def get_queryset(self):
-        return super().get_queryset().filter(ativo=True)
+        return super().get_queryset().filter(is_active=True)
 
 
 class BaseGlobal(models.Model):
@@ -78,7 +95,8 @@ class BaseGlobal(models.Model):
     `Usuario`. Todo o resto deve herdar de `Base`.
     """
 
-    ativo = models.BooleanField(_("ativo"), default=True)
+    is_active = models.BooleanField(_("ativo"), default=True)
+    is_deleted = models.BooleanField(_("excluído"), default=False)
 
     data_criacao = models.DateField(_("data de criação"), auto_now_add=True)
     hora_criacao = models.TimeField(_("hora de criação"), auto_now_add=True)
@@ -88,18 +106,21 @@ class BaseGlobal(models.Model):
     owner = models.ForeignKey(verbose_name=_("owner"), to=settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True)
 
     objects = CustomManager()
+    all_objects = AllObjectsManager()
     ativos = AtivosManager()
 
     history = AuditlogHistoryField()
 
     internal_fields = [
+        "is_deleted",
         "data_ultima_alteracao",
         "hora_ultima_alteracao",
     ]
     extra_internal_fields = []
 
     read_only_fields = [
-        "ativo",
+        "is_active",
+        "is_deleted",
         "data_criacao",
         "hora_criacao",
         "owner",
@@ -123,6 +144,10 @@ class BaseGlobal(models.Model):
                     self.owner = current_user
 
         return super().save(*args, **kwargs)
+
+    def delete(self, using=None, keep_parents=False):
+        self.is_deleted = True
+        self.save(using=using, update_fields=["is_deleted"])
 
     def as_dict(self, additional_exclude_fields=None, ignore_excluded_fields=None):
         excluded = set(self.get_excluded_fields())
