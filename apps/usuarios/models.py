@@ -3,11 +3,14 @@ from django.contrib.auth.models import AbstractUser, UserManager
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
-from apps.api.base.models import BaseGlobal
+from apps.api.base.models import BaseGlobal, BaseQuerySet
 from utils.logs import register
 
 
-class UsuarioManager(UserManager):
+class UsuarioManager(UserManager.from_queryset(BaseQuerySet)):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_deleted=False)
+
     def _create_user(self, email, password, **extra_fields):
         email = self.normalize_email(email)
         user = self.model(email=email, **extra_fields)
@@ -38,7 +41,7 @@ class Usuario(BaseGlobal, AbstractUser):
 
     first_name = models.CharField(_("nome"), max_length=30)
     last_name = models.CharField(_("sobrenome"), max_length=40)
-    email = models.EmailField(_("email"), unique=True)
+    email = models.EmailField(_("email"))
 
     EMAIL_FIELD = "email"
     USERNAME_FIELD = "email"
@@ -54,6 +57,13 @@ class Usuario(BaseGlobal, AbstractUser):
         ordering = ["-id"]
         verbose_name = _("Usuário")
         verbose_name_plural = _("Usuários")
+        constraints = [
+            models.UniqueConstraint(
+                fields=["email"],
+                condition=models.Q(is_deleted=False),
+                name="usuario_email_unico_nao_excluido",
+            )
+        ]
 
 
 register(
