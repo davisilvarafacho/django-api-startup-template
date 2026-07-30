@@ -115,16 +115,16 @@ uv run python manage.py migrate_storage \
 > para todos os backends. Faça backup e use `--dry-run` primeiro. Não use aliases
 > diferentes que apontem para a mesma localização física.
 
-## Emails com Resend
+## Emails com Anymail + Resend
 
-O backend padrão de email usa a API do Resend. Configure uma chave com permissão de envio e um remetente de um domínio verificado no Resend:
+O projeto usa [django-anymail](https://anymail.dev/) como abstração de e-mail e envia pelo Resend por padrão. Configure uma chave com permissão de envio e um remetente de um domínio verificado no Resend:
 
 ```bash
 RESEND_API_KEY="re_..."
 RESEND_FROM_EMAIL="Minha API <nao-responda@exemplo.com>"
 ```
 
-O backend suporta mensagens texto, HTML (`EmailMultiAlternatives`), cópia, cópia oculta, `reply_to`, cabeçalhos extras e anexos comuns do Django.
+Continue usando as APIs padrão do Django. O backend suporta mensagens texto, HTML (`EmailMultiAlternatives`), cópia, cópia oculta, `reply_to`, cabeçalhos extras e anexos comuns do Django.
 
 ## Infraestrutura local (Postgres + Redis + Celery)
 

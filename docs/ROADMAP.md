@@ -6,7 +6,7 @@ com o que **já foi implementado** e o que está **planejado**, em ondas (batche
 **Legenda:** ✅ feito · 🚧 em andamento · ⏳ planejado · 🧠 brainstorm próprio antes de
 codar · 🔎 estudar antes · ⏸️ adiado
 
-_Atualizado em 2026-07-29._
+_Atualizado em 2026-07-30._
 
 ---
 
@@ -23,7 +23,7 @@ _Atualizado em 2026-07-29._
 | Batch 5 | Autenticação & permissões | 🚧 |
 | Batch 6 | Multi-tenancy | ✅ |
 | Batch 7 | Observabilidade | ✅ |
-| Batch 8 | Domínio & segurança | ⏳ |
+| Batch 8 | Domínio & segurança | 🚧 |
 | Batch 9 | API avançada | ⏳ |
 | Batch 10 | Escala de banco | ⏳ |
 | Batch 11 | DevEx & operação (restante) | ⏳ |
@@ -110,11 +110,11 @@ _Atualizado em 2026-07-29._
 
 ### Batch 8 — Domínio & segurança
 - Base de código de **notificações** (providers plugáveis, templates, preferências).
-- Lib para **dados sensíveis** (field-level encryption).
+- ✅ Lib para **dados sensíveis** (field-level encryption): wrapper `encrypt(...)`, keyring/rotação Fernet, write-only no DRF e exclusão automática do auditlog.
 - **Validação de upload** genérica e plugável.
 - **Money handling** + **metadata framework** (JSON key-value por modelo).
 - **Idempotency keys** em POST (evita duplicidade em retry de rede/pagamento).
-- **`django-anymail`**: abstração de e-mail multi-provider (hoje a base está acoplada ao Resend).
+- ✅ **`django-anymail`**: abstração de e-mail multi-provider; envio padrão pelo Resend, sem acoplamento ao SDK do provider.
 
 ### Batch 9 — API avançada
 - `select_related` / `prefetch_related` sistematizados no `BaseViewSet`.
