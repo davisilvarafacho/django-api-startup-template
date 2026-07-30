@@ -7,7 +7,17 @@ bind = "0.0.0.0:80"
 
 # Workers
 workers = int(os.getenv("GUNICORN_WORKERS", multiprocessing.cpu_count() * 2 + 1))
-worker_class = "sync"
+
+# O worker `sync` fala WSGI e não conclui o handshake de WebSocket — o nginx já
+# encaminha o upgrade em /ws/, mas quem termina a conexão é o worker. Para
+# habilitar WebSocket de ponta a ponta, use um worker ASGI:
+#
+#   uv add uvicorn
+#   GUNICORN_WORKER_CLASS=uvicorn.workers.UvicornWorker
+#   CMD gunicorn api.asgi:application --config gunicorn.conf.py
+#
+# Ver docs/how-to/proxy-nginx.md.
+worker_class = os.getenv("GUNICORN_WORKER_CLASS", "sync")
 worker_connections = 1000
 max_requests = 1000
 max_requests_jitter = 50

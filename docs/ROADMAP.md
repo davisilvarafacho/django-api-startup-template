@@ -6,7 +6,7 @@ com o que **já foi implementado** e o que está **planejado**, em ondas (batche
 **Legenda:** ✅ feito · 🚧 em andamento · ⏳ planejado · 🧠 brainstorm próprio antes de
 codar · 🔎 estudar antes · ⏸️ adiado
 
-_Atualizado em 2026-07-29._
+_Atualizado em 2026-07-30._
 
 ---
 
@@ -124,13 +124,15 @@ _Atualizado em 2026-07-29._
   do lançamento e o gate `makemigrations --check --dry-run` será restaurado.
 
 ### Batch 8 — Domínio & segurança 🚧
-- ✅ Lib para **dados sensíveis**: field-level encryption com keyring,
-  integração com DRF/auditlog e rotação em lote.
+- ✅ Lib para **dados sensíveis** (field-level encryption): wrapper
+  `encrypt(...)`, keyring/rotação Fernet, write-only no DRF e exclusão
+  automática do auditlog.
 - ⏳ Base de código de **notificações** (providers plugáveis, templates, preferências).
 - ⏳ **Validação de upload** genérica e plugável.
 - ⏳ **Money handling** + **metadata framework** (JSON key-value por modelo).
 - ⏳ **Idempotency keys** em POST (evita duplicidade em retry de rede/pagamento).
-- ⏳ **`django-anymail`**: abstração de e-mail multi-provider (hoje a base está acoplada ao Resend).
+- ✅ **`django-anymail`**: abstração de e-mail multi-provider; envio padrão pelo
+  Resend, sem acoplamento ao SDK do provider.
 
 ## ⏳ Planejado
 
@@ -149,7 +151,7 @@ _Atualizado em 2026-07-29._
 ### Batch 11 — DevEx & operação (restante)
 - **Fixtures / seeds / demo data** via management command.
 - **Devcontainer** para onboarding.
-- **Runbooks** operacionais.
+- ⏸️ **Runbooks** operacionais (adiado).
 - Política de **deprecação de API** (changelog de API + header `Sunset`).
 
 ---
@@ -170,8 +172,10 @@ _Atualizado em 2026-07-29._
 ## ⏸️ Adiado
 - **LGPD** (bloco próprio): PII, retenção/expurgo, exportação, direito ao esquecimento, consentimento, scrub de PII.
 - Arquitetura de **plugins / integrações**.
+- **Runbooks operacionais** (item do Batch 11).
 
 ## Brainstorm do dev
 
 - Permissões/rules via plano
 - Checkout por seat e plano, default stripe - classe de abstração backend plugavel na frente - lib para conectar 5 ou mais providers de cara - stripe, assas, etc
+- .memory/
