@@ -1,4 +1,4 @@
-.PHONY: help install hooks up down migrate run worker beat test lint format check precommit shell docs docs-serve commitlint version-check obs-up obs-down
+.PHONY: help install hooks up down stack migrate run worker beat test lint format check precommit shell docs docs-serve commitlint version-check obs-up obs-down nginx-test nginx-reload
 
 help: ## Lista os comandos disponíveis
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "\033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -13,8 +13,26 @@ hooks: ## Ativa os hooks de pre-commit
 up: ## Sobe Postgres + Redis (docker compose)
 	docker compose up -d db redis
 
+stack: ## Sobe a stack completa, com a API atrás do nginx (http://localhost:8000)
+	docker compose up -d --build
+
 down: ## Derruba os serviços do docker compose
 	docker compose down
+
+nginx-test: ## Valida a configuração do nginx (os dois ambientes) sem subir a stack
+	@for ambiente in production development; do \
+		echo "==> $$ambiente"; \
+		docker run --rm \
+			--add-host web:127.0.0.1 --add-host app:127.0.0.1 \
+			-v "$(CURDIR)/docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro" \
+			-v "$(CURDIR)/docker/nginx/snippets:/etc/nginx/snippets:ro" \
+			-v "$(CURDIR)/docker/nginx/sites/$$ambiente:/etc/nginx/conf.d:ro" \
+			nginx:1.29-alpine nginx -t || exit 1; \
+	done
+
+nginx-reload: ## Recarrega o nginx sem derrubar conexões (após editar docker/nginx/)
+	docker compose exec nginx nginx -t
+	docker compose exec nginx nginx -s reload
 
 obs-up: ## Sobe a stack de observabilidade (Grafana, Tempo, Loki, Prometheus)
 	docker compose -f docker-compose.observability.yml up -d
@@ -25,8 +43,13 @@ obs-down: ## Derruba a stack de observabilidade
 migrate: ## Aplica as migrações
 	uv run python manage.py migrate
 
-run: ## Sobe o servidor de desenvolvimento
-	uv run python manage.py runserver
+# Dentro de um container (dev container) o runserver precisa escutar em 0.0.0.0
+# para o nginx alcançá-lo; no host, 127.0.0.1 evita expor a API na rede local.
+RUN_HOST ?= 127.0.0.1
+RUN_PORT ?= 8000
+
+run: ## Sobe o servidor de desenvolvimento (RUN_HOST/RUN_PORT ajustam o bind)
+	uv run python manage.py runserver $(RUN_HOST):$(RUN_PORT)
 
 worker: ## Sobe o worker do Celery
 	uv run celery -A api worker -l info
