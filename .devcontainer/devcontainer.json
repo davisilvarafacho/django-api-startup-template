@@ -5,7 +5,18 @@
   "workspaceFolder": "/workspace",
   "shutdownAction": "stopCompose",
   "remoteUser": "vscode",
-  "forwardPorts": [8000],
+  "runServices": ["app", "db", "redis", "worker", "nginx"],
+  "forwardPorts": ["nginx:80", 8000],
+  "portsAttributes": {
+    "nginx:80": {
+      "label": "API (via nginx)",
+      "onAutoForward": "notify"
+    },
+    "8000": {
+      "label": "runserver (direto, sem proxy)",
+      "onAutoForward": "silent"
+    }
+  },
   "postCreateCommand": "uv sync --frozen --group dev && npm ci",
   "customizations": {
     "vscode": {
