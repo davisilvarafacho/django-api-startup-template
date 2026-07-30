@@ -45,6 +45,25 @@ def test_reauthenticate_documenta_401():
     assert "401" in operation["responses"]
 
 
+def test_reauthenticate_documenta_os_codigos_reais_de_401():
+    schema = _gerar_schema()
+
+    response = schema["paths"]["/auth/reauthenticate/"]["post"]["responses"]["401"]
+
+    assert "auth.not_authenticated" in response["description"]
+    assert "auth.invalid_credentials" in response["description"]
+    assert "auth.reauthentication_required" not in response["description"]
+
+
+def test_reauthenticate_documenta_403_para_api_key():
+    schema = _gerar_schema()
+
+    responses = schema["paths"]["/auth/reauthenticate/"]["post"]["responses"]
+
+    assert "403" in responses
+    assert "auth.permission_denied" in responses["403"]["description"]
+
+
 def test_criacao_de_api_key_documenta_erros_e_nao_omite_o_sucesso():
     schema = _gerar_schema()
 

@@ -30,7 +30,11 @@ document_login = extend_schema(
 document_reauthenticate = extend_schema(
     responses={
         204: None,
-        401: document_error_codes(AuthErrorCode.INVALID_CREDENTIALS, AuthErrorCode.REAUTHENTICATION_REQUIRED),
+        401: document_error_codes(
+            AuthErrorCode.NOT_AUTHENTICATED,
+            AuthErrorCode.INVALID_CREDENTIALS,
+        ),
+        403: document_error_codes(AuthErrorCode.PERMISSION_DENIED),
     },
 )
 
