@@ -35,7 +35,26 @@ para comportar múltiplos arquivos de teste.
             test_*.py
 ```
 
-### 1.3. QuerySets
+### 1.3. Pasta `common/`
+
+A pasta `common/`, na raiz do projeto, é o lugar das **implementações próprias** —
+código que o projeto escreve por conta própria em vez de consumir pronto de uma lib.
+
+Exemplos do que pertence a `common/`:
+
+- serialização própria (ex.: camadas de serialização construídas no projeto);
+- cache de permissões;
+- encrypt/decrypt de fields;
+- e demais mecanismos de infraestrutura escritos internamente.
+
+Regras:
+
+- Não é lugar para código de domínio: regra de negócio pertence ao app em `apps/`.
+- Não é depósito de helpers avulsos: utilitários genéricos continuam em `utils/`.
+- Cada implementação **deve** ficar em seu próprio módulo/pacote, nomeado pelo que
+  implementa (ex.: `common/encrypted_fields.py`, `common/permission_cache.py`).
+
+### 1.4. QuerySets
 
 - **Obrigatório** utilizar `select_related` (e, quando aplicável, `prefetch_related`)
   para evitar consultas N+1.
@@ -261,6 +280,7 @@ Todo ViewSet herda, de graça:
 |---|---|
 | Estrutura | Todos os apps sempre dentro da pasta `apps/` |
 | Estrutura | Módulos como **arquivos** `.py`; `tests/` como **pacote** |
+| Estrutura | `common/` = implementações próprias (serialização, cache de permissões, encrypt de fields); domínio fica em `apps/`, helpers em `utils/` |
 | QuerySets | `select_related`/`prefetch_related` obrigatórios; `only()`/`values()` para limitar campos |
 | Models | Choices no topo do `models.py`, `IntegerChoices`, docstring referenciando modelo/coluna |
 | Models | Ordem fixa de argumentos por tipo de Field |
