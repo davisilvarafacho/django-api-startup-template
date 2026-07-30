@@ -15,6 +15,8 @@ Dependências e execução são sempre via `uv` (nunca `pip`/`python` direto). O
 make install      # uv sync (inclui grupo dev)
 make hooks        # pre-commit install + npm install (hooks pre-commit e commit-msg)
 make up           # sobe Postgres + Redis (docker compose up -d db redis)
+make stack        # sobe a stack completa, API atrás do nginx
+make nginx-test   # valida a config do nginx dos dois ambientes
 make migrate      # uv run python manage.py migrate
 make run          # runserver
 make worker       # celery -A api worker
@@ -73,6 +75,20 @@ A ordem em `MIDDLEWARE` é significativa e está comentada no settings:
 4. `OrganizacaoMiddleware` — o mais interno possível: lê o header `X-Organization` e
    **abre a transação** que envolve a request (necessária para o `SET LOCAL` do RLS).
    O contexto de tenant em si é aplicado depois, na permission.
+
+### Proxy reverso
+
+Em qualquer ambiente conteinerizado a API fica **atrás de um nginx** e o
+gunicorn/runserver não publica porta — quem atende o host é o proxy, sempre em
+`http://localhost:8000`. A configuração vive em `docker/nginx/`: `nginx.conf`
+(bloco http comum) + `snippets/` (headers) + `sites/<ambiente>/`, montado sobre
+`/etc/nginx/conf.d`. Os `X-Forwarded-*` são sobrescritos pelo proxy e o Django
+confia neles via `DJANGO_BEHIND_PROXY` (`SECURE_PROXY_SSL_HEADER`,
+`USE_X_FORWARDED_HOST`/`_PORT`).
+
+`/ws/` já sai configurado para WebSocket (upgrade via `map $http_upgrade`,
+timeout longo, sem buffering), mas o upstream é WSGI: concluir o handshake
+exige um worker ASGI (`GUNICORN_WORKER_CLASS`). Ver `docs/how-to/proxy-nginx.md`.
 
 ### Multi-tenancy e RLS
 
