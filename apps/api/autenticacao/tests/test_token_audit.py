@@ -198,8 +198,8 @@ def test_suspensao_automatica_emite_evento_sem_ator(organizacao):
     vinculo = Vinculo.objects.create(usuario=responsavel_local, organizacao=organizacao, papel=Papel.MEMBRO)
     instance, _token = _api_key(responsavel_local, organizacao)
 
-    vinculo.ativo = False
-    vinculo.save(update_fields=["ativo"])
+    vinculo.is_active = False
+    vinculo.save(update_fields=["is_active"])
 
     with patch("apps.api.autenticacao.audit.capture") as capture_mock:
         ensure_api_key_still_valid(instance)

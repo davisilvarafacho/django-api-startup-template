@@ -75,7 +75,7 @@ class TenantPermission(BasePermission):
 
         vinculo = (
             Vinculo.objects.select_related("organizacao")
-            .filter(organizacao__slug=slug, usuario=request.user, ativo=True)
+            .filter(organizacao__slug=slug, usuario=request.user, is_active=True)
             .first()
         )
 

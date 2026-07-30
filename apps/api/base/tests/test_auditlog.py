@@ -28,11 +28,13 @@ def test_exclui_campos_tecnicos_e_credenciais_sem_mutar_a_configuracao_global():
     assert campos_base == ["created_at", "last_modified_at"]
     assert set(auditlog.get_model_fields(Usuario)["exclude_fields"]) == {
         *campos_base,
+        "is_deleted",
         "password",
         "last_login",
     }
-    for model in (Organizacao, Time, Vinculo, Convite, TokenMetaData):
-        assert auditlog.get_model_fields(model)["exclude_fields"] == campos_base
+    for model in (Organizacao, Time, Vinculo, Convite):
+        assert auditlog.get_model_fields(model)["exclude_fields"] == [*campos_base, "is_deleted"]
+    assert auditlog.get_model_fields(TokenMetaData)["exclude_fields"] == campos_base
 
 
 def test_base_global_define_campos_de_auditoria():
@@ -52,8 +54,8 @@ def test_modelos_de_control_plane_mantem_created_by_padrao():
 
 
 def test_internal_e_read_only_fields_usam_os_novos_nomes():
-    assert BaseGlobal.get_internal_fields() == ["last_modified_at"]
-    assert BaseGlobal.get_read_only_fields() == ["ativo", "created_at", "created_by"]
+    assert BaseGlobal.get_internal_fields() == ["last_modified_at", "is_deleted"]
+    assert BaseGlobal.get_read_only_fields() == ["is_active", "is_deleted", "created_at", "created_by"]
 
 
 @pytest.fixture(autouse=True)

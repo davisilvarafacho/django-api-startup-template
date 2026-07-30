@@ -157,8 +157,8 @@ def test_api_key_com_responsavel_sem_vinculo_na_organizacao_e_recusada():
     vinculo = _vincular(usuario, organizacao)
 
     client = _client_com_api_key(responsavel=usuario, organizacao=organizacao)
-    vinculo.ativo = False
-    vinculo.save(update_fields=["ativo"])
+    vinculo.is_active = False
+    vinculo.save(update_fields=["is_active"])
 
     response = client.get("/times/")
 

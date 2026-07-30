@@ -360,3 +360,40 @@ def test_api_key_com_scope_invitations_accept_aceita_convite():
     )
 
     assert response.status_code == status.HTTP_200_OK
+
+
+def test_delete_de_time_oculta_registro_sem_remover_linha():
+    usuario = UsuarioFactory()
+    organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
+    vincular(usuario, organizacao, Papel.GESTOR)
+    time = Time.objects.create(organizacao=organizacao, nome="Produto")
+
+    response = client_autenticado(usuario).delete(f"/times/{time.pk}/", **{META_HEADER_ORGANIZACAO: "org-a"})
+
+    assert response.status_code == status.HTTP_204_NO_CONTENT
+    assert not Time.objects.filter(pk=time.pk).exists()
+    assert Time.all_objects.get(pk=time.pk).is_deleted is True
+
+
+def test_delete_de_vinculo_oculta_registro_sem_remover_linha():
+    usuario = UsuarioFactory()
+    organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
+    vincular(usuario, organizacao, Papel.ADMINISTRADOR)
+    alvo = vincular(UsuarioFactory(), organizacao)
+
+    response = client_autenticado(usuario).delete(f"/vinculos/{alvo.pk}/", **{META_HEADER_ORGANIZACAO: "org-a"})
+
+    assert response.status_code == status.HTTP_204_NO_CONTENT
+    assert Vinculo.all_objects.get(pk=alvo.pk).is_deleted is True
+
+
+def test_delete_de_convite_oculta_registro_sem_remover_linha():
+    usuario = UsuarioFactory()
+    organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
+    vincular(usuario, organizacao, Papel.GESTOR)
+    convite = Convite.objects.create(organizacao=organizacao, email="nova@example.com", convidado_por=usuario)
+
+    response = client_autenticado(usuario).delete(f"/convites/{convite.pk}/", **{META_HEADER_ORGANIZACAO: "org-a"})
+
+    assert response.status_code == status.HTTP_204_NO_CONTENT
+    assert Convite.all_objects.get(pk=convite.pk).is_deleted is True

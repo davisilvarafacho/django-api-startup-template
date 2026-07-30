@@ -55,19 +55,36 @@ class BaseQuerySet(RLSQuerySet):
     `BaseGlobal` não são afetados.
     """
 
+    def delete(self):
+        queryset = self.filter(is_deleted=False)
+        deleted_count = queryset.update(is_deleted=True)
+        return deleted_count, {self.model._meta.label: deleted_count}
 
-class CustomManager(models.Manager.from_queryset(BaseQuerySet)):
+
+class BaseManager(models.Manager.from_queryset(BaseQuerySet)):
+    include_deleted = False
+
     def get_queryset(self):
         queryset = super().get_queryset()
         deferred_fields = self.model.get_queryset_deferred_fields()
         if deferred_fields:
             queryset = queryset.defer(*deferred_fields)
+        if not self.include_deleted:
+            queryset = queryset.filter(is_deleted=False)
         return queryset
 
 
-class AtivosManager(models.Manager.from_queryset(BaseQuerySet)):
+class CustomManager(BaseManager):
+    pass
+
+
+class AllObjectsManager(BaseManager):
+    include_deleted = True
+
+
+class AtivosManager(BaseManager):
     def get_queryset(self):
-        return super().get_queryset().filter(ativo=True)
+        return super().get_queryset().filter(is_active=True)
 
 
 class CreationAuditMixin(models.Model):
@@ -100,24 +117,28 @@ class BaseGlobal(CreationAuditMixin):
     `Usuario`. Todo o resto deve herdar de `Base`.
     """
 
-    ativo = models.BooleanField(_("ativo"), default=True)
+    is_active = models.BooleanField(_("ativo"), default=True)
+    is_deleted = models.BooleanField(_("excluído"), default=False)
 
     # Interface pública e estável de scopes/permissions (`resource:action`).
     # `None` significa que o model não é exposto pelo registry de scopes.
     api_scope_resource = None
 
     objects = CustomManager()
+    all_objects = AllObjectsManager()
     ativos = AtivosManager()
 
     history = AuditlogHistoryField()
 
     internal_fields = [
         "last_modified_at",
+        "is_deleted",
     ]
     extra_internal_fields = []
 
     read_only_fields = [
-        "ativo",
+        "is_active",
+        "is_deleted",
         "created_at",
         "created_by",
     ]
@@ -140,6 +161,10 @@ class BaseGlobal(CreationAuditMixin):
                     self.created_by = current_user
 
         return super().save(*args, **kwargs)
+
+    def delete(self, using=None, keep_parents=False):
+        self.is_deleted = True
+        self.save(using=using, update_fields=["is_deleted"])
 
     def as_dict(self, additional_exclude_fields=None, ignore_excluded_fields=None):
         excluded = set(self.get_excluded_fields())

@@ -139,7 +139,7 @@ class BaseModelViewSet(UtilsViewSetMixin, ModelViewSet):
     search_fields = []
     ordering_fields = []
     extra_permissions = {}
-    has_ativo_field = True
+    has_is_active_field = True
     cache_timeout = 60  # TTL padrão (segundos) para caches deste viewset
 
     def perform_create(self, serializer, **overwrite):
@@ -274,7 +274,7 @@ class BaseModelViewSet(UtilsViewSetMixin, ModelViewSet):
         self.bump_cache_version()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-    if has_ativo_field:
+    if has_is_active_field:
         @action(methods=["get"], detail=True)
         def ativar(self, request, *args, **kwargs):
             instance = self.get_object()
@@ -286,4 +286,3 @@ class BaseModelViewSet(UtilsViewSetMixin, ModelViewSet):
             instance = self.get_object()
             inativar_registro(instance)
             return Response()
-

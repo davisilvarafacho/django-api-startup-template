@@ -34,7 +34,7 @@ class OrganizacaoSerializer(serializers.ModelSerializer):
         if not request or not request.user.is_authenticated:
             return None
 
-        vinculo = Vinculo.objects.filter(organizacao=obj, usuario=request.user, ativo=True).first()
+        vinculo = Vinculo.objects.filter(organizacao=obj, usuario=request.user, is_active=True).first()
         return vinculo.papel if vinculo else None
 
     def create(self, validated_data):
@@ -63,15 +63,15 @@ class VinculoSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Vinculo
-        fields = ["id", "usuario", "papel", "times", "times_detalhe", "ativo"]
-        read_only_fields = ["id", "usuario", "ativo"]
+        fields = ["id", "usuario", "papel", "times", "times_detalhe", "is_active"]
+        read_only_fields = ["id", "usuario", "is_active"]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         request = self.context.get("request")
         organizacao = getattr(request, "organizacao", None)
         if organizacao is not None:
-            self.fields["times"].queryset = Time.objects.filter(organizacao=organizacao, ativo=True)
+            self.fields["times"].queryset = Time.objects.filter(organizacao=organizacao, is_active=True)
 
     def validate_papel(self, papel):
         request = self.context["request"]

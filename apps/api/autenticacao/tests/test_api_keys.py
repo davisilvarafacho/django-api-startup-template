@@ -280,8 +280,8 @@ def test_resume_recusa_quando_responsavel_perdeu_o_vinculo(organizacao):
     TokenMetaData.objects.create(token=instance)
     suspend_api_key(instance, actor=responsavel_local, reason="manual")
 
-    vinculo.ativo = False
-    vinculo.save(update_fields=["ativo"])
+    vinculo.is_active = False
+    vinculo.save(update_fields=["is_active"])
 
     with pytest.raises(APIError) as excinfo:
         resume_api_key(instance, actor=responsavel_local)
@@ -380,7 +380,7 @@ def test_rotacao_recusa_api_key_cujo_responsavel_perdeu_vinculo(
     Vinculo.objects.filter(
         usuario=responsavel,
         organizacao=organizacao,
-    ).update(ativo=False)
+    ).update(is_active=False)
 
     with pytest.raises(APIError) as exc:
         rotate_api_key(instance, actor=responsavel)

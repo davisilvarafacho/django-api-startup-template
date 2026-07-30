@@ -183,7 +183,7 @@ def rotate_api_key(current, *, actor):
         vinculo_ativo = Vinculo.objects.filter(
             organizacao=current.organization,
             usuario=current.responsavel,
-            ativo=True,
+            is_active=True,
         ).exists()
         if not current.responsavel.is_active or not vinculo_ativo:
             raise APIError(AuthErrorCode.RESPONSIBLE_INACTIVE, status_code=409)
@@ -239,7 +239,7 @@ def resume_api_key(instance, *, actor):
     from apps.organizacoes.models import Vinculo
 
     vinculo_ativo = Vinculo.objects.filter(
-        organizacao=instance.organization, usuario=instance.responsavel, ativo=True
+        organizacao=instance.organization, usuario=instance.responsavel, is_active=True
     ).exists()
 
     if not instance.responsavel.is_active or not vinculo_ativo:
@@ -274,7 +274,7 @@ def ensure_api_key_still_valid(token):
     from apps.organizacoes.models import Vinculo
 
     vinculo_ativo = Vinculo.objects.filter(
-        organizacao=token.organization, usuario=token.responsavel, ativo=True
+        organizacao=token.organization, usuario=token.responsavel, is_active=True
     ).exists()
 
     if not token.responsavel.is_active or not vinculo_ativo:

@@ -149,7 +149,7 @@ class APIKeyWriteSerializer(APIKeySerializer):
     def validate_responsavel(self, responsavel):
         organizacao = self.context["request"].organizacao
         vinculo_ativo = Vinculo.objects.filter(
-            organizacao=organizacao, usuario=responsavel, ativo=True
+            organizacao=organizacao, usuario=responsavel, is_active=True
         ).exists()
         if not vinculo_ativo:
             raise APIError(

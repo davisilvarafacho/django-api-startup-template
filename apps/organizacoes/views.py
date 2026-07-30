@@ -35,14 +35,14 @@ class OrganizacaoViewSet(
     def get_queryset(self):
         auth_token = getattr(self.request, "auth", None)
         if getattr(auth_token, "type", None) == TokenType.API_KEY:
-            return Organizacao.objects.filter(pk=auth_token.organization_id, ativo=True)
+            return Organizacao.objects.filter(pk=auth_token.organization_id, is_active=True)
 
         organizacao_ids = Vinculo.objects.filter(
             usuario=self.request.user,
-            ativo=True,
-            organizacao__ativo=True,
+            is_active=True,
+            organizacao__is_active=True,
         ).values_list("organizacao_id", flat=True)
-        return Organizacao.objects.filter(id__in=organizacao_ids, ativo=True).order_by("nome")
+        return Organizacao.objects.filter(id__in=organizacao_ids, is_active=True).order_by("nome")
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -53,7 +53,7 @@ class OrganizacaoViewSet(
 
         vinculos = Vinculo.objects.filter(
             usuario=self.request.user,
-            ativo=True,
+            is_active=True,
             organizacao_id__in=self.get_queryset().values_list("id", flat=True),
         )
         context["vinculos_por_organizacao"] = {vinculo.organizacao_id: vinculo for vinculo in vinculos}
@@ -81,7 +81,7 @@ class TimeViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
     }
 
     def get_queryset(self):
-        return super().get_queryset().filter(organizacao=self.get_organizacao(), ativo=True).order_by("nome")
+        return super().get_queryset().filter(organizacao=self.get_organizacao(), is_active=True).order_by("nome")
 
     def perform_create(self, serializer):
         serializer.save(organizacao=self.get_organizacao())
@@ -106,11 +106,7 @@ class VinculoViewSet(
     }
 
     def get_queryset(self):
-        return super().get_queryset().filter(organizacao=self.get_organizacao(), ativo=True).order_by("usuario__email")
-
-    def perform_destroy(self, instance):
-        instance.ativo = False
-        instance.save(update_fields=["ativo"])
+        return super().get_queryset().filter(organizacao=self.get_organizacao(), is_active=True).order_by("usuario__email")
 
 
 class ConviteViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
@@ -131,7 +127,7 @@ class ConviteViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
         return super().get_permissions()
 
     def get_queryset(self):
-        return super().get_queryset().filter(organizacao=self.get_organizacao(), ativo=True).order_by("-id")
+        return super().get_queryset().filter(organizacao=self.get_organizacao(), is_active=True).order_by("-id")
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -142,10 +138,6 @@ class ConviteViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(organizacao=self.get_organizacao(), convidado_por=self.request.user)
-
-    def perform_destroy(self, instance):
-        instance.ativo = False
-        instance.save(update_fields=["ativo"])
 
     @action(detail=False, methods=["post"], url_path="aceitar")
     @require_token_scopes("invitations:accept")

@@ -97,7 +97,7 @@ def validate_token_configuration(
         if not Vinculo.objects.filter(
             organizacao=organization,
             usuario=responsavel,
-            ativo=True,
+            is_active=True,
         ).exists():
             errors["responsavel"] = (
                 "O responsável precisa ter vínculo ativo com a organização."
