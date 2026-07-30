@@ -65,6 +65,15 @@ def test_api_error_response_schema_expoe_todos_os_campos():
     assert "request_id" in componentes["APIErrorResponseSchema"]["properties"]
 
 
+def test_schema_path_aceita_componentes_textuais_e_indices_numericos():
+    schema = _gerar_schema()
+
+    path_schema = schema["components"]["schemas"]["APIErrorItemSchema"]["properties"]["path"]
+
+    assert path_schema["type"] == "array"
+    assert path_schema["items"] == {}
+
+
 def test_document_error_codes_rejeita_codigo_nao_registrado():
     from django.db import models
 

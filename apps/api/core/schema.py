@@ -16,7 +16,7 @@ class APIErrorItemSchema(serializers.Serializer):
     code = serializers.CharField()
     message = serializers.CharField()
     field = serializers.CharField(allow_null=True, required=False)
-    path = serializers.ListField(child=serializers.CharField(), allow_null=True, required=False)
+    path = serializers.ListField(child=serializers.JSONField(), allow_null=True, required=False)
     context = serializers.DictField(required=False)
 
 
