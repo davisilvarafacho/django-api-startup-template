@@ -50,7 +50,52 @@ BACKBLAZE_BUCKET_NAME="meu-bucket"
 
 Opcionalmente, defina `BACKBLAZE_BUCKET_ID` para evitar a busca pelo nome do bucket, `BACKBLAZE_LOCATION` para usar um prefixo (por exemplo, `media`) e `BACKBLAZE_PUBLIC_BASE_URL` para servir arquivos por um domínio próprio/CDN. Se a última variável não estiver configurada, `FieldFile.url` usa a URL de download do próprio B2. Para buckets privados, use URLs assinadas ou uma camada de entrega autenticada; a URL padrão não concede acesso por si só.
 
-## Emails com Anymail + Resend
+### Migrar arquivos entre storages
+
+O comando `migrate_storage` copia qualquer storage Django para outro. Para
+backends que recebem opções, configure aliases em `STORAGES`:
+
+```python
+STORAGES = {
+    # ... aliases existentes ...
+    "legacy_media": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+        "OPTIONS": {"location": "/dados/media-legada"},
+    },
+    "backblaze": {
+        "BACKEND": "apps.api.core.b2_storage.BackblazeB2Storage",
+    },
+}
+```
+
+Simule a migração antes de gravar:
+
+```bash
+uv run python manage.py migrate_storage \
+  --source legacy_media \
+  --destination backblaze \
+  --dry-run
+```
+
+Copie uma subárvore e troque o prefixo:
+
+```bash
+uv run python manage.py migrate_storage \
+  --source legacy_media \
+  --destination backblaze \
+  --source-prefix uploads \
+  --destination-prefix media
+```
+
+Objetos existentes são ignorados. Use `--overwrite` para substituí-los ou
+`--remove-on-success` para apagar cada origem somente após confirmar nome e
+tamanho no destino.
+
+> `--overwrite` pode apagar o objeto anterior antes do upload e não é atômico
+> para todos os backends. Faça backup e use `--dry-run` primeiro. Não use aliases
+> diferentes que apontem para a mesma localização física.
+
+## Emails com Resend
 
 O projeto usa [django-anymail](https://anymail.dev/) como abstração de e-mail e envia pelo Resend por padrão. Configure uma chave com permissão de envio e um remetente de um domínio verificado no Resend:
 
