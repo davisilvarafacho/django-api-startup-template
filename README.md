@@ -68,6 +68,10 @@ STORAGES = {
 }
 ```
 
+Tanto o storage de origem quanto o de destino precisam oferecer suporte
+funcional a `listdir()` e `size()`. Uma implementação que não liste diretórios
+ou não informe tamanhos fará o comando terminar com erro.
+
 Simule a migração antes de gravar:
 
 ```bash
@@ -90,6 +94,24 @@ uv run python manage.py migrate_storage \
 Objetos existentes são ignorados. Use `--overwrite` para substituí-los ou
 `--remove-on-success` para apagar cada origem somente após confirmar nome e
 tamanho no destino.
+
+Substitua objetos que já existem no destino:
+
+```bash
+uv run python manage.py migrate_storage \
+  --source legacy_media \
+  --destination backblaze \
+  --overwrite
+```
+
+Mova os objetos, removendo cada origem somente depois da cópia verificada:
+
+```bash
+uv run python manage.py migrate_storage \
+  --source legacy_media \
+  --destination backblaze \
+  --remove-on-success
+```
 
 > `--overwrite` pode apagar o objeto anterior antes do upload e não é atômico
 > para todos os backends. Faça backup e use `--dry-run` primeiro. Não use aliases
