@@ -1,16 +1,28 @@
-from unittest.mock import patch
+from pathlib import Path
 
-from django.core.exceptions import ImproperlyConfigured
+from django.core import mail
 from django.core.mail import EmailMultiAlternatives
 from django.test import SimpleTestCase, override_settings
 
-from apps.api.core.email_backends import ResendEmailBackend
+from api import settings as project_settings
 
 
-@override_settings(RESEND_API_KEY="re_test", DEFAULT_FROM_EMAIL="Base <no-reply@example.com>")
-class ResendEmailBackendTests(SimpleTestCase):
-    @patch("apps.api.core.email_backends.resend.Emails.send")
-    def test_sends_html_message_with_metadata_and_attachment(self, send):
+class AnymailConfigurationTests(SimpleTestCase):
+    def test_environment_example_preserves_resend_variables(self):
+        env_example = Path(project_settings.BASE_DIR, ".env.example").read_text()
+
+        self.assertIn("RESEND_API_KEY=", env_example)
+        self.assertIn("RESEND_FROM_EMAIL=", env_example)
+
+    def test_configures_resend_key_and_default_sender(self):
+        self.assertEqual(project_settings.ANYMAIL["RESEND_API_KEY"], project_settings.RESEND_API_KEY)
+        self.assertEqual(project_settings.DEFAULT_FROM_EMAIL, "nao-responda@base.com.br")
+
+    def test_selects_anymail_test_backend_in_project_settings(self):
+        self.assertEqual(project_settings.EMAIL_BACKEND, "anymail.backends.test.EmailBackend")
+
+    @override_settings(EMAIL_BACKEND="anymail.backends.test.EmailBackend")
+    def test_test_backend_captures_rich_django_email_without_network(self):
         message = EmailMultiAlternatives(
             subject="Welcome",
             body="Plain text",
@@ -24,42 +36,14 @@ class ResendEmailBackendTests(SimpleTestCase):
         message.attach_alternative("<h1>Welcome</h1>", "text/html")
         message.attach("report.bin", b"report", "application/octet-stream")
 
-        sent_count = ResendEmailBackend().send_messages([message])
+        self.assertEqual(message.send(), 1)
 
-        self.assertEqual(sent_count, 1)
-        send.assert_called_once_with(
-            {
-                "from": "API <api@example.com>",
-                "to": ["to@example.com"],
-                "subject": "Welcome",
-                "cc": ["cc@example.com"],
-                "bcc": ["bcc@example.com"],
-                "reply_to": ["reply@example.com"],
-                "headers": {"X-Request-ID": "request-123"},
-                "text": "Plain text",
-                "html": "<h1>Welcome</h1>",
-                "attachments": [
-                    {
-                        "filename": "report.bin",
-                        "content": [114, 101, 112, 111, 114, 116],
-                        "content_type": "application/octet-stream",
-                    }
-                ],
-            }
-        )
-
-    @override_settings(RESEND_API_KEY=None)
-    def test_requires_an_api_key_unless_fail_silently_is_enabled(self):
-        message = EmailMultiAlternatives("Subject", "Body", to=["to@example.com"])
-
-        with self.assertRaises(ImproperlyConfigured):
-            ResendEmailBackend().send_messages([message])
-
-        self.assertEqual(ResendEmailBackend(fail_silently=True).send_messages([message]), 0)
-
-    @patch("apps.api.core.email_backends.resend.Emails.send", side_effect=RuntimeError("unavailable"))
-    def test_respects_fail_silently_for_provider_errors(self, send):
-        message = EmailMultiAlternatives("Subject", "Body", to=["to@example.com"])
-
-        self.assertEqual(ResendEmailBackend(fail_silently=True).send_messages([message]), 0)
-        send.assert_called_once()
+        sent = mail.outbox[0]
+        self.assertEqual(sent.from_email, "API <api@example.com>")
+        self.assertEqual(sent.to, ["to@example.com"])
+        self.assertEqual(sent.cc, ["cc@example.com"])
+        self.assertEqual(sent.bcc, ["bcc@example.com"])
+        self.assertEqual(sent.reply_to, ["reply@example.com"])
+        self.assertEqual(sent.extra_headers["X-Request-ID"], "request-123")
+        self.assertEqual(sent.alternatives[0].content, "<h1>Welcome</h1>")
+        self.assertEqual(sent.attachments[0][0], "report.bin")

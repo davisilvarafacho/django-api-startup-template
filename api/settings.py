@@ -94,6 +94,7 @@ DJANGO_APPS = [
 
 LIBS_APPS = [
     "auditlog",
+    "anymail",
     "corsheaders",
     "django_celery_beat",
     "django_filters",
@@ -296,9 +297,13 @@ POSTHOG_DISABLED = get_bool_from_env("POSTHOG_DISABLED", False)
 
 RESEND_API_KEY = get_env_var("RESEND_API_KEY")
 
+ANYMAIL = {
+    "RESEND_API_KEY": RESEND_API_KEY,
+}
+
 DEFAULT_FROM_EMAIL = get_env_var("RESEND_FROM_EMAIL", "nao-responda@base.com.br")
 
-EMAIL_BACKEND = "apps.api.core.email_backends.ResendEmailBackend"
+EMAIL_BACKEND = "anymail.backends.test.EmailBackend" if TESTING else "anymail.backends.resend.EmailBackend"
 
 
 LOGGING_ROOT = os.path.join(BASE_DIR, "logs/")
