@@ -69,6 +69,21 @@ ALLOWED_HOSTS = get_list_from_env("DJANGO_ALLOWED_HOSTS", ["127.0.0.1", "localho
 
 CSRF_TRUSTED_ORIGINS = get_list_from_env("DJANGO_CSRF_TRUSTED_ORIGINS", ["http://127.0.0.1:8000", "http://localhost:8000"])
 
+# A API sempre roda atrás do nginx (`docker/nginx/`), que sobrescreve os
+# `X-Forwarded-*` — o valor que o cliente mandar é descartado antes de chegar
+# aqui. Sem isto o Django enxerga a request como http na porta do gunicorn e
+# monta URLs absolutas (redirects, links do DRF, `build_absolute_uri`) erradas.
+#
+# Desligue apenas se o gunicorn for exposto direto, sem proxy: confiar nesses
+# headers com a porta aberta permitiria forjar `X-Forwarded-Proto: https` e
+# burlar as checagens de conexão segura.
+BEHIND_PROXY = get_bool_from_env("DJANGO_BEHIND_PROXY", True)
+
+if BEHIND_PROXY:
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    USE_X_FORWARDED_HOST = True
+    USE_X_FORWARDED_PORT = True
+
 INTERNAL_IPS = [
     "127.0.0.1",
 ]
