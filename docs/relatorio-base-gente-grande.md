@@ -5,9 +5,9 @@ Levantamento do que foi sugerido para elevar esta base a padrão de produção
 cada item.
 
 **Legenda:** ✅ implementado · ⏳ aprovado (a implementar) · 🔎 estudar antes ·
-⏸️ adiado · 🧠 merece brainstorm próprio
+⏸️ adiado · 🧠 merece brainstorm próprio · ⚠️ pendência operacional
 
-_Última atualização: 2026-07-21._
+_Última atualização: 2026-07-29._
 
 ---
 
@@ -38,34 +38,41 @@ _Última atualização: 2026-07-21._
 
 | Item | Status |
 |------|--------|
-| Throttling do DRF (anon 100/h, user 1000/h, escopo `auth`) | ✅ |
+| Throttling do DRF (anon 100/h, user 1000/h, login 10/min, reautenticação 5/min) | ✅ |
 | Endpoint global de lookup (autocomplete de FK sem exigir permissão do modelo-alvo) | ✅ |
-| App de integrações: proxy model de `knox.AuthToken` com `type` (1=token, 2=reset_password, 999=api_key) | ⏳ |
-| Scoped API tokens | ⏳ |
-| `django-guardian` + `django-rules` (setup extensível, object-level) | ⏳ |
-| Papéis estilo Saleor (ordem crescente) somados às permissions do Django | ⏳ |
+| Modelo próprio e swappable `autenticacao.AuthToken` com tipos de sessão, reset de senha e API key | ✅ |
+| Scoped API tokens no padrão `resource:action`, traduzidos para permissions Django | ✅ |
+| Delegação de scopes limitada às permissions do ator | ✅ |
+| `django-guardian` + `django-rules` (setup extensível, object-level) | ✅ |
+| Papéis estilo Saleor (ordem crescente) somados às permissions do Django | ✅ |
+| API keys independentes por organização, com responsável, rotação, suspensão e revogação | ✅ |
+| Gestão de sessões, logout seletivo/global e autenticação recente via decorator | ✅ |
+| Envelope e registry centralizados de erros, com códigos `TextChoices` por app | ✅ |
 | Cache de permissão | ⏳ |
 | MFA/2FA + checagem de senha vazada (HaveIBeenPwned) | ⏳ |
+| Field-level permissions nos serializers | ⏳ |
+| Ciclo de vida de conta (verificação de e-mail, social auth, desativação/exclusão) | ⏳ |
 | `oso` / `casbin` como camada de policy | 🔎 |
 
 ## 4. Multi-tenancy
 
 | Item | Status |
 |------|--------|
-| Organization → Team → Membership → Role, com convites | ⏳ |
-| Isolamento por tenant com **RLS** via `django-rls` | ⏳ |
+| Organização → Time → Vínculo → Papel, com convites | ✅ |
+| Isolamento por tenant com **RLS** via `django-rls` | ✅ |
 
 ## 5. Observabilidade
 
 | Item | Status |
 |------|--------|
 | Sentry: sample rates ajustados (0.1) e scrub do token de autenticação | ✅ |
-| Logging estruturado (JSON) com `python-json-logger` | ⏳ |
-| Correlation/request ID (decidir `django-request-id` vs próprio) | ⏳ |
-| PostHog (product analytics / eventos) | ⏳ |
-| `django-waffle` (feature flags) | ⏳ |
-| Métricas + dashboards (Grafana / Prometheus / OpenTelemetry) | ⏳ |
-| Estratégia de armazenamento de logs de request (evitar banco de 50GB+) | ⏳ |
+| Logging estruturado (JSON) com `python-json-logger` | ✅ |
+| Correlation/request ID próprio, propagado para Sentry e Celery | ✅ |
+| PostHog (product analytics / eventos) | ✅ |
+| `django-waffle` (feature flags operacionais) | ✅ |
+| Métricas + dashboards (Grafana / Prometheus / OpenTelemetry) | ✅ |
+| Health checks de liveness/readiness | ✅ |
+| Estratégia de logs de request: JSON → Promtail → Loki, sem banco em produção | ✅ |
 
 ## 6. Segurança
 
@@ -75,7 +82,7 @@ _Última atualização: 2026-07-21._
 | `.env.example` versionado + `.env` fora do versionamento | ✅ |
 | Headers de SSL/HSTS/secure + `check --deploy` | 🔎 |
 | CSP (`django-csp`) | 🔎 |
-| Lib para dados sensíveis (field-level encryption) | ⏳ |
+| Lib para dados sensíveis (field-level encryption, keyring e rotação) | ✅ |
 | Validação de upload genérica e plugável | ⏳ |
 | Expiração/assinatura de URLs para arquivos privados | 🧠 |
 
@@ -95,26 +102,27 @@ _Última atualização: 2026-07-21._
 |------|--------|
 | Convenção de docstring (`ruff pydocstyle: google`) | ✅ |
 | `get_env_var` com default opcional + helper `get_list_from_env` | ✅ |
-| Pré-commit hooks | ⏳ |
-| GitHub Actions (lint, testes, `check --deploy`, `makemigrations --check`) | ⏳ |
-| Serviços Postgres/Redis no CI (fecha o caveat dos testes) | ⏳ |
-| Segurança de dependências/imagem: `pip-audit`, `bandit`, `trivy`, Dependabot | ⏳ |
-| `pytest-cov` + `factory_boy` + Codecov + coverage gate | ⏳ |
+| Pré-commit hooks | ✅ |
+| GitHub Actions (commits, lint, versões, docs e testes) | ✅ |
+| Gate de migrations | ⚠️ suspenso até o reset integral pré-lançamento |
+| Serviços Postgres/Redis no CI (fecha o caveat dos testes) | ✅ |
+| Segurança de dependências/imagem: `pip-audit`, `bandit`, `trivy`, Dependabot | ✅ |
+| `pytest-cov` + `factory_boy` + Codecov + coverage gate | ✅ |
 | Fixtures / seeds / demo data | ⏳ |
-| Makefile / justfile | ⏳ |
+| Makefile | ✅ |
 | `responses` / `vcrpy` (mock de HTTP externo) · snapshot tests · load/contract testing | 🔎 |
 
 ## 9. Documentação & release
 
 | Item | Status |
 |------|--------|
-| Versionamento **SemVer** casado com `SPECTACULAR_SETTINGS["VERSION"]` | ⏳ |
-| **Conventional Commits** padronizados | ⏳ |
-| Changelog no formato **Keep a Changelog** | ⏳ |
-| Arquivos padrão do GitHub (CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, templates) | ⏳ |
-| Docs com **MkDocs + Material** organizadas por Diátaxis | ⏳ |
-| **ADRs (MADR)** em `docs/adr/` | ⏳ |
-| Convenções de código explícitas (ex.: `r = f(); g(r)` em vez de `g(f())`) documentadas | ⏳ |
+| Versionamento **SemVer** casado com `SPECTACULAR_SETTINGS["VERSION"]` | ✅ |
+| **Conventional Commits** padronizados e validados | ✅ |
+| Changelog no formato **Keep a Changelog** | ✅ |
+| Arquivos padrão do GitHub (CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, templates) | ✅ |
+| Docs com **MkDocs + Material** organizadas por Diátaxis | ✅ |
+| **ADRs (MADR)** em `docs/adr/` | ✅ |
+| Convenções de código explícitas em `.ai/CONVENTIONS.md` | ✅ |
 
 ## 10. Compliance & extensibilidade
 
@@ -128,18 +136,29 @@ _Última atualização: 2026-07-21._
 
 ## Resumo do que já implementamos (✅)
 
-1. **Configuração por ambiente** centralizada no `configure_enviroment`.
-2. **PostgreSQL** como banco padrão, com health checks e conexões persistentes.
-3. **Sentry** endurecido (sample rates + scrub do token).
-4. **Hosts/CSRF via env** + `.env.example`.
-5. **Celery + Redis + django-celery-beat** (fila de tarefas + agendador).
-6. **Cache Redis** (`django-redis`) e correção da invalidação do cachalot.
-7. **Throttling** do DRF.
-8. **`docker-compose`** com a stack local completa.
-9. **Cache versionado por viewset** + endpoint `invalidate_cache`.
-10. **Endpoint global de lookup** (autocomplete de FK).
-11. Correção de bug: import do `debug_toolbar` só em desenvolvimento.
-12. Convenção de docstring (`pydocstyle: google`) e melhorias no helper de env.
+1. **Settings e infraestrutura**: configuração por ambiente, PostgreSQL,
+   Celery, Redis, cache compartilhado, throttling e stack Docker local.
+2. **Base de API**: invalidação versionada de cache, lookup global, paginação,
+   auditoria comum e convenções de modelos.
+3. **DevEx e CI**: pre-commit, Ruff, GitHub Actions, segurança automatizada,
+   cobertura, factories, Makefile e templates do GitHub.
+4. **Documentação e release**: SemVer, Conventional Commits, changelog, MkDocs,
+   Diátaxis, ADRs e convenções explícitas.
+5. **Multi-tenancy**: organização, time, vínculo, convite, APIs tenant-aware e
+   isolamento por RLS.
+6. **Observabilidade**: logs JSON, request ID, Sentry, PostHog, feature flags,
+   health checks, métricas, traces e dashboards.
+7. **Autenticação e autorização — núcleo do Batch 5**: token swappable,
+   sessões, step-up auth, API keys por organização, scopes, delegação,
+   permissions por papel e erros estruturados.
+8. **Dados sensíveis**: field-level encryption com keyring, integração DRF,
+   exclusão automática de auditoria e rotação em lote.
 
-> Próximas ondas sugeridas: **Batch 3 (DevEx/CI)** → **Batch 4 (Docs & convenções)**
-> → **Batch 5 (Auth & permissões)** → **Batch 6 (Multi-tenancy)** → demais.
+## Próximas entregas prioritárias
+
+1. Fechar o **Batch 5**: cache de permissions, MFA/2FA + HaveIBeenPwned,
+   field-level permissions e ciclo de vida de conta.
+2. Fazer o **reset integral das migrations** antes do lançamento e restaurar o
+   gate `makemigrations --check --dry-run`.
+3. Continuar o **Batch 8** com notificações, uploads, money/metadata,
+   idempotency keys e abstração de e-mail.

@@ -42,7 +42,7 @@ class Papel(models.IntegerChoices):
 
 
 class Organizacao(BaseGlobal):
-    owner = None
+    api_scope_resource = "organizations"
 
     nome = models.CharField(_("nome"), max_length=150)
     slug = models.SlugField(_("slug"), max_length=60)
@@ -65,6 +65,8 @@ class Organizacao(BaseGlobal):
 
 
 class Time(BaseGlobal):
+    api_scope_resource = "teams"
+
     organizacao = models.ForeignKey(
         Organizacao,
         verbose_name=_("organização"),
@@ -98,7 +100,7 @@ class Vinculo(BaseGlobal):
     ele próprio define).
     """
 
-    owner = None
+    api_scope_resource = "memberships"
 
     organizacao = models.ForeignKey(
         Organizacao,
@@ -139,7 +141,8 @@ class Vinculo(BaseGlobal):
 class Convite(BaseGlobal):
     """Convite para um e-mail entrar numa organização com um papel."""
 
-    owner = None
+    api_scope_resource = "invitations"
+    api_scope_custom_actions = {"accept": "can_accept_convite"}
 
     organizacao = models.ForeignKey(
         Organizacao,
@@ -210,6 +213,9 @@ class Convite(BaseGlobal):
     class Meta:
         db_table = "convite"
         ordering = ["-id"]
+        permissions = [
+            ("can_accept_convite", "Pode aceitar convite"),
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=["token"],

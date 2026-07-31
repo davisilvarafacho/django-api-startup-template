@@ -37,7 +37,7 @@ class UsuarioManager(UserManager.from_queryset(BaseQuerySet)):
 
 class Usuario(BaseGlobal, AbstractUser):
     username = None
-    owner = None
+    api_scope_resource = "users"
 
     extra_write_only_fields = ["password"]
 

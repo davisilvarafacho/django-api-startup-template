@@ -334,10 +334,8 @@ LOGGING = build_logging(CONFIG_ENVIRONMENT, LOG_LEVEL, LOGGING_ROOT)
 
 # base
 BASE_AUDITLOG_EXCLUDE_FIELDS = [
-    "data_ultima_alteracao",
-    "hora_ultima_alteracao",
-    "data_criacao",
-    "hora_criacao",
+    "created_at",
+    "last_modified_at",
 ]
 
 
@@ -373,6 +371,8 @@ REST_FRAMEWORK = {
         "apps.organizacoes.permissions.TenantPermission",
         "apps.api.autenticacao.permissions.TokenScopePermission",
         "apps.api.autenticacao.permissions.CustomDjangoModelPermissions",
+        # No-op sem `@require_recent_auth` declarado na view/action/método.
+        "apps.api.autenticacao.recent_auth.RecentAuthenticationPermission",
     ],
     "DEFAULT_FILTER_BACKENDS": [
         "rest_framework.filters.OrderingFilter",
@@ -386,10 +386,12 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "anon": "100/hour",
         "user": "1000/hour",
-        "auth": "10/min",
+        "auth_login": "10/min",
+        "auth_reauthenticate": "5/min",
     },
     "DEFAULT_VERSIONING_CLASS": "rest_framework.versioning.NamespaceVersioning",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "EXCEPTION_HANDLER": "apps.api.core.errors.api_exception_handler",
     "TEST_REQUEST_DEFAULT_FORMAT": "json",
     "DATE_INPUT_FORMATS": ["%d/%m/%Y"],
 }
@@ -409,7 +411,7 @@ SCALAR_THEME = "purple"
 
 
 # knox
-KNOX_TOKEN_MODEL = "knox.AuthToken"
+KNOX_TOKEN_MODEL = "autenticacao.AuthToken"
 
 REST_KNOX = {
     "AUTH_HEADER_PREFIX": "Bearer",

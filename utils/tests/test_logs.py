@@ -14,10 +14,8 @@ def test_register_exclui_campos_internos_e_cifrados_sem_mutar_argumento(audit_re
 
     assert supplied == ["manual"]
     assert audit_register.call_args.kwargs["exclude_fields"] == [
-        "data_ultima_alteracao",
-        "hora_ultima_alteracao",
-        "data_criacao",
-        "hora_criacao",
+        "created_at",
+        "last_modified_at",
         "is_deleted",
         "documento",
         "anotacoes",

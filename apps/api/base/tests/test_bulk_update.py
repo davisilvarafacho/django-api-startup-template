@@ -59,6 +59,7 @@ def test_bulk_update_atualiza_multiplos_registros():
 def test_bulk_update_exige_lista():
     response = _bulk_update({"id": 1, "first_name": "X"})
     assert response.status_code == 400
+    assert response.data["errors"][0]["code"] == "core.bad_request"
 
 
 @pytest.mark.django_db
@@ -66,12 +67,14 @@ def test_bulk_update_exige_id_em_cada_item():
     usuario = UsuarioFactory()
     response = _bulk_update([{"first_name": "SemId"}, {"id": usuario.id, "first_name": "Ok"}])
     assert response.status_code == 400
+    assert response.data["errors"][0]["code"] == "core.bad_request"
 
 
 @pytest.mark.django_db
 def test_bulk_update_registro_inexistente_retorna_404():
     response = _bulk_update([{"id": 999999, "first_name": "Fantasma"}])
     assert response.status_code == 404
+    assert response.data["errors"][0]["code"] == "core.not_found"
 
 
 @pytest.mark.django_db
@@ -86,6 +89,6 @@ def test_bulk_update_e_atomico_em_erro_de_validacao():
         ]
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 422
     usuario.refresh_from_db()
     assert usuario.first_name == "Preservado"

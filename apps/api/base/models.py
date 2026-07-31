@@ -87,7 +87,29 @@ class AtivosManager(BaseManager):
         return super().get_queryset().filter(is_active=True)
 
 
-class BaseGlobal(models.Model):
+class CreationAuditMixin(models.Model):
+    """Autoria e timestamps comuns a todo modelo de negócio.
+
+    Não existe `last_modified_by`: só a criação é atribuída a um usuário: quem
+    fez a última alteração vive no `AuditlogHistoryField`, não num FK aqui.
+    """
+
+    created_by = models.ForeignKey(
+        verbose_name=_("criado por"),
+        to=settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="+",
+        blank=True,
+        null=True,
+    )
+    created_at = models.DateTimeField(_("criado em"), auto_now_add=True)
+    last_modified_at = models.DateTimeField(_("última alteração em"), auto_now=True)
+
+    class Meta:
+        abstract = True
+
+
+class BaseGlobal(CreationAuditMixin):
     """Campos comuns **sem** isolamento por organização.
 
     Use somente nos modelos de identidade/bootstrap, que precisam ser lidos
@@ -98,12 +120,9 @@ class BaseGlobal(models.Model):
     is_active = models.BooleanField(_("ativo"), default=True)
     is_deleted = models.BooleanField(_("excluído"), default=False)
 
-    data_criacao = models.DateField(_("data de criação"), auto_now_add=True)
-    hora_criacao = models.TimeField(_("hora de criação"), auto_now_add=True)
-    data_ultima_alteracao = models.DateField(_("data da última alteração"), auto_now=True)
-    hora_ultima_alteracao = models.TimeField(_("hora da última alteração"), auto_now=True)
-
-    owner = models.ForeignKey(verbose_name=_("owner"), to=settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True)
+    # Interface pública e estável de scopes/permissions (`resource:action`).
+    # `None` significa que o model não é exposto pelo registry de scopes.
+    api_scope_resource = None
 
     objects = CustomManager()
     all_objects = AllObjectsManager()
@@ -112,18 +131,16 @@ class BaseGlobal(models.Model):
     history = AuditlogHistoryField()
 
     internal_fields = [
+        "last_modified_at",
         "is_deleted",
-        "data_ultima_alteracao",
-        "hora_ultima_alteracao",
     ]
     extra_internal_fields = []
 
     read_only_fields = [
         "is_active",
         "is_deleted",
-        "data_criacao",
-        "hora_criacao",
-        "owner",
+        "created_at",
+        "created_by",
     ]
     extra_read_only_fields = []
 
@@ -131,17 +148,17 @@ class BaseGlobal(models.Model):
 
     queryset_deferred_fields = []
 
-    clone_reset_fields = ("data_criacao", "hora_criacao", "data_ultima_alteracao", "hora_ultima_alteracao")
+    clone_reset_fields = ("created_at", "last_modified_at")
     extra_clone_reset_fields = []
 
     def save(self, *args, **kwargs):
-        # setando o owner automaticamente
+        # setando o created_by automaticamente
         model_fields = self.get_fields()
-        if "owner" in model_fields:
-            if self.pk is None and self.owner is None:
+        if "created_by" in model_fields:
+            if self.pk is None and self.created_by is None:
                 current_user = get_current_user()
                 if current_user and current_user.is_authenticated:
-                    self.owner = current_user
+                    self.created_by = current_user
 
         return super().save(*args, **kwargs)
 
@@ -174,7 +191,7 @@ class BaseGlobal(models.Model):
         for chave, valor in fields.items():
             setattr(clone, chave, valor)
 
-        clone.owner = get_current_user()
+        clone.created_by = get_current_user()
 
         clone.modify_before_cloning()
 
