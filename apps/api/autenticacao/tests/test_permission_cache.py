@@ -108,6 +108,21 @@ def test_async_methods_use_same_semantic_snapshot_without_l1_attributes():
     assert not hasattr(user, "_group_perm_cache")
 
 
+def test_async_permission_checks_delegate_to_sync_overrides():
+    class CustomBackend(CachedModelBackend):
+        def has_perm(self, user_obj, perm, obj=None):
+            return perm == "custom.allowed"
+
+        def has_module_perms(self, user_obj, app_label):
+            return app_label == "custom"
+
+    backend = CustomBackend()
+    anonymous = AnonymousUser()
+
+    assert async_to_sync(backend.ahas_perm)(anonymous, "custom.allowed") is True
+    assert async_to_sync(backend.ahas_module_perms)(anonymous, "custom") is True
+
+
 def test_has_perms_and_module_permissions_use_cached_backend():
     user = UsuarioFactory()
     user.user_permissions.add(permission("add_organizacao"), permission("view_organizacao"))
@@ -192,6 +207,26 @@ def test_malformed_permission_payload_is_ignored_and_reloaded():
     )
 
     assert CachedModelBackend().get_all_permissions(user) == {"organizacoes.view_organizacao"}
+
+
+def test_malformed_permission_item_is_reloaded_before_module_check():
+    user = UsuarioFactory()
+    user.user_permissions.add(permission("view_organizacao"))
+    cache = caches["permissions"]
+    scopes = (global_scope(), layer_scope("django"), user_scope("django", user.pk))
+    epochs = EpochStore(cache_backend=cache).read(scopes, "default")
+    key = snapshot_key("django", "default", ("user", user.pk), epochs)
+    cache.set(
+        key,
+        encode_envelope(
+            {
+                "user_permissions": ["corrompido"],
+                "group_permissions": [],
+            }
+        ),
+    )
+
+    assert CachedModelBackend().has_module_perms(user, "organizacoes") is True
 
 
 def test_database_alias_is_part_of_snapshot_identity():

@@ -34,11 +34,10 @@ class CachedModelBackend(ModelBackend):
         return user_obj.is_active and perm in self.get_all_permissions(user_obj, obj=obj)
 
     async def ahas_perm(self, user_obj, perm, obj=None):
-        return user_obj.is_active and perm in await self.aget_all_permissions(user_obj, obj=obj)
+        return await sync_to_async(self.has_perm, thread_sensitive=True)(user_obj, perm, obj=obj)
 
     def has_module_perms(self, user_obj, app_label):
         return user_obj.is_active and any(permission[: permission.index(".")] == app_label for permission in self.get_all_permissions(user_obj))
 
     async def ahas_module_perms(self, user_obj, app_label):
-        permissions = await self.aget_all_permissions(user_obj)
-        return user_obj.is_active and any(permission[: permission.index(".")] == app_label for permission in permissions)
+        return await sync_to_async(self.has_module_perms, thread_sensitive=True)(user_obj, app_label)

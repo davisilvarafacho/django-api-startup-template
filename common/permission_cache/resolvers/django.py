@@ -64,6 +64,13 @@ class DjangoPermissionResolver:
 
     @staticmethod
     def _decode_permissions(value: object) -> frozenset[str]:
-        if not isinstance(value, list) or not all(isinstance(permission, str) for permission in value):
+        if not isinstance(value, list) or not all(DjangoPermissionResolver._is_permission_name(permission) for permission in value):
             raise TypeError("Lista de permissões inválida no cache de autorização.")
         return frozenset(value)
+
+    @staticmethod
+    def _is_permission_name(permission: object) -> bool:
+        if not isinstance(permission, str):
+            return False
+        parts = permission.split(".")
+        return len(parts) == 2 and all(parts)
