@@ -1,4 +1,6 @@
+import contextvars
 from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest.mock import call, patch
 
 from django.apps import apps
@@ -10,6 +12,7 @@ from django.db.models.signals import post_migrate
 import pytest
 
 from apps.usuarios.factories import UsuarioFactory
+from common.permission_cache.signals.django import _affected_user_ids, _capture_reverse_clear_user_ids
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -119,6 +122,34 @@ def test_reverse_group_clear_captures_users_in_pre_clear():
             tuple(sorted(user.pk for user in users)),
             ("django", "guardian"),
         )
+
+
+def test_reverse_clear_isolated_between_execution_contexts():
+    class FakeUserSet:
+        def __init__(self, user_ids):
+            self.user_ids = user_ids
+
+        def using(self, alias):
+            return self
+
+        def values_list(self, field, flat):
+            assert field == "pk"
+            assert flat is True
+            return self.user_ids
+
+    instance_a = SimpleNamespace(pk=7, user_set=FakeUserSet(("user-a",)))
+    instance_b = SimpleNamespace(pk=7, user_set=FakeUserSet(("user-b",)))
+    context_a = contextvars.Context()
+    context_b = contextvars.Context()
+
+    context_a.run(_capture_reverse_clear_user_ids, Group, instance_a, "pre_clear", True, "default")
+    context_b.run(_capture_reverse_clear_user_ids, Group, instance_b, "pre_clear", True, "default")
+
+    affected_a = context_a.run(_affected_user_ids, Group, instance_a, "post_clear", True, None, "default")
+    affected_b = context_b.run(_affected_user_ids, Group, instance_b, "post_clear", True, None, "default")
+
+    assert affected_a == ("user-a",)
+    assert affected_b == ("user-b",)
 
 
 def test_group_permission_change_bumps_django_global():

@@ -1,4 +1,5 @@
 from collections.abc import Iterable
+from contextvars import ContextVar
 from typing import Any
 
 from django.apps import apps
@@ -11,7 +12,10 @@ from apps.usuarios.models import Usuario
 from common.permission_cache.invalidation import schedule_epoch_bumps
 from common.permission_cache.keys import layer_scope, user_scope
 
-_CLEAR_USER_IDS: dict[tuple[type[Any], object, str], tuple[object, ...]] = {}
+_CLEAR_USER_IDS: ContextVar[dict[tuple[type[Any], object, str], tuple[object, ...]] | None] = ContextVar(
+    "permission_cache_clear_user_ids",
+    default=None,
+)
 _PREVIOUS_AUTH_FLAGS_ATTRIBUTE = "_permission_cache_previous_auth_flags"
 _POST_ACTIONS = {"post_add", "post_remove", "post_clear"}
 
@@ -48,14 +52,19 @@ def _schedule_global_layers(using: str, layers: tuple[str, ...] = ("django", "gu
 def _capture_reverse_clear_user_ids(sender, instance, action, reverse, using, **kwargs) -> None:
     if action != "pre_clear" or not reverse:
         return
-    _CLEAR_USER_IDS[_clear_key(sender, instance, using)] = _ordered_ids(instance.user_set.using(using).values_list("pk", flat=True))
+    state = dict(_CLEAR_USER_IDS.get() or {})
+    state[_clear_key(sender, instance, using)] = _ordered_ids(instance.user_set.using(using).values_list("pk", flat=True))
+    _CLEAR_USER_IDS.set(state)
 
 
 def _affected_user_ids(sender, instance, action, reverse, pk_set, using) -> tuple[object, ...]:
     if not reverse:
         return (instance.pk,)
     if action == "post_clear":
-        return _CLEAR_USER_IDS.pop(_clear_key(sender, instance, using), ())
+        state = dict(_CLEAR_USER_IDS.get() or {})
+        affected_user_ids = state.pop(_clear_key(sender, instance, using), ())
+        _CLEAR_USER_IDS.set(state or None)
+        return affected_user_ids
     return _ordered_ids(pk_set or ())
 
 
