@@ -35,7 +35,7 @@ def segundos_ate_o_desbloqueio(request: HttpRequest, credentials: dict | None) -
         Segundos restantes, com piso de 1. Devolve o cooloff completo se não
         houver tentativa registrada, que é o valor conservador.
     """
-    cooloff = get_cool_off()
+    cooloff = get_cool_off(request)
     if cooloff is None:
         return 0
 

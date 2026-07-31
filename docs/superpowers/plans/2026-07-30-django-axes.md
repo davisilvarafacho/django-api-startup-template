@@ -74,8 +74,8 @@ outras 18 migrações do app; passou a depender de `0019_alter_periodictasks_opt
 
 - **Task 1** — resolvido nesta retomada: `get_client_ip` agora ignora o primeiro
   elemento vazio de `X-Forwarded-For` (ex.: `", 1.2.3.4"`) e cai no `REMOTE_ADDR`.
-- **Task 3** — `get_cool_off()` é chamado sem `request` em `handlers.py`. Inócuo enquanto
-  `AXES_COOLOFF_TIME` for um `timedelta` estático; divergiria se virasse callable.
+- **Task 3** — resolvido nesta retomada: `get_cool_off(request)` agora recebe a
+  request bloqueada, inclusive quando `AXES_COOLOFF_TIME` é callable.
 - **Task 3** — o cálculo do prazo restante pega a linha mais recente por OR entre combos,
   enquanto o axes decide por combo. Divergência teórica, só apareceria se
   `AXES_LOCKOUT_PARAMETERS` ganhasse múltiplos combos.
