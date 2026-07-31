@@ -69,6 +69,8 @@ jobs:
       DATABASE_PORT: 5432
       REDIS_HOST: 127.0.0.1
       REDIS_PORT: 6379
+      AUTHORIZATION_REDIS_URL: redis://127.0.0.1:6379/4
+      AUTHORIZATION_CACHE_KEY_PREFIX: authz:v1:ci
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v7
