@@ -1,4 +1,5 @@
 """Handlers do app de autenticação."""
+
 from django.http import HttpRequest, JsonResponse
 from django.utils import timezone
 
@@ -55,11 +56,11 @@ def segundos_ate_o_desbloqueio(request: HttpRequest, credentials: dict | None) -
         if falhas < limite:
             continue
 
-        tentativa = tentativas.order_by("-attempt_time").first()
-        if tentativa is None:
+        attempt_time = tentativas.order_by("-attempt_time").values_list("attempt_time", flat=True).first()
+        if attempt_time is None:
             continue
 
-        restante = (tentativa.attempt_time + cooloff) - timezone.now()
+        restante = (attempt_time + cooloff) - timezone.now()
         prazos.append(max(1, int(restante.total_seconds())))
 
     if not prazos:

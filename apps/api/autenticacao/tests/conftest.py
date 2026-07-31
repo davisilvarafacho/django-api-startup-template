@@ -1,8 +1,9 @@
 """Fixtures compartilhadas dos testes de autenticação."""
+
 from rest_framework.test import APIClient
-from threadlocals.threadlocals import set_current_user, set_thread_variable
 
 import pytest
+from threadlocals.threadlocals import set_current_user, set_thread_variable
 
 
 @pytest.fixture
@@ -21,6 +22,7 @@ def ambiente_axes(settings):
 @pytest.fixture
 def tentar_login(ambiente_axes):
     """Envia uma tentativa de login pelo endpoint real."""
+
     def _tentar(email, senha, ip="203.0.113.10"):
         return APIClient().post(
             "/auth/login/",
@@ -35,6 +37,7 @@ def tentar_login(ambiente_axes):
 @pytest.fixture
 def esgotar_tentativas(tentar_login, settings):
     """Repete falhas até atingir o limite configurado."""
+
     def _esgotar(email, ip="203.0.113.10"):
         for _ in range(settings.AXES_FAILURE_LIMIT):
             tentar_login(email, "senha-errada", ip=ip)
@@ -45,6 +48,7 @@ def esgotar_tentativas(tentar_login, settings):
 @pytest.fixture
 def bloquear(tentar_login, settings):
     """Erra a senha até o bloqueio disparar e devolve a última resposta."""
+
     def _bloquear(email, ip="203.0.113.10"):
         resposta = None
         for _ in range(settings.AXES_FAILURE_LIMIT):

@@ -1,7 +1,10 @@
 """Testes da resposta de bloqueio devolvida ao cliente."""
+
 from datetime import timedelta
 
+from django.db import connection
 from django.test import RequestFactory
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from rest_framework import status
@@ -66,6 +69,34 @@ def test_prazo_usa_o_combo_que_atingiu_o_limite(settings, ambiente_axes):
     segundos = segundos_ate_o_desbloqueio(request, {"username": "usuario@example.com"})
 
     assert 1600 <= segundos <= 1690
+
+
+def test_prazo_busca_apenas_attempt_time_da_tentativa(settings, ambiente_axes):
+    agora = timezone.now()
+    request = RequestFactory().post(
+        URL_LOGIN,
+        {"username": "usuario@example.com"},
+        REMOTE_ADDR="203.0.113.10",
+    )
+    tentativa = AccessAttempt.objects.create(
+        username="usuario@example.com",
+        ip_address="203.0.113.10",
+        user_agent="",
+        failures_since_start=settings.AXES_FAILURE_LIMIT,
+        http_accept="",
+        path_info=URL_LOGIN,
+        get_data="",
+        post_data="",
+    )
+    AccessAttempt.objects.filter(pk=tentativa.pk).update(attempt_time=agora - timedelta(seconds=120))
+
+    with CaptureQueriesContext(connection) as consultas:
+        segundos_ate_o_desbloqueio(request, {"username": "usuario@example.com"})
+
+    consulta_ordenada = next(consulta["sql"] for consulta in consultas.captured_queries if "ORDER BY" in consulta["sql"])
+    colunas = consulta_ordenada.split(" FROM ")[0]
+    assert '"attempt_time"' in colunas
+    assert '"post_data"' not in colunas
 
 
 def test_bloqueio_responde_json_no_formato_do_projeto(bloquear):

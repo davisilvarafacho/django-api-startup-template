@@ -158,9 +158,6 @@ MIDDLEWARE = [
     # Resolve o token antes dos middlewares que dependem de `request.user`
     # (auditlog, PostHog, tenancy). Precisa vir depois do ThreadLocalMiddleware.
     "apps.api.autenticacao.middleware.AuthenticationMiddleware",
-    # Troca a resposta por 429 na volta da request quando o bloqueio dispara.
-    # Precisa vir depois da autenticação, que é quem popula `axes_locked_out`.
-    "axes.middleware.AxesMiddleware",
     "auditlog.middleware.AuditlogMiddleware",
     "posthog.integrations.django.PosthogContextMiddleware",
     # Deve ser o mais interno possível: abre a transação que envolve a request
@@ -169,7 +166,11 @@ MIDDLEWARE = [
     "waffle.middleware.WaffleMiddleware",
     # Par do PrometheusBeforeMiddleware; fecha a medição da request.
     "django_prometheus.middleware.PrometheusAfterMiddleware",
-] + ENV_MIDDLEWARES
+] + ENV_MIDDLEWARES + [
+    # Troca a resposta por 429 na volta da request quando o bloqueio dispara.
+    # Fica por último para que todos os demais middlewares vejam a resposta final.
+    "axes.middleware.AxesMiddleware",
+]
 
 
 ROOT_URLCONF = "api.urls"

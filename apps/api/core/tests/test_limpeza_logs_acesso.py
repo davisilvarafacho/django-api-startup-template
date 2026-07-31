@@ -1,4 +1,5 @@
 """Testes do expurgo periódico dos logs de acesso do django-axes."""
+
 from datetime import timedelta
 from importlib import import_module
 
@@ -27,9 +28,7 @@ def criar_log(dias_atras):
         path_info="/auth/login/",
     )
     # `attempt_time` é `auto_now_add`, então precisa ser reescrito na marra.
-    AccessLog.objects.filter(pk=log.pk).update(
-        attempt_time=timezone.now() - timedelta(days=dias_atras)
-    )
+    AccessLog.objects.filter(pk=log.pk).update(attempt_time=timezone.now() - timedelta(days=dias_atras))
     return log
 
 
@@ -51,9 +50,7 @@ def test_devolve_a_quantidade_removida():
 
 
 def test_a_tarefa_periodica_fica_agendada():
-    tarefa = PeriodicTask.objects.get(
-        task="apps.api.core.tasks.limpar_logs_de_acesso_antigos"
-    )
+    tarefa = PeriodicTask.objects.get(task="apps.api.core.tasks.limpar_logs_de_acesso_antigos")
 
     assert tarefa.enabled
     assert tarefa.crontab.hour == "3"
@@ -90,7 +87,7 @@ def test_agendamento_por_nome_unico_remove_duplicatas_legadas():
     assert tarefa.crontab.hour == "3"
 
 
-def test_rollback_remove_schedule_exclusivo_e_preserva_schedule_compartilhado():
+def test_rollback_preserva_schedules_exclusivos_e_compartilhados():
     exclusivo = CrontabSchedule.objects.create(
         minute="15",
         hour="4",
@@ -112,7 +109,7 @@ def test_rollback_remove_schedule_exclusivo_e_preserva_schedule_compartilhado():
     desagendar(django_apps, None)
 
     assert not PeriodicTask.objects.filter(task="apps.api.core.tasks.limpar_logs_de_acesso_antigos").exists()
-    assert not CrontabSchedule.objects.filter(pk=exclusivo.pk).exists()
+    assert CrontabSchedule.objects.filter(pk=exclusivo.pk).exists()
     assert CrontabSchedule.objects.filter(pk=compartilhado.pk).exists()
 
     agenda, _ = CrontabSchedule.objects.get_or_create(
@@ -128,3 +125,19 @@ def test_rollback_remove_schedule_exclusivo_e_preserva_schedule_compartilhado():
         crontab=agenda,
         enabled=True,
     )
+
+
+def test_rollback_preserva_schedule_preexistente_reutilizado():
+    PeriodicTask.objects.filter(task="apps.api.core.tasks.limpar_logs_de_acesso_antigos").delete()
+    agenda, _ = CrontabSchedule.objects.get_or_create(
+        minute="0",
+        hour="3",
+        day_of_week="*",
+        day_of_month="*",
+        month_of_year="*",
+    )
+
+    agendar(django_apps, None)
+    desagendar(django_apps, None)
+
+    assert CrontabSchedule.objects.filter(pk=agenda.pk).exists()

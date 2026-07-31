@@ -30,15 +30,8 @@ def agendar(apps, schema_editor):
 
 
 def desagendar(apps, schema_editor):
-    CrontabSchedule = apps.get_model("django_celery_beat", "CrontabSchedule")
     PeriodicTask = apps.get_model("django_celery_beat", "PeriodicTask")
-    tarefas = PeriodicTask.objects.filter(task=TAREFA)
-    agendas = list(tarefas.values_list("crontab_id", flat=True))
-    tarefas.delete()
-
-    for agenda_id in agendas:
-        if agenda_id and not PeriodicTask.objects.filter(crontab_id=agenda_id).exists():
-            CrontabSchedule.objects.filter(pk=agenda_id).delete()
+    PeriodicTask.objects.filter(task=TAREFA).delete()
 
 
 class Migration(migrations.Migration):
