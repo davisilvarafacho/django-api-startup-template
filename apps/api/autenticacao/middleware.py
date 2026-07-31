@@ -86,7 +86,7 @@ class AuthenticationMiddleware:
 
         user, auth_token = result
 
-        if auth_token.type == TokenType.PRE_AUTH and not request.path_info.startswith("/auth/mfa/challenge/"):
+        if getattr(auth_token, "type", None) == TokenType.PRE_AUTH and not request.path_info.startswith("/auth/mfa/challenge/"):
             return JsonResponse(
                 {"code": AuthErrorCode.INVALID_TOKEN.value, "message": "Pré-autenticação não permite acesso a esta rota."},
                 status=status.HTTP_401_UNAUTHORIZED,

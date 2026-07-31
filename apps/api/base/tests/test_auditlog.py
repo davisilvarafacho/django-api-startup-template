@@ -2,16 +2,25 @@ from django.conf import settings
 
 from auditlog.registry import auditlog
 
-from apps.api.autenticacao.models import TokenMetaData
+from apps.api.autenticacao.models import MFAChallenge, MFAFactor, MFARecoveryCode, TokenMetaData, TrustedDevice
 from apps.organizacoes.models import Convite, Organizacao, Time, Vinculo
 from apps.usuarios.models import Usuario
 
 
 def test_registra_todos_os_modelos_concretos_dos_apps():
-    modelos_esperados = {Usuario, Organizacao, Time, Vinculo, Convite, TokenMetaData}
-    modelos_internos_registrados = {
-        model for model in auditlog.get_models() if model.__module__.startswith("apps.")
+    modelos_esperados = {
+        Usuario,
+        Organizacao,
+        Time,
+        Vinculo,
+        Convite,
+        TokenMetaData,
+        MFAFactor,
+        MFAChallenge,
+        MFARecoveryCode,
+        TrustedDevice,
     }
+    modelos_internos_registrados = {model for model in auditlog.get_models() if model.__module__.startswith("apps.")}
 
     assert modelos_internos_registrados == modelos_esperados
 
@@ -29,6 +38,11 @@ def test_exclui_campos_tecnicos_e_credenciais_sem_mutar_a_configuracao_global():
         *campos_base,
         "password",
         "last_login",
+        "phone_number",
     }
     for model in (Organizacao, Time, Vinculo, Convite, TokenMetaData):
         assert auditlog.get_model_fields(model)["exclude_fields"] == campos_base
+    assert set(auditlog.get_model_fields(MFAFactor)["exclude_fields"]) == {*campos_base, "secret"}
+    assert set(auditlog.get_model_fields(MFAChallenge)["exclude_fields"]) == {*campos_base, "otp_digest"}
+    assert set(auditlog.get_model_fields(MFARecoveryCode)["exclude_fields"]) == {*campos_base, "digest"}
+    assert set(auditlog.get_model_fields(TrustedDevice)["exclude_fields"]) == {*campos_base, "digest"}
