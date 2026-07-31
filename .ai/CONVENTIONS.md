@@ -29,7 +29,6 @@ para comportar múltiplos arquivos de teste.
         docs.py
         filters.py
         handlers.py
-        dashboards.py
         /tests
             __init__.py
             test_*.py
