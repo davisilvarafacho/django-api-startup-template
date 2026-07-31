@@ -42,9 +42,8 @@ da branch: 191). Árvore limpa, nada pendente de commit.
 
 - **Task 6 — documentação.** Concluída: how-to, entrada no `nav` do `mkdocs.yml`,
   parágrafo no `CLAUDE.md` e registro dos desvios na spec.
-- **Task 7 — verificação final.** Suíte, migrations, documentação e `check` executados;
-  lint global ainda encontra dois `UP017` preexistentes e a verificação manual via
-  stack permanece pendente.
+- **Task 7 — verificação final.** Suíte, migrations, documentação, `check` e fluxo
+  manual executados; lint global ainda encontra dois `UP017` preexistentes.
 - **Revisão final da branch inteira** e a triagem dos Minor adiados listados abaixo.
 - **Atualizar a spec** (`docs/superpowers/specs/2026-07-30-django-axes-design.md`) com
   os dois desvios da Task 2, que ela ainda não reflete.
@@ -1085,7 +1084,7 @@ make check
 
 Esperado: sem novos avisos relativos ao axes.
 
-- [ ] **Step 3: Verificação manual do fluxo bloqueado**
+- [x] **Step 3: Verificação manual do fluxo bloqueado**
 
 ```bash
 make stack
