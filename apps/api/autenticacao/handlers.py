@@ -1,5 +1,4 @@
 """Handlers do app de autenticação."""
-from django.db.models import Q
 from django.http import HttpRequest, JsonResponse
 from django.utils import timezone
 
@@ -11,6 +10,7 @@ from axes.helpers import (
     get_client_user_agent,
     get_client_username,
     get_cool_off,
+    get_failure_limit,
 )
 from axes.models import AccessAttempt
 
@@ -47,16 +47,25 @@ def segundos_ate_o_desbloqueio(request: HttpRequest, credentials: dict | None) -
         credentials,
     )
 
-    consulta = Q()
+    limite = get_failure_limit(request, credentials)
+    prazos: list[int] = []
     for filtro in filtros:
-        consulta |= Q(**filtro)
+        tentativas = AccessAttempt.objects.filter(**filtro)
+        falhas = sum(tentativas.values_list("failures_since_start", flat=True))
+        if falhas < limite:
+            continue
 
-    tentativa = AccessAttempt.objects.filter(consulta).order_by("-attempt_time").first()
-    if tentativa is None:
+        tentativa = tentativas.order_by("-attempt_time").first()
+        if tentativa is None:
+            continue
+
+        restante = (tentativa.attempt_time + cooloff) - timezone.now()
+        prazos.append(max(1, int(restante.total_seconds())))
+
+    if not prazos:
         return int(cooloff.total_seconds())
 
-    restante = (tentativa.attempt_time + cooloff) - timezone.now()
-    return max(1, int(restante.total_seconds()))
+    return max(prazos)
 
 
 def resposta_de_bloqueio(request: HttpRequest, credentials: dict | None = None) -> JsonResponse:

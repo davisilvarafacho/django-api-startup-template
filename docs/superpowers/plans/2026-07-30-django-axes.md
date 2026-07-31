@@ -76,9 +76,8 @@ outras 18 migrações do app; passou a depender de `0019_alter_periodictasks_opt
   elemento vazio de `X-Forwarded-For` (ex.: `", 1.2.3.4"`) e cai no `REMOTE_ADDR`.
 - **Task 3** — resolvido nesta retomada: `get_cool_off(request)` agora recebe a
   request bloqueada, inclusive quando `AXES_COOLOFF_TIME` é callable.
-- **Task 3** — o cálculo do prazo restante pega a linha mais recente por OR entre combos,
-  enquanto o axes decide por combo. Divergência teórica, só apareceria se
-  `AXES_LOCKOUT_PARAMETERS` ganhasse múltiplos combos.
+- **Task 3** — resolvido nesta retomada: o prazo agora é calculado por combo e
+  considera o maior prazo entre os combos que efetivamente atingiram o limite.
 - **Task 3** — `test_bloqueio_nao_revela_o_prazo_no_corpo` é quase tautológico, porque a
   mensagem é constante sem interpolação.
 - **Tasks 2-4** — a fixture `ambiente_axes` e os helpers de POST em `/auth/login/` estão
