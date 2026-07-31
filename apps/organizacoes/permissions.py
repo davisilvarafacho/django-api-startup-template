@@ -5,6 +5,7 @@ Está em `DEFAULT_PERMISSION_CLASSES`, então **toda** rota exige um
 app lista suas exceções em `public_routes.py` (rotas sem token) ou
 `tenant_free_routes.py` (rotas com token, sem organização).
 """
+
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import BasePermission
 
@@ -12,15 +13,16 @@ from apps.api.core.route_markers import MARCADOR_SEM_TENANCY, tem_marcador
 from apps.api.core.routes_registry import routes_registry
 from apps.organizacoes.constants import HEADER_ORGANIZACAO
 from apps.organizacoes.context import definir_organizacao_atual
-from apps.organizacoes.models import Papel, Vinculo
+from apps.organizacoes.models import Papel
 from apps.organizacoes.routes import tenant_free_registry
+from common.permission_cache.resolvers.tenant import TenantAccessResolver
 
 
 class TenantPermission(BasePermission):
     """Resolve a organização da request e aplica o contexto de RLS.
 
     Aplica `SET LOCAL` dentro da transação aberta pelo `OrganizacaoMiddleware` e
-    expõe `request.organizacao` e `request.vinculo` para as views.
+    expõe `request.tenant` para as views.
     """
 
     message = "Usuário sem vínculo ativo nesta organização."
@@ -43,19 +45,14 @@ class TenantPermission(BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
 
-        vinculo = (
-            Vinculo.objects.select_related("organizacao")
-            .filter(organizacao__slug=slug, usuario=request.user, ativo=True)
-            .first()
-        )
+        tenant = TenantAccessResolver().by_slug(request.user.pk, slug)
 
-        if vinculo is None:
+        if tenant is None:
             raise PermissionDenied(self.message)
 
-        request.organizacao = vinculo.organizacao
-        request.vinculo = vinculo
+        request.tenant = tenant
 
-        definir_organizacao_atual(vinculo.organizacao_id)
+        definir_organizacao_atual(tenant.organization_id)
 
         return True
 
@@ -66,12 +63,12 @@ class PapelMinimoPermission(BasePermission):
     message = "Papel insuficiente nesta organização."
 
     def has_permission(self, request, view):
-        vinculo = getattr(request, "vinculo", None)
-        if vinculo is None:
+        tenant = getattr(request, "tenant", None)
+        if tenant is None:
             return False
 
         papel_minimo = self.get_papel_minimo(view)
-        return vinculo.tem_papel_minimo(papel_minimo)
+        return tenant.has_minimum_role(papel_minimo)
 
     def get_papel_minimo(self, view):
         papeis_por_action = getattr(view, "papeis_por_action", {})

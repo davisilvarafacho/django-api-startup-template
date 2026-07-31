@@ -65,13 +65,13 @@ class VinculoSerializer(serializers.ModelSerializer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         request = self.context.get("request")
-        organizacao = getattr(request, "organizacao", None)
-        if organizacao is not None:
-            self.fields["times"].queryset = Time.objects.filter(organizacao=organizacao, ativo=True)
+        tenant = getattr(request, "tenant", None)
+        if tenant is not None:
+            self.fields["times"].queryset = Time.objects.filter(organizacao_id=tenant.organization_id, ativo=True)
 
     def validate_papel(self, papel):
         request = self.context["request"]
-        if papel > request.vinculo.papel:
+        if papel > request.tenant.role:
             raise serializers.ValidationError(_("Você não pode conceder um papel acima do seu."))
         return papel
 
@@ -104,7 +104,7 @@ class ConviteCreateSerializer(ConviteSerializer):
 
     def validate_papel(self, papel):
         request = self.context["request"]
-        if papel > request.vinculo.papel:
+        if papel > request.tenant.role:
             raise serializers.ValidationError(_("Você não pode convidar alguém para um papel acima do seu."))
         return papel
 

@@ -48,8 +48,8 @@ class TenantViewSetMixin:
     permission_classes = [IsAuthenticated, TenantPermission, TokenScopePermission, PapelMinimoPermission]
     papel_minimo = Papel.VISUALIZADOR
 
-    def get_organizacao(self):
-        return self.request.organizacao
+    def get_organizacao_id(self):
+        return self.request.tenant.organization_id
 
 
 class TimeViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
@@ -73,10 +73,10 @@ class TimeViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
     }
 
     def get_queryset(self):
-        return super().get_queryset().filter(organizacao=self.get_organizacao(), ativo=True).order_by("nome")
+        return super().get_queryset().filter(organizacao_id=self.get_organizacao_id(), ativo=True).order_by("nome")
 
     def perform_create(self, serializer):
-        serializer.save(organizacao=self.get_organizacao())
+        serializer.save(organizacao_id=self.get_organizacao_id())
 
 
 class VinculoViewSet(
@@ -105,7 +105,7 @@ class VinculoViewSet(
     }
 
     def get_queryset(self):
-        return super().get_queryset().filter(organizacao=self.get_organizacao(), ativo=True).order_by("usuario__email")
+        return super().get_queryset().filter(organizacao_id=self.get_organizacao_id(), ativo=True).order_by("usuario__email")
 
     def perform_destroy(self, instance):
         instance.ativo = False
@@ -139,7 +139,7 @@ class ConviteViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
         return super().get_permissions()
 
     def get_queryset(self):
-        return super().get_queryset().filter(organizacao=self.get_organizacao(), ativo=True).order_by("-id")
+        return super().get_queryset().filter(organizacao_id=self.get_organizacao_id(), ativo=True).order_by("-id")
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -149,7 +149,7 @@ class ConviteViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
         return super().get_serializer_class()
 
     def perform_create(self, serializer):
-        serializer.save(organizacao=self.get_organizacao(), convidado_por=self.request.user)
+        serializer.save(organizacao_id=self.get_organizacao_id(), convidado_por=self.request.user)
 
     def perform_destroy(self, instance):
         instance.ativo = False
