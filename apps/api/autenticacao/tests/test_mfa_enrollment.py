@@ -8,7 +8,7 @@ from rest_framework import status
 import pyotp
 import pytest
 
-from apps.api.autenticacao.mfa import _otp_digest, confirm_enrollment, start_enrollment
+from apps.api.autenticacao.mfa import _otp_digest, confirm_enrollment, consume_totp, start_enrollment
 from apps.api.autenticacao.mfa_backends import InMemorySMSBackend
 from apps.api.autenticacao.models import (
     MFAChallenge,
@@ -59,6 +59,16 @@ def test_backend_sms_em_memoria_retem_entrega_para_testes():
     InMemorySMSBackend().send_otp(destination="+5511999999999", code="123456", context="enrollment")
 
     assert InMemorySMSBackend.sent_messages == [{"destination": "+5511999999999", "code": "123456", "context": "enrollment"}]
+
+
+@pytest.mark.django_db
+def test_totp_rejeita_reuso_do_mesmo_contador(usuario):
+    now = timezone.now().replace(microsecond=0)
+    factor = MFAFactor.objects.create(user=usuario, type=MFAFactorType.TOTP, secret=pyotp.random_base32())
+    code = pyotp.TOTP(factor.secret).at(now)
+
+    assert consume_totp(factor, code, now=now) is True
+    assert consume_totp(factor, code, now=now) is False
 
 
 @pytest.mark.django_db

@@ -2,7 +2,7 @@ import pyotp
 import pytest
 
 from apps.api.autenticacao.mfa import confirm_enrollment, start_enrollment
-from apps.api.autenticacao.models import AuthToken, MFAFactorType, TokenType
+from apps.api.autenticacao.models import AuthToken, MFAFactor, MFAFactorType, TokenType
 
 
 @pytest.mark.django_db
@@ -10,6 +10,7 @@ def test_login_com_totp_emite_pre_auth_e_conclui(api_client, usuario, monkeypatc
     monkeypatch.setattr("apps.api.autenticacao.views.posthog.tag", lambda *args, **kwargs: None)
     enrollment = start_enrollment(usuario, MFAFactorType.TOTP)
     confirm_enrollment(usuario, MFAFactorType.TOTP, pyotp.TOTP(enrollment.plain_secret).now())
+    MFAFactor.objects.filter(pk=enrollment.factor.pk).update(totp_last_counter=None)
 
     login = api_client.post("/auth/login/", {"email": usuario.email, "password": "Senha123!"})
 
@@ -29,6 +30,7 @@ def test_login_com_totp_emite_pre_auth_e_conclui(api_client, usuario, monkeypatc
 def test_pre_auth_nao_acessa_rota_normal(api_client, usuario):
     enrollment = start_enrollment(usuario, MFAFactorType.TOTP)
     confirm_enrollment(usuario, MFAFactorType.TOTP, pyotp.TOTP(enrollment.plain_secret).now())
+    MFAFactor.objects.filter(pk=enrollment.factor.pk).update(totp_last_counter=None)
     login = api_client.post("/auth/login/", {"email": usuario.email, "password": "Senha123!"})
     api_client.credentials(HTTP_AUTHORIZATION=f"PreAuth {login.data['pre_auth_token']}")
 

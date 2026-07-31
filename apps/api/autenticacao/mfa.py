@@ -62,6 +62,23 @@ def _trusted_digest(token: str) -> str:
     return salted_hmac("trusted-device", token, secret=settings.SECRET_KEY).hexdigest()
 
 
+def consume_totp(factor: MFAFactor, code: str, *, now=None) -> bool:
+    """Consome um contador TOTP novo, preservando uma janela de um período."""
+    if not factor.secret:
+        return False
+    now = now or timezone.now()
+    totp = pyotp.TOTP(factor.secret, digits=factor.totp_digits, interval=factor.totp_period)
+    current_counter = totp.timecode(now)
+    last_counter = factor.totp_last_counter if factor.totp_last_counter is not None else -1
+    for counter in range(max(0, current_counter - 1), current_counter + 2):
+        if counter > last_counter and hmac.compare_digest(totp.generate_otp(counter), code):
+            factor.totp_last_counter = counter
+            factor.last_used_at = now
+            factor.save(update_fields=["totp_last_counter", "last_used_at"])
+            return True
+    return False
+
+
 def schedule_otp_delivery(challenge: MFAChallenge) -> None:
     """Agenda a entrega somente depois que o desafio for persistido."""
     from .tasks import deliver_mfa_otp
@@ -128,7 +145,7 @@ def confirm_enrollment(user, factor_type: MFAFactorType, code: str) -> ConfirmRe
     """Confirma um fator e cria recovery codes somente no primeiro enrollment."""
     factor = MFAFactor.objects.select_for_update().get(user=user, type=factor_type)
     if factor_type == MFAFactorType.TOTP:
-        valid = bool(factor.secret) and pyotp.TOTP(factor.secret).verify(code, valid_window=1)
+        valid = consume_totp(factor, code)
     else:
         challenge = (
             MFAChallenge.objects.select_for_update()
@@ -256,11 +273,7 @@ def verify_login_challenge(pre_auth: AuthToken, code: str, factor_type: str, *, 
             .first()
         )
         if challenge and not challenge.is_expired and challenge.attempts < 5:
-            valid = (
-                bool(factor.secret) and pyotp.TOTP(factor.secret).verify(code, valid_window=1)
-                if factor.type == MFAFactorType.TOTP
-                else hmac.compare_digest(challenge.otp_digest, _otp_digest(code))
-            )
+            valid = consume_totp(factor, code) if factor.type == MFAFactorType.TOTP else hmac.compare_digest(challenge.otp_digest, _otp_digest(code))
             challenge.attempts += 1
             if valid:
                 challenge.consumed_at = timezone.now()
@@ -315,11 +328,7 @@ def verify_reauthentication(session: AuthToken, code: str, factor_type: str) -> 
             bool(challenge)
             and not challenge.is_expired
             and challenge.attempts < 5
-            and (
-                pyotp.TOTP(factor.secret).verify(code, valid_window=1)
-                if factor.type == MFAFactorType.TOTP
-                else hmac.compare_digest(challenge.otp_digest, _otp_digest(code))
-            )
+            and (consume_totp(factor, code) if factor.type == MFAFactorType.TOTP else hmac.compare_digest(challenge.otp_digest, _otp_digest(code)))
         )
         if challenge:
             challenge.attempts += 1

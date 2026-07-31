@@ -2,7 +2,7 @@ import pyotp
 import pytest
 
 from apps.api.autenticacao.mfa import confirm_enrollment, start_enrollment
-from apps.api.autenticacao.models import MFAFactorType, TokenType
+from apps.api.autenticacao.models import MFAFactor, MFAFactorType, TokenType
 from apps.api.autenticacao.services import issue_token
 
 
@@ -10,6 +10,7 @@ from apps.api.autenticacao.services import issue_token
 def test_reauth_com_mfa_so_atualiza_apos_segundo_fator(api_client, usuario):
     enrollment = start_enrollment(usuario, MFAFactorType.TOTP)
     confirm_enrollment(usuario, MFAFactorType.TOTP, pyotp.TOTP(enrollment.plain_secret).now())
+    MFAFactor.objects.filter(pk=enrollment.factor.pk).update(totp_last_counter=None)
     issued = issue_token(responsavel=usuario, token_type=TokenType.TOKEN, expiry=None, metadata_input={})
     api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {issued.plain_token}")
 
