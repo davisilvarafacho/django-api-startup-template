@@ -171,6 +171,7 @@ def confirm_enrollment(user, factor_type: MFAFactorType, code: str) -> ConfirmRe
     factor.enabled_at = factor.confirmed_at
     factor.disabled_at = None
     factor.save(update_fields=["confirmed_at", "enabled_at", "disabled_at"])
+    revoke_trusted_devices(user)
 
     if had_confirmed_factor:
         return ConfirmResult(factor=factor, recovery_codes=[])

@@ -1,6 +1,6 @@
 from django.contrib.auth.hashers import make_password
 from django.contrib.auth.models import AbstractUser, UserManager
-from django.db import models
+from django.db import models, transaction
 from django.utils.translation import gettext_lazy as _
 
 from apps.api.base.models import BaseGlobal
@@ -66,6 +66,21 @@ class Usuario(BaseGlobal, AbstractUser):
     REQUIRED_FIELDS = ["first_name", "last_name"]
 
     objects = UsuarioManager()
+
+    def save(self, *args, **kwargs):
+        update_fields = kwargs.get("update_fields")
+        tracks_contact = update_fields is None or bool({"email", "phone_number"} & set(update_fields))
+        contact_changed = False
+        if self.pk and tracks_contact:
+            previous = type(self).objects.only("email", "phone_number").get(pk=self.pk)
+            contact_changed = previous.email != self.email or previous.phone_number != self.phone_number
+
+        result = super().save(*args, **kwargs)
+        if contact_changed:
+            from apps.api.autenticacao.mfa import revoke_trusted_devices
+
+            transaction.on_commit(lambda: revoke_trusted_devices(self))
+        return result
 
     def __str__(self) -> str:
         return self.get_full_name()
