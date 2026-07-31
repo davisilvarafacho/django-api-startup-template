@@ -89,6 +89,8 @@ common/
     ├── store.py
     ├── keys.py
     ├── epochs.py
+    ├── invalidation.py
+    ├── mutations.py
     ├── types.py
     ├── backends.py
     ├── metrics.py
@@ -201,7 +203,10 @@ memória.
 
 ### Guardian
 
-O snapshot será o conjunto resolvido de codenames para a combinação:
+O snapshot separará os codenames concedidos diretamente ao usuário daqueles
+herdados dos grupos. O conjunto resolvido será a união dos dois, preservando
+`get_group_permissions()` e `get_all_permissions()` sem consultas adicionais.
+Ele será identificado pela combinação:
 
 - deployment/key prefix;
 - database alias;
