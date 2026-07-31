@@ -3,10 +3,10 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from django.contrib.auth.models import Group, Permission
+from django.contrib.contenttypes.models import ContentType
 from django.db import DEFAULT_DB_ALIAS, models, transaction
 from django.db.models import QuerySet
 
-from guardian.ctypes import get_content_type
 from guardian.utils import get_group_obj_perms_model, get_user_obj_perms_model
 
 from apps.organizacoes.models import Vinculo
@@ -35,7 +35,7 @@ def _schedule_user_scopes(user_ids: Iterable[object], database_alias: str, layer
 
 
 def _schedule_guardian_objects(objects: list[models.Model], database_alias: str) -> None:
-    scopes = tuple(sorted({guardian_object_scope(get_content_type(obj).pk, str(obj.pk)) for obj in objects}))
+    scopes = tuple(sorted({guardian_object_scope(_guardian_content_type(obj, database_alias).pk, str(obj.pk)) for obj in objects}))
     if scopes:
         schedule_epoch_bumps(scopes, database_alias=database_alias, layer="guardian")
 
@@ -49,6 +49,96 @@ def _guardian_model(identity: Usuario | Group):
     if isinstance(identity, Group):
         return get_group_obj_perms_model()
     return get_user_obj_perms_model()
+
+
+def _guardian_content_type(obj: models.Model, database_alias: str) -> ContentType:
+    return ContentType.objects.db_manager(database_alias).get_for_model(obj)
+
+
+def _guardian_permission(perm: Permission | str, content_type: ContentType, database_alias: str) -> Permission:
+    codename = perm if isinstance(perm, str) else perm.codename
+    return Permission.objects.using(database_alias).get(content_type=content_type, codename=codename)
+
+
+def _object_permission_keys(manager, filters: dict[str, object], objects: list[models.Model], content_type: ContentType) -> set[str]:
+    object_keys = [str(obj.pk) for obj in objects]
+    if manager.is_generic():
+        rows = manager.filter(**filters, content_type_id=content_type.pk, object_pk__in=object_keys).values_list("object_pk", flat=True)
+    else:
+        rows = manager.filter(**filters, content_object_id__in=object_keys).values_list("content_object_id", flat=True)
+    return {str(object_pk) for object_pk in rows}
+
+
+def _effective_object_permission_keys(
+    manager,
+    permission: Permission,
+    identity: Usuario | Group,
+    objects: list[models.Model],
+    content_type: ContentType,
+    database_alias: str,
+) -> set[str]:
+    if isinstance(identity, Usuario):
+        if identity.is_superuser:
+            return {str(obj.pk) for obj in objects}
+        if not identity.is_active:
+            return set()
+        effective = _object_permission_keys(manager, {"permission_id": permission.pk, "user_id": identity.pk}, objects, content_type)
+        group_ids = identity.groups.using(database_alias).values_list("pk", flat=True)
+        group_manager = get_group_obj_perms_model().objects.db_manager(database_alias)
+        effective.update(
+            _object_permission_keys(
+                group_manager,
+                {"permission_id": permission.pk, "group_id__in": group_ids},
+                objects,
+                content_type,
+            )
+        )
+        return effective
+    return _object_permission_keys(manager, {"permission_id": permission.pk, "group_id": identity.pk}, objects, content_type)
+
+
+def _object_permission_row(manager, permission: Permission, identity: Usuario | Group, obj: models.Model, content_type: ContentType):
+    identity_field = manager.user_or_group_field
+    values = {"permission_id": permission.pk, f"{identity_field}_id": identity.pk}
+    if manager.is_generic():
+        values.update(content_type_id=content_type.pk, object_pk=obj.pk)
+    else:
+        values["content_object_id"] = obj.pk
+    return manager.model(**values)
+
+
+def _bulk_assign_guardian_permissions(
+    perm: Permission | str,
+    identity: Usuario | Group,
+    objects: list[models.Model],
+    database_alias: str,
+    *,
+    ignore_conflicts: bool,
+) -> list[models.Model]:
+    if not objects:
+        return []
+    manager = _guardian_model(identity).objects.db_manager(database_alias)
+    content_type = _guardian_content_type(objects[0], database_alias)
+    permission = _guardian_permission(perm, content_type, database_alias)
+    existing_keys = _effective_object_permission_keys(manager, permission, identity, objects, content_type, database_alias)
+    assigned = [_object_permission_row(manager, permission, identity, obj, content_type) for obj in objects if str(obj.pk) not in existing_keys]
+    manager.bulk_create(assigned, ignore_conflicts=ignore_conflicts)
+    return assigned
+
+
+def _assign_guardian_permission_to_many(
+    perm: Permission | str,
+    identities: list[Usuario | Group],
+    obj: models.Model,
+    database_alias: str,
+    *,
+    ignore_conflicts: bool,
+) -> list[models.Model]:
+    manager = _guardian_model(identities[0]).objects.db_manager(database_alias)
+    content_type = _guardian_content_type(obj, database_alias)
+    permission = _guardian_permission(perm, content_type, database_alias)
+    assigned = [_object_permission_row(manager, permission, identity, obj, content_type) for identity in identities]
+    return manager.bulk_create(assigned, ignore_conflicts=ignore_conflicts)
 
 
 def bulk_create_memberships(
@@ -108,9 +198,14 @@ def guardian_bulk_assign(
 ) -> list[models.Model]:
     object_list = list(objects)
     database_alias = _database_alias(object_list, user_or_group._state.db or DEFAULT_DB_ALIAS)
-    manager = _guardian_model(user_or_group).objects.db_manager(database_alias)
     with transaction.atomic(using=database_alias):
-        assigned = manager.bulk_assign_perm(perm, user_or_group, object_list, ignore_conflicts=ignore_conflicts)
+        assigned = _bulk_assign_guardian_permissions(
+            perm,
+            user_or_group,
+            object_list,
+            database_alias,
+            ignore_conflicts=ignore_conflicts,
+        )
         _schedule_guardian_objects(object_list, database_alias)
     return assigned
 
@@ -126,9 +221,14 @@ def guardian_assign_to_many(
     if not identities:
         return []
     database_alias = obj._state.db or DEFAULT_DB_ALIAS
-    manager = _guardian_model(identities[0]).objects.db_manager(database_alias)
     with transaction.atomic(using=database_alias):
-        assigned = manager.assign_perm_to_many(perm, identities, obj, ignore_conflicts=ignore_conflicts)
+        assigned = _assign_guardian_permission_to_many(
+            perm,
+            identities,
+            obj,
+            database_alias,
+            ignore_conflicts=ignore_conflicts,
+        )
         _schedule_guardian_objects([obj], database_alias)
     return assigned
 
