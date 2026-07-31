@@ -34,7 +34,14 @@ class LoginView(KnoxLoginView):
 
     def post(self, request):
         # valida credenciais
-        serializer = AuthTokenSerializer(data=request.data)
+        # O `context` é obrigatório: sem ele o `authenticate()` recebe
+        # `request=None` e o backend do axes levanta
+        # `AxesBackendRequestParameterRequired`, transformando o login em 500.
+        # Usa `request._request` (o `HttpRequest` bruto) em vez do `Request` do
+        # DRF: o `axes.middleware.AxesMiddleware` roda fora da view, sobre o
+        # `HttpRequest` original, e marca `axes_locked_out` como atributo no
+        # objeto que recebeu — só enxerga o bloqueio se for o mesmo objeto.
+        serializer = AuthTokenSerializer(data=request.data, context={"request": request._request})
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data['user']
 
