@@ -1,13 +1,17 @@
 """Testes do expurgo periódico dos logs de acesso do django-axes."""
 from datetime import timedelta
+from importlib import import_module
 
+from django.apps import apps as django_apps
 from django.utils import timezone
 
 import pytest
 from axes.models import AccessLog
-from django_celery_beat.models import PeriodicTask
+from django_celery_beat.models import CrontabSchedule, PeriodicTask
 
 from apps.api.core.tasks import limpar_logs_de_acesso_antigos
+
+desagendar = import_module("apps.api.core.migrations.0001_schedule_access_log_cleanup").desagendar
 
 pytestmark = pytest.mark.django_db
 
@@ -51,3 +55,43 @@ def test_a_tarefa_periodica_fica_agendada():
 
     assert tarefa.enabled
     assert tarefa.crontab.hour == "3"
+
+
+def test_rollback_remove_schedule_exclusivo_e_preserva_schedule_compartilhado():
+    exclusivo = CrontabSchedule.objects.create(
+        minute="15",
+        hour="4",
+        day_of_week="*",
+        day_of_month="*",
+        month_of_year="*",
+    )
+    compartilhado = CrontabSchedule.objects.create(
+        minute="45",
+        hour="5",
+        day_of_week="*",
+        day_of_month="*",
+        month_of_year="*",
+    )
+    PeriodicTask.objects.create(name="Tarefa alvo exclusiva", task="apps.api.core.tasks.limpar_logs_de_acesso_antigos", crontab=exclusivo)
+    PeriodicTask.objects.create(name="Tarefa alvo compartilhada", task="apps.api.core.tasks.limpar_logs_de_acesso_antigos", crontab=compartilhado)
+    PeriodicTask.objects.create(name="Outra tarefa", task="outra.tarefa", crontab=compartilhado)
+
+    desagendar(django_apps, None)
+
+    assert not PeriodicTask.objects.filter(task="apps.api.core.tasks.limpar_logs_de_acesso_antigos").exists()
+    assert not CrontabSchedule.objects.filter(pk=exclusivo.pk).exists()
+    assert CrontabSchedule.objects.filter(pk=compartilhado.pk).exists()
+
+    agenda, _ = CrontabSchedule.objects.get_or_create(
+        minute="0",
+        hour="3",
+        day_of_week="*",
+        day_of_month="*",
+        month_of_year="*",
+    )
+    PeriodicTask.objects.create(
+        name="Expurgar logs de acesso antigos",
+        task="apps.api.core.tasks.limpar_logs_de_acesso_antigos",
+        crontab=agenda,
+        enabled=True,
+    )
