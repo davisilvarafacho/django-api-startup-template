@@ -77,7 +77,9 @@ def get_client_ip(request: HttpRequest) -> str | None:
     if settings.BEHIND_PROXY:
         forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
         if forwarded_for:
-            return forwarded_for.split(",")[0].strip()
+            first_forwarded_for = forwarded_for.split(",", 1)[0].strip()
+            if first_forwarded_for:
+                return first_forwarded_for
 
     return request.META.get("REMOTE_ADDR")
 

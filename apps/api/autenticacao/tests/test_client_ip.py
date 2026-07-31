@@ -41,6 +41,16 @@ def test_descarta_espacos_e_usa_o_primeiro_elemento_da_lista(settings):
     assert get_client_ip(request) == "203.0.113.10"
 
 
+def test_cai_no_remote_addr_quando_o_primeiro_forwarded_for_esta_vazio(settings):
+    settings.BEHIND_PROXY = True
+    request = RequestFalsa(
+        HTTP_X_FORWARDED_FOR=", 203.0.113.10",
+        REMOTE_ADDR="172.18.0.5",
+    )
+
+    assert get_client_ip(request) == "172.18.0.5"
+
+
 def test_devolve_none_quando_nao_ha_origem_identificavel(settings):
     settings.BEHIND_PROXY = True
     request = RequestFalsa()
