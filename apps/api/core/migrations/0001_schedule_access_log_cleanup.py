@@ -31,7 +31,7 @@ def desagendar(apps, schema_editor):
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("django_celery_beat", "0001_initial"),
+        ("django_celery_beat", "0019_alter_periodictasks_options"),
     ]
 
     operations = [
