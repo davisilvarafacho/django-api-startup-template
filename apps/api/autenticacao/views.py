@@ -20,7 +20,24 @@ from apps.api.core.errors import APIError
 from apps.api.core.route_markers import no_tenancy
 
 from .errors import AuthErrorCode
-from .models import TokenMetaData, TokenType
+from .mfa import (
+    PRE_AUTH_LIFETIME,
+    active_factors,
+    available_methods,
+    confirm_enrollment,
+    consume_trusted_device,
+    regenerate_recovery_codes,
+    remove_factor,
+    reset_user_mfa,
+    start_enrollment,
+    start_login_challenge,
+    start_reauthentication,
+    verify_login_challenge,
+    verify_reauthentication,
+)
+from .models import MFAFactor, MFAFactorType, TokenMetaData, TokenType, TrustedDevice
+from .permissions import RecentAuthenticationPermission
+from .recent_auth import require_recent_auth
 from .serializers import AuthTokenSerializer as CustomAuthTokenSerializer
 from .serializers import LoginResponseSerializer, LoginSerializer, ReauthenticateSerializer
 from .services import issue_token
@@ -47,6 +64,19 @@ class LoginView(KnoxLoginView):
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data["user"]
 
+        metadata_input = build_token_metadata(request, request.data)
+        trusted_device = (
+            consume_trusted_device(user, request.data.get("trusted_device_token", "")) if request.data.get("trusted_device_token") else None
+        )
+        if active_factors(user).exists() and trusted_device is None:
+            issued = issue_token(
+                responsavel=user,
+                token_type=TokenType.PRE_AUTH,
+                expiry=timezone.now() + PRE_AUTH_LIFETIME,
+                metadata_input=metadata_input,
+            )
+            return Response({"pre_auth_token": issued.plain_token, "methods": available_methods(user)}, status=status.HTTP_202_ACCEPTED)
+
         token_limit_per_user = self.get_token_limit_per_user()
         if token_limit_per_user is not None:
             now = timezone.now()
@@ -58,7 +88,6 @@ class LoginView(KnoxLoginView):
                     message="Limite de sessões ativas atingido.",
                 )
 
-        metadata_input = build_token_metadata(request, request.data)
         metadata_input["reauthenticated_at"] = timezone.now()
         issued = issue_token(
             responsavel=user,
@@ -103,7 +132,10 @@ class LoginView(KnoxLoginView):
                 },
             }
         )
-        return Response(response_serializer.data)
+        response = response_serializer.data
+        if trusted_device:
+            response["trusted_device_token"] = trusted_device.plain_token
+        return Response(response)
 
     def check_suspicious_activity(self, user, new_metadata):
         """Verifica atividades suspeitas comparando com tokens anteriores"""
@@ -165,8 +197,176 @@ class ReauthenticateView(APIView):
         serializer = ReauthenticateSerializer(data=request.data, context={"user": request.user})
         serializer.is_valid(raise_exception=True)
 
+        if active_factors(request.user).exists():
+            return Response({"methods": available_methods(request.user)}, status=status.HTTP_202_ACCEPTED)
+
         auth_token.metadata.reauthenticated_at = timezone.now()
         auth_token.metadata.save(update_fields=["reauthenticated_at"])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@no_tenancy
+class ReauthenticateChallengeStartView(APIView):
+    permission_classes = (IsAuthenticated,)
+
+    def post(self, request):
+        try:
+            challenge = start_reauthentication(request.auth, request.data.get("type", ""))
+        except (ValueError, MFAFactor.DoesNotExist):
+            return Response({"detail": "Método MFA indisponível."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"challenge_id": challenge.pk}, status=status.HTTP_201_CREATED)
+
+
+@no_tenancy
+class ReauthenticateChallengeVerifyView(APIView):
+    permission_classes = (IsAuthenticated,)
+
+    def post(self, request):
+        try:
+            verify_reauthentication(request.auth, request.data.get("code", ""), request.data.get("type", ""))
+        except (ValueError, MFAFactor.DoesNotExist):
+            return Response({"detail": "Código MFA inválido ou expirado."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@no_tenancy
+class MFAFactorSetupView(APIView):
+    """Inicia o enrollment de um fator MFA para a sessão reautenticada."""
+
+    permission_classes = (IsAuthenticated, RecentAuthenticationPermission)
+
+    @require_recent_auth()
+    def post(self, request, factor_type):
+        try:
+            factor_type = MFAFactorType(factor_type)
+        except ValueError:
+            return Response({"detail": "Tipo de fator inválido."}, status=status.HTTP_400_BAD_REQUEST)
+        result = start_enrollment(request.user, factor_type)
+        data = {"type": factor_type, "uri": result.uri}
+        if result.plain_secret:
+            data["secret"] = result.plain_secret
+        return Response(data, status=status.HTTP_201_CREATED)
+
+
+@no_tenancy
+class MFAFactorConfirmView(APIView):
+    """Confirma um fator MFA e revela recovery codes somente no primeiro fator."""
+
+    permission_classes = (IsAuthenticated, RecentAuthenticationPermission)
+
+    @require_recent_auth()
+    def post(self, request, factor_type):
+        code = request.data.get("code", "")
+        try:
+            result = confirm_enrollment(request.user, MFAFactorType(factor_type), code)
+        except (ValueError, MFAFactor.DoesNotExist):
+            return Response({"detail": "Código ou fator inválido."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"type": factor_type, "recovery_codes": result.recovery_codes})
+
+
+@no_tenancy
+class MFAFactorDeleteView(APIView):
+    permission_classes = (IsAuthenticated, RecentAuthenticationPermission)
+
+    @require_recent_auth()
+    def delete(self, request, factor_type):
+        try:
+            remove_factor(request.user, MFAFactorType(factor_type))
+        except (ValueError, MFAFactor.DoesNotExist):
+            return Response({"detail": "Fator inválido."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@no_tenancy
+class MFARecoveryCodesView(APIView):
+    permission_classes = (IsAuthenticated, RecentAuthenticationPermission)
+
+    @require_recent_auth()
+    def post(self, request):
+        if not active_factors(request.user).exists():
+            return Response({"detail": "Nenhum fator MFA ativo."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"recovery_codes": regenerate_recovery_codes(request.user)})
+
+
+@no_tenancy
+class MFAChallengeStartView(APIView):
+    permission_classes = (IsAuthenticated,)
+
+    def post(self, request):
+        if getattr(request.auth, "type", None) != TokenType.PRE_AUTH:
+            return Response({"detail": "Pré-autenticação obrigatória."}, status=status.HTTP_401_UNAUTHORIZED)
+        try:
+            challenge = start_login_challenge(request.auth, request.data.get("type", ""))
+        except (ValueError, MFAFactor.DoesNotExist):
+            return Response({"detail": "Método MFA indisponível."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"challenge_id": challenge.pk}, status=status.HTTP_201_CREATED)
+
+
+@no_tenancy
+class MFAChallengeVerifyView(APIView):
+    permission_classes = (IsAuthenticated,)
+
+    def post(self, request):
+        if getattr(request.auth, "type", None) != TokenType.PRE_AUTH:
+            return Response({"detail": "Pré-autenticação obrigatória."}, status=status.HTTP_401_UNAUTHORIZED)
+        try:
+            result = verify_login_challenge(
+                request.auth,
+                request.data.get("code", ""),
+                request.data.get("type", ""),
+                trust_device=bool(request.data.get("trust_device")),
+                metadata=build_token_metadata(request, request.data),
+            )
+        except (ValueError, MFAFactor.DoesNotExist):
+            return Response({"detail": "Código MFA inválido ou expirado."}, status=status.HTTP_400_BAD_REQUEST)
+        data = {"token": result.token, "expiry": result.instance.expiry, "session": {"id": result.instance.digest, "type": result.instance.type}}
+        if result.trusted_device_token:
+            data["trusted_device_token"] = result.trusted_device_token
+        return Response(data)
+
+
+@no_tenancy
+class TrustedDeviceListView(APIView):
+    permission_classes = (IsAuthenticated, RecentAuthenticationPermission)
+
+    @require_recent_auth()
+    def get(self, request):
+        devices = TrustedDevice.objects.filter(user=request.user, revoked_at__isnull=True, expires_at__gt=timezone.now())
+        return Response(
+            [
+                {"id": item.pk, "name": item.name, "created_at": item.created_at, "last_used_at": item.last_used_at, "expires_at": item.expires_at}
+                for item in devices
+            ]
+        )
+
+
+@no_tenancy
+class TrustedDeviceDetailView(APIView):
+    permission_classes = (IsAuthenticated, RecentAuthenticationPermission)
+
+    @require_recent_auth()
+    def delete(self, request, pk):
+        updated = TrustedDevice.objects.filter(pk=pk, user=request.user, revoked_at__isnull=True).update(revoked_at=timezone.now())
+        return Response(status=status.HTTP_204_NO_CONTENT if updated else status.HTTP_404_NOT_FOUND)
+
+
+@no_tenancy
+class MFAAdminResetView(APIView):
+    permission_classes = (IsAuthenticated, RecentAuthenticationPermission)
+
+    @require_recent_auth()
+    def post(self, request):
+        if not request.user.has_perm("usuarios.can_reset_mfa_usuario"):
+            return Response(status=status.HTTP_403_FORBIDDEN)
+        from apps.usuarios.models import Usuario
+
+        try:
+            target = Usuario.objects.get(pk=request.data.get("user_id"))
+            reset_user_mfa(target=target, actor=request.user, reason=request.data.get("reason", ""))
+        except Usuario.DoesNotExist:
+            return Response({"detail": "Usuário não encontrado."}, status=status.HTTP_404_NOT_FOUND)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

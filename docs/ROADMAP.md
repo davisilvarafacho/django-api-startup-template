@@ -104,7 +104,7 @@ _Atualizado em 2026-07-24._
 - ✅ Tipagem operacional de `knox.AuthToken` via `TokenMetaData.type` (1=token, 2=reset_password, 999=api_key); reset password não autentica API.
 - ✅ **Scoped API tokens**: `TokenMetaData.scopes` + `TokenScopePermission` global via `required_token_scopes` na view.
 - ⏳ **Cache de permissão**.
-- ⏳ **MFA/2FA** + checagem de senha vazada (HaveIBeenPwned).
+- 🚧 **MFA/2FA** entregue (TOTP, e-mail, SMS, recovery, PRE_AUTH e trusted devices); a checagem de senha vazada (HaveIBeenPwned) permanece pendente.
 - ⏳ **Field-level permissions** (serializers dinâmicos por papel).
 - ⏳ Ciclo de vida de conta: verificação de e-mail, social auth, desativação/exclusão, gestão de sessões e dispositivos.
 

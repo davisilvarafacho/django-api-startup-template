@@ -62,6 +62,24 @@ class TypedTokenAuthentication(TokenAuthentication):
         return super().validate_user(auth_token)
 
 
+class PreAuthTokenAuthentication(TypedTokenAuthentication):
+    """Aceita credenciais efêmeras somente nas views de conclusão MFA."""
+
+    allowed_token_types = (TokenType.PRE_AUTH,)
+
+    def authenticate(self, request):
+        header = request.META.get("HTTP_AUTHORIZATION", "")
+        if not header.startswith("PreAuth "):
+            return None
+        token = header.removeprefix("PreAuth ").strip()
+        if not token:
+            raise AuthenticationFailed(_("Token de pré-autenticação inválido."))
+        user, auth_token = self.authenticate_credentials(token.encode())
+        if auth_token.is_expired:
+            raise AuthenticationFailed(_("Token de pré-autenticação expirado."))
+        return user, auth_token
+
+
 class QueryParamTokenAuthentication(TypedTokenAuthentication):
     """Autentica via `?token=`, restrito aos e-mails em `settings.ADMINS_EMAILS`.
 

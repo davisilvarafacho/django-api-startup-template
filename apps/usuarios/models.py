@@ -75,6 +75,7 @@ class Usuario(BaseGlobal, AbstractUser):
         ordering = ["-id"]
         verbose_name = _("Usuário")
         verbose_name_plural = _("Usuários")
+        permissions = [("can_reset_mfa_usuario", "Pode resetar MFA de usuários")]
 
 
 register(

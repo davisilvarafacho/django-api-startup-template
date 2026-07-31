@@ -5,18 +5,21 @@ import secrets
 from dataclasses import dataclass
 from datetime import timedelta
 
-import pyotp
 from django.conf import settings
-from django.contrib.auth.hashers import make_password
+from django.contrib.auth.hashers import check_password, make_password
 from django.db import transaction
 from django.utils import timezone
 from django.utils.crypto import salted_hmac
 
-from .models import MFAChallenge, MFAChallengePurpose, MFAFactor, MFAFactorType, MFARecoveryCode
+import pyotp
 
+from .models import AuthToken, MFAChallenge, MFAChallengePurpose, MFAFactor, MFAFactorType, MFARecoveryCode, TokenType, TrustedDevice
+from .services import issue_token, revoke_tokens
 
 OTP_LIFETIME = timedelta(minutes=5)
 RECOVERY_CODE_COUNT = 10
+PRE_AUTH_LIFETIME = timedelta(minutes=5)
+TRUSTED_DEVICE_LIFETIME = timedelta(days=30)
 
 
 @dataclass(frozen=True)
@@ -33,12 +36,40 @@ class ConfirmResult:
     recovery_codes: list[str]
 
 
+@dataclass(frozen=True)
+class LoginResult:
+    token: str
+    instance: AuthToken
+    trusted_device_token: str = ""
+
+
+@dataclass(frozen=True)
+class PlainTrustedDevice:
+    instance: TrustedDevice
+    plain_token: str
+
+
 def _otp_digest(code: str) -> str:
     return salted_hmac("mfa-otp", code, secret=settings.SECRET_KEY).hexdigest()
 
 
 def _new_otp() -> str:
     return f"{secrets.randbelow(1_000_000):06d}"
+
+
+def _trusted_digest(token: str) -> str:
+    return salted_hmac("trusted-device", token, secret=settings.SECRET_KEY).hexdigest()
+
+
+def active_factors(user):
+    return MFAFactor.objects.filter(user=user, confirmed_at__isnull=False, enabled_at__isnull=False, disabled_at__isnull=True)
+
+
+def available_methods(user) -> list[str]:
+    return [
+        *active_factors(user).values_list("type", flat=True),
+        *(["recovery"] if MFARecoveryCode.objects.filter(user=user, consumed_at__isnull=True).exists() else []),
+    ]
 
 
 @transaction.atomic
@@ -60,19 +91,22 @@ def start_enrollment(user, factor_type: MFAFactorType) -> EnrollmentResult:
 
     factor, _ = MFAFactor.objects.select_for_update().get_or_create(user=user, type=factor_type)
 
-    if factor_type == MFAFactorType.SMS and not user.phone_number:
+    if factor_type == MFAFactorType.SMS and (not user.phone_number or not user.phone_verified_at):
         raise ValueError("Um telefone verificado é necessário para habilitar SMS.")
 
-    code = _new_otp()
-    MFAChallenge.objects.filter(user=user, factor=factor, purpose=MFAChallengePurpose.ENROLLMENT, consumed_at__isnull=True).update(consumed_at=timezone.now())
-    MFAChallenge.objects.create(
+    MFAChallenge.objects.filter(user=user, factor=factor, purpose=MFAChallengePurpose.ENROLLMENT, consumed_at__isnull=True).update(
+        consumed_at=timezone.now()
+    )
+    challenge = MFAChallenge.objects.create(
         user=user,
         factor=factor,
         purpose=MFAChallengePurpose.ENROLLMENT,
-        otp_digest=_otp_digest(code),
         expires_at=timezone.now() + OTP_LIFETIME,
     )
-    return EnrollmentResult(factor=factor, plain_code=code)
+    from .tasks import deliver_mfa_otp
+
+    transaction.on_commit(lambda: deliver_mfa_otp.delay(challenge.pk))
+    return EnrollmentResult(factor=factor)
 
 
 @transaction.atomic
@@ -115,3 +149,174 @@ def regenerate_recovery_codes(user) -> list[str]:
     MFARecoveryCode.objects.filter(user=user).delete()
     MFARecoveryCode.objects.bulk_create([MFARecoveryCode(user=user, digest=make_password(code)) for code in codes])
     return codes
+
+
+@transaction.atomic
+def remove_factor(user, factor_type: MFAFactorType) -> None:
+    factor = MFAFactor.objects.select_for_update().get(user=user, type=factor_type)
+    factor.delete()
+    revoke_trusted_devices(user)
+
+
+@transaction.atomic
+def create_trusted_device(user, metadata: dict) -> PlainTrustedDevice:
+    plain_token = secrets.token_urlsafe(32)
+    device = TrustedDevice.objects.create(
+        user=user,
+        digest=_trusted_digest(plain_token),
+        name=metadata.get("device_name", ""),
+        user_agent=metadata.get("user_agent", ""),
+        ip_address=metadata.get("ip_address"),
+        expires_at=timezone.now() + TRUSTED_DEVICE_LIFETIME,
+    )
+    return PlainTrustedDevice(instance=device, plain_token=plain_token)
+
+
+@transaction.atomic
+def consume_trusted_device(user, plain_token: str) -> PlainTrustedDevice | None:
+    device = (
+        TrustedDevice.objects.select_for_update()
+        .filter(user=user, digest=_trusted_digest(plain_token), revoked_at__isnull=True, expires_at__gt=timezone.now())
+        .first()
+    )
+    if not device:
+        return None
+    device.revoked_at = timezone.now()
+    device.save(update_fields=["revoked_at"])
+    return create_trusted_device(user, {"device_name": device.name, "user_agent": device.user_agent, "ip_address": device.ip_address})
+
+
+def revoke_trusted_devices(user) -> int:
+    return TrustedDevice.objects.filter(user=user, revoked_at__isnull=True).update(revoked_at=timezone.now())
+
+
+@transaction.atomic
+def start_login_challenge(pre_auth: AuthToken, factor_type: str) -> MFAChallenge:
+    factor_type = MFAFactorType(factor_type)
+    factor = active_factors(pre_auth.responsavel).select_for_update().get(type=factor_type)
+    if factor_type == MFAFactorType.TOTP:
+        return MFAChallenge.objects.create(
+            user=pre_auth.responsavel, factor=factor, token=pre_auth, purpose=MFAChallengePurpose.LOGIN, expires_at=timezone.now() + OTP_LIFETIME
+        )
+    code = _new_otp()
+    return MFAChallenge.objects.create(
+        user=pre_auth.responsavel,
+        factor=factor,
+        token=pre_auth,
+        purpose=MFAChallengePurpose.LOGIN,
+        otp_digest=_otp_digest(code),
+        expires_at=timezone.now() + OTP_LIFETIME,
+        delivery_status="sent",
+        delivered_at=timezone.now(),
+    )
+
+
+def _consume_recovery_code(user, code: str) -> bool:
+    for recovery in MFARecoveryCode.objects.select_for_update().filter(user=user, consumed_at__isnull=True):
+        if check_password(code, recovery.digest):
+            recovery.consumed_at = timezone.now()
+            recovery.save(update_fields=["consumed_at"])
+            return True
+    return False
+
+
+@transaction.atomic
+def verify_login_challenge(pre_auth: AuthToken, code: str, factor_type: str, *, trust_device: bool, metadata: dict) -> LoginResult:
+    if pre_auth.type != TokenType.PRE_AUTH or pre_auth.is_expired:
+        raise ValueError("Pré-autenticação inválida ou expirada.")
+    user = pre_auth.responsavel
+    valid = False
+    if factor_type == "recovery":
+        valid = _consume_recovery_code(user, code)
+    else:
+        factor = active_factors(user).select_for_update().get(type=MFAFactorType(factor_type))
+        challenge = (
+            MFAChallenge.objects.select_for_update()
+            .filter(token=pre_auth, factor=factor, purpose=MFAChallengePurpose.LOGIN, consumed_at__isnull=True)
+            .order_by("-created_at")
+            .first()
+        )
+        if challenge and not challenge.is_expired and challenge.attempts < 5:
+            valid = (
+                bool(factor.secret) and pyotp.TOTP(factor.secret).verify(code, valid_window=1)
+                if factor.type == MFAFactorType.TOTP
+                else hmac.compare_digest(challenge.otp_digest, _otp_digest(code))
+            )
+            challenge.attempts += 1
+            if valid:
+                challenge.consumed_at = timezone.now()
+                factor.last_used_at = timezone.now()
+                factor.save(update_fields=["last_used_at"])
+            challenge.save(update_fields=["attempts", "consumed_at"])
+    if not valid:
+        raise ValueError("Código MFA inválido ou expirado.")
+    issued = issue_token(responsavel=user, token_type=TokenType.TOKEN, expiry=None, metadata_input={**metadata, "reauthenticated_at": timezone.now()})
+    pre_auth.delete()
+    trusted = create_trusted_device(user, metadata) if trust_device else None
+    return LoginResult(issued.plain_token, issued.instance, trusted.plain_token if trusted else "")
+
+
+@transaction.atomic
+def start_reauthentication(session: AuthToken, factor_type: str) -> MFAChallenge:
+    if session.type != TokenType.TOKEN:
+        raise ValueError("Sessão inválida.")
+    return start_login_challenge_for(session, factor_type, MFAChallengePurpose.REAUTHENTICATION)
+
+
+def start_login_challenge_for(token: AuthToken, factor_type: str, purpose: str) -> MFAChallenge:
+    factor_type = MFAFactorType(factor_type)
+    factor = active_factors(token.responsavel).select_for_update().get(type=factor_type)
+    code = "" if factor_type == MFAFactorType.TOTP else _new_otp()
+    return MFAChallenge.objects.create(
+        user=token.responsavel,
+        factor=factor,
+        token=token,
+        purpose=purpose,
+        otp_digest=_otp_digest(code) if code else "",
+        expires_at=timezone.now() + OTP_LIFETIME,
+        delivery_status="sent" if code else "pending",
+        delivered_at=timezone.now() if code else None,
+    )
+
+
+@transaction.atomic
+def verify_reauthentication(session: AuthToken, code: str, factor_type: str) -> None:
+    if session.type != TokenType.TOKEN:
+        raise ValueError("Sessão inválida.")
+    valid = _consume_recovery_code(session.responsavel, code) if factor_type == "recovery" else False
+    if factor_type != "recovery":
+        factor = active_factors(session.responsavel).select_for_update().get(type=MFAFactorType(factor_type))
+        challenge = (
+            MFAChallenge.objects.select_for_update()
+            .filter(token=session, factor=factor, purpose=MFAChallengePurpose.REAUTHENTICATION, consumed_at__isnull=True)
+            .order_by("-created_at")
+            .first()
+        )
+        valid = (
+            bool(challenge)
+            and not challenge.is_expired
+            and challenge.attempts < 5
+            and (
+                pyotp.TOTP(factor.secret).verify(code, valid_window=1)
+                if factor.type == MFAFactorType.TOTP
+                else hmac.compare_digest(challenge.otp_digest, _otp_digest(code))
+            )
+        )
+        if challenge:
+            challenge.attempts += 1
+            challenge.consumed_at = timezone.now() if valid else None
+            challenge.save(update_fields=["attempts", "consumed_at"])
+    if not valid:
+        raise ValueError("Código MFA inválido ou expirado.")
+    session.metadata.reauthenticated_at = timezone.now()
+    session.metadata.save(update_fields=["reauthenticated_at"])
+
+
+@transaction.atomic
+def reset_user_mfa(*, target, actor, reason: str) -> None:
+    if not reason.strip():
+        raise ValueError("A justificativa é obrigatória.")
+    MFAFactor.objects.select_for_update().filter(user=target).delete()
+    MFARecoveryCode.objects.filter(user=target).delete()
+    TrustedDevice.objects.filter(user=target).update(revoked_at=timezone.now())
+    revoke_tokens(target, types=(TokenType.TOKEN, TokenType.PRE_AUTH))

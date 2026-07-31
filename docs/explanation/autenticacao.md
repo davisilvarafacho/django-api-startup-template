@@ -144,3 +144,26 @@ required_token_scopes = {
 O escopo `"*"` atende qualquer requisito. Não coloque token, OTP, senha ou
 informações sensíveis de dispositivo em logs, eventos analíticos, serializações
 de leitura ou mensagens de erro.
+
+## MFA opt-in
+
+O usuário pode cadastrar fatores `totp`, `email` e `sms`; um fator de cada tipo
+fica ativo somente depois de confirmado. Setup, confirmação, remoção, geração
+de recovery codes e gestão de dispositivos confiáveis exigem uma sessão
+`Bearer` reautenticada nos últimos cinco minutos. Secrets TOTP e telefones são
+cifrados, OTPs são persistidos apenas como HMAC e recovery/trusted-device tokens
+nunca são persistidos em texto puro.
+
+Um login com fatores ativos responde `202` com `pre_auth_token` e `methods`.
+Envie esse token como `Authorization: PreAuth <token>` exclusivamente para
+`/auth/mfa/challenge/start/` e `/auth/mfa/challenge/verify/`; ele expira em
+cinco minutos, não autoriza endpoints normais e é removido ao concluir o MFA.
+Dispositivos confiáveis duram 30 dias, rodam o segredo a cada uso e podem ser
+revogados em `/auth/trusted-devices/`.
+
+Para SMS, configure `MFA_SMS_ENABLED=true` e um `MFA_SMS_BACKEND` de produção.
+O deploy falha se Console/InMemory estiverem habilitados fora de DEBUG. Em perda
+total de fatores, um operador com `usuarios.can_reset_mfa_usuario` usa
+`POST /auth/mfa/admin-reset/`, reautenticado e com justificativa; a operação
+revoga fatores, recovery codes, sessões e dispositivos confiáveis, preservando
+a senha.
