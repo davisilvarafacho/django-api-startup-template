@@ -389,7 +389,7 @@ SCALAR_THEME = "purple"
 
 
 # knox
-KNOX_TOKEN_MODEL = "knox.AuthToken"
+KNOX_TOKEN_MODEL = "autenticacao.AuthToken"
 
 REST_KNOX = {
     "AUTH_HEADER_PREFIX": "Bearer",

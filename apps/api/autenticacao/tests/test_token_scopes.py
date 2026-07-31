@@ -1,18 +1,13 @@
 from django.conf import settings
 
 from apps.api.autenticacao import permissions
-from apps.api.autenticacao.models import TokenMetaData, TokenType
-
-
-class MetadadosFalsos:
-    def __init__(self, token_type, scopes=None):
-        self.type = token_type
-        self.scopes = scopes or []
+from apps.api.autenticacao.models import AuthToken, TokenType
 
 
 class TokenFalso:
     def __init__(self, token_type, scopes=None):
-        self.metadata = MetadadosFalsos(token_type, scopes)
+        self.type = token_type
+        self.scopes = scopes or []
 
 
 class RequestFalsa:
@@ -28,8 +23,8 @@ class ViewComScopes:
     }
 
 
-def test_token_metadata_tem_lista_de_scopes():
-    field = TokenMetaData._meta.get_field("scopes")
+def test_auth_token_tem_lista_de_scopes():
+    field = AuthToken._meta.get_field("scopes")
 
     assert field.default is list
 

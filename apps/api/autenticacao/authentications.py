@@ -54,8 +54,7 @@ class TypedTokenAuthentication(TokenAuthentication):
     allowed_token_types = (TokenType.TOKEN, TokenType.API_KEY)
 
     def validate_user(self, auth_token):
-        metadata = getattr(auth_token, "metadata", None)
-        token_type = getattr(metadata, "type", TokenType.TOKEN)
+        token_type = getattr(auth_token, "type", TokenType.TOKEN)
 
         if token_type not in self.allowed_token_types:
             raise AuthenticationFailed(_("Este token não permite acesso à API."))
