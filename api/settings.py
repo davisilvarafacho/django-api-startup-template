@@ -426,6 +426,19 @@ REDIS_PORT = get_env_var("REDIS_PORT", "6379")
 
 REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}"
 
+AUTHORIZATION_CACHE = {
+    "ENABLED": get_bool_from_env("AUTHORIZATION_CACHE_ENABLED", True),
+    "ALIAS": "permissions",
+    "TIMEOUT": 60 * 30,
+    "KEY_PREFIX": get_env_var(
+        "AUTHORIZATION_CACHE_KEY_PREFIX",
+        f"authz:v1:{ENVIROMENT or CONFIG_ENVIRONMENT}",
+    ),
+    "MAX_RETRIES": 2,
+}
+
+AUTHORIZATION_REDIS_URL = get_env_var("AUTHORIZATION_REDIS_URL") or f"{REDIS_URL}/4"
+
 
 # cache
 # sm testes, cache em memória para não exigir Redis rodando.
@@ -433,6 +446,10 @@ if TESTING:
     CACHES = {
         "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
         "cachalot": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
+        "permissions": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "KEY_PREFIX": AUTHORIZATION_CACHE["KEY_PREFIX"],
+        },
     }
 else:
     CACHES = {
@@ -446,6 +463,18 @@ else:
             "BACKEND": "django_redis.cache.RedisCache",
             "LOCATION": f"{REDIS_URL}/3",
             "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
+        },
+        "permissions": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": AUTHORIZATION_REDIS_URL,
+            "KEY_PREFIX": AUTHORIZATION_CACHE["KEY_PREFIX"],
+            "OPTIONS": {
+                "CLIENT_CLASS": "django_redis.client.DefaultClient",
+                "REDIS_CLIENT_KWARGS": {
+                    "socket_connect_timeout": 1,
+                    "socket_timeout": 1,
+                },
+            },
         },
     }
 
