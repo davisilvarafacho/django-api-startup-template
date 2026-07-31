@@ -65,8 +65,8 @@ DATABASE_PORT ?= 5432
 
 export DATABASE_NAME DATABASE_USER DATABASE_PASSWORD DATABASE_HOST DATABASE_PORT
 
-test: ## Roda a suíte com cobertura
-	uv run --group test pytest
+test: ## Roda a suíte com cobertura (sem migrations até o reset pré-lançamento)
+	uv run --group test pytest --nomigrations
 
 lint: ## Checa lint (ruff)
 	uv run ruff check .

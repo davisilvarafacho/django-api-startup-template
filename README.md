@@ -118,7 +118,7 @@ uv run python manage.py migrate_storage \
 > para todos os backends. Faça backup e use `--dry-run` primeiro. Não use aliases
 > diferentes que apontem para a mesma localização física.
 
-## Emails com Resend
+## Emails com Anymail + Resend
 
 O projeto usa [django-anymail](https://anymail.dev/) como abstração de e-mail e envia pelo Resend por padrão. Configure uma chave com permissão de envio e um remetente de um domínio verificado no Resend:
 
