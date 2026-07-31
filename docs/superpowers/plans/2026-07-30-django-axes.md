@@ -1065,7 +1065,7 @@ git commit -m "docs: documentar a proteção contra força bruta no login"
 
 ### Task 7: Verificação final
 
-- [x] **Step 1: Rodar tudo o que a CI roda**
+- [ ] **Step 1: Rodar tudo o que a CI roda**
 
 ```bash
 make up
