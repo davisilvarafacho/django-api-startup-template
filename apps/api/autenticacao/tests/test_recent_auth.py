@@ -27,6 +27,16 @@ def test_decorator_marca_idade_maxima():
     assert action._recent_auth_required == {"max_age": 120, "require_mfa": None}
 
 
+def test_decorator_marca_classe_sem_alterar_sua_identidade():
+    class ProbeAPIView:
+        pass
+
+    decorated = require_recent_auth(max_age=120, require_mfa=True)(ProbeAPIView)
+
+    assert decorated is ProbeAPIView
+    assert decorated._recent_auth_required == {"max_age": 120, "require_mfa": True}
+
+
 def test_permissao_aceita_sessao_reautenticada_recente():
     request = APIRequestFactory().post("/qualquer/")
     request.auth = SimpleNamespace(
@@ -174,6 +184,34 @@ def test_endpoint_marcado_exige_reautenticacao_recente_pela_permissao_global(api
     issued.instance.metadata.save(update_fields=["reauthenticated_at"])
 
     accepted = api_client.post(path)
+
+    assert accepted.status_code == status.HTTP_200_OK
+    assert accepted.data == {"detail": "step-up aceito"}
+
+
+@pytest.mark.django_db
+@override_settings(ROOT_URLCONF="apps.api.autenticacao.tests.recent_auth_urls")
+def test_apiview_decorada_na_classe_exige_reautenticacao_recente(api_client, usuario):
+    issued = issue_token(
+        responsavel=usuario,
+        token_type=TokenType.TOKEN,
+        expiry=timedelta(hours=1),
+        metadata_input={},
+    )
+    api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {issued.plain_token}")
+
+    denied = api_client.post("/recent-auth-class-apiview-probe/")
+
+    assert denied.status_code == status.HTTP_403_FORBIDDEN
+    assert denied.data == {
+        "code": "auth.reauthentication_required",
+        "message": "Reautenticação recente obrigatória.",
+    }
+
+    issued.instance.metadata.reauthenticated_at = timezone.now()
+    issued.instance.metadata.save(update_fields=["reauthenticated_at"])
+
+    accepted = api_client.post("/recent-auth-class-apiview-probe/")
 
     assert accepted.status_code == status.HTTP_200_OK
     assert accepted.data == {"detail": "step-up aceito"}

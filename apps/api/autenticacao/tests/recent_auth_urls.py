@@ -34,7 +34,19 @@ class RecentAuthenticationProbeAPIView(APIView):
         return Response({"detail": "step-up aceito"}, status=status.HTTP_200_OK)
 
 
+@no_tenancy
+@require_recent_auth()
+class RecentAuthenticationClassProbeAPIView(APIView):
+    """APIView que recebe o requisito de step-up diretamente na classe."""
+
+    _ignore_model_permissions = True
+
+    def post(self, request):
+        return Response({"detail": "step-up aceito"}, status=status.HTTP_200_OK)
+
+
 urlpatterns = [
     path("recent-auth-probe/", RecentAuthenticationProbeViewSet.as_view({"post": "create"})),
     path("recent-auth-apiview-probe/", RecentAuthenticationProbeAPIView.as_view()),
+    path("recent-auth-class-apiview-probe/", RecentAuthenticationClassProbeAPIView.as_view()),
 ]
