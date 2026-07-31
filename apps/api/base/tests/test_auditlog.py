@@ -9,9 +9,7 @@ from apps.usuarios.models import Usuario
 
 def test_registra_todos_os_modelos_concretos_dos_apps():
     modelos_esperados = {Usuario, Organizacao, Time, Vinculo, Convite, TokenMetaData}
-    modelos_internos_registrados = {
-        model for model in auditlog.get_models() if model.__module__.startswith("apps.")
-    }
+    modelos_internos_registrados = {model for model in auditlog.get_models() if model.__module__.startswith("apps.")}
 
     assert modelos_internos_registrados == modelos_esperados
 

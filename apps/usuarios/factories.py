@@ -1,4 +1,5 @@
 """Factories de teste do app de usuários (factory_boy)."""
+
 import factory
 from factory.django import DjangoModelFactory
 

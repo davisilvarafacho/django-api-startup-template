@@ -6,6 +6,7 @@ middleware precisa consultá-los para descobrir e validar o tenant antes de
 existir qualquer contexto. Os modelos de negócio herdam de `Base`, esses sim
 isolados por RLS no banco.
 """
+
 import secrets
 from datetime import timedelta
 

@@ -1,4 +1,5 @@
 """Testes do registry de rotas descobertas por convenção (não tocam o banco)."""
+
 import sys
 import types
 

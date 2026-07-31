@@ -1,4 +1,5 @@
 """Configuração do Gunicorn para produção."""
+
 import multiprocessing
 import os
 
@@ -37,6 +38,7 @@ tmp_upload_dir = None
 # SSL (descomente se usar HTTPS)
 # keyfile = "/path/to/key.pem"
 # certfile = "/path/to/cert.pem"
+
 
 # Server hooks
 def on_starting(server):

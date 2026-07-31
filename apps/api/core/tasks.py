@@ -1,4 +1,5 @@
 """Tasks assíncronas de uso geral."""
+
 from celery import shared_task
 
 

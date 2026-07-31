@@ -12,6 +12,7 @@ Dois detalhes tornam este teste diferente de um teste comum:
 Como a verificação usa uma segunda conexão, os dados precisam estar commitados:
 daí o `django_db(transaction=True)`.
 """
+
 from django.db import connection, models
 
 import psycopg2
@@ -127,7 +128,6 @@ def test_sem_contexto_nao_ve_nada(cenario):
 @pytest.mark.django_db(transaction=True)
 def test_contexto_de_organizacao_inexistente_nao_vaza(cenario):
     assert consultar_como_papel_comum(999_999) == []
-
 
 
 @pytest.mark.django_db(transaction=True)

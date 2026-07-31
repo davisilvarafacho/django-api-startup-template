@@ -1,4 +1,5 @@
 """Testes da camada HTTP de organizacoes."""
+
 from datetime import timedelta
 
 from django.utils import timezone

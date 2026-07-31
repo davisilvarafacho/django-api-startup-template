@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import mimetypes
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import PurePosixPath
 from urllib.parse import quote
@@ -43,9 +43,7 @@ class BackblazeB2Storage(Storage):
         self.bucket_name = bucket_name or getattr(settings, "B2_BUCKET_NAME", None)
         self.bucket_id = bucket_id or getattr(settings, "B2_BUCKET_ID", None)
         self.location = self._clean_location(location if location is not None else getattr(settings, "B2_LOCATION", ""))
-        self.public_base_url = (
-            public_base_url or getattr(settings, "B2_PUBLIC_BASE_URL", None) or getattr(settings, "B2_ENDPOINT_URL", None)
-        )
+        self.public_base_url = public_base_url or getattr(settings, "B2_PUBLIC_BASE_URL", None) or getattr(settings, "B2_ENDPOINT_URL", None)
         self._api = None
         self._bucket = None
 
@@ -185,7 +183,7 @@ class BackblazeB2Storage(Storage):
             raise FileNotFoundError(f"File not found: {name}") from exc
         except B2Error as exc:
             raise OSError(f"Could not get the creation time of B2 file '{name}'.") from exc
-        return datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc)
+        return datetime.fromtimestamp(timestamp / 1000, tz=UTC)
 
     def get_modified_time(self, name):
         return self.get_created_time(name)

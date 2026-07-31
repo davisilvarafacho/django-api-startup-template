@@ -3,6 +3,7 @@
 Não tocam o banco: os autenticadores Knox são substituídos por dublês, já que o
 que está sob teste é o fluxo de decisão, não a validação do token em si.
 """
+
 import json
 
 from django.test import RequestFactory

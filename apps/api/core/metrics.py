@@ -5,6 +5,7 @@ revelam rotas internas, volume de tráfego e nomes de modelos — informação d
 reconhecimento para quem estiver sondando a API. Aqui o acesso é restrito à
 rede interna (ou a um token compartilhado com o scraper).
 """
+
 import ipaddress
 import logging
 

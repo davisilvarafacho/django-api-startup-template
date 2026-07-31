@@ -14,6 +14,7 @@ A checagem é sempre `decorator OU prefixo`.
 Atenção: o marcador é um atributo de classe, então **subclasses herdam**. Não
 decore uma view base a menos que queira liberar todas as filhas.
 """
+
 from django.urls import Resolver404, resolve
 
 __all__ = ["MARCADOR_PUBLICA", "MARCADOR_SEM_TENANCY", "no_tenancy", "public", "tem_marcador", "view_do_path"]

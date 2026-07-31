@@ -5,209 +5,90 @@ from utils.logs import register
 
 
 class TokenType(models.IntegerChoices):
-    TOKEN = 1, _('Token')
-    RESET_PASSWORD = 2, _('Reset de senha')
-    API_KEY = 999, _('API key')
+    TOKEN = 1, _("Token")
+    RESET_PASSWORD = 2, _("Reset de senha")
+    API_KEY = 999, _("API key")
 
 
 class TokenMetaData(models.Model):
     """Metadados completos para tokens Knox"""
 
     # token relacionado
-    token = models.OneToOneField(
-        verbose_name=_('Token'),
-        to="knox.AuthToken",
-        on_delete=models.CASCADE,
-        related_name='metadata',
-        primary_key=True
-    )
+    token = models.OneToOneField(verbose_name=_("Token"), to="knox.AuthToken", on_delete=models.CASCADE, related_name="metadata", primary_key=True)
     type = models.PositiveSmallIntegerField(
-        verbose_name=_('Tipo'),
+        verbose_name=_("Tipo"),
         choices=TokenType.choices,
         default=TokenType.TOKEN,
         db_index=True,
-        help_text=_('Tipo de uso do token Knox.'),
+        help_text=_("Tipo de uso do token Knox."),
     )
 
     # informações do dispositivo
     device_name = models.CharField(
-        verbose_name=_('Nome do dispositivo'),
-        max_length=255,
-        blank=True,
-        help_text=_("Nome personalizado do dispositivo (ex: 'iPhone de Rafael')")
+        verbose_name=_("Nome do dispositivo"), max_length=255, blank=True, help_text=_("Nome personalizado do dispositivo (ex: 'iPhone de Rafael')")
     )
     device_type = models.CharField(
-        verbose_name=_('Tipo de dispositivo'),
+        verbose_name=_("Tipo de dispositivo"),
         max_length=20,
         choices=[
-            ('mobile', _('Celular')),
-            ('tablet', _('Tablet')),
-            ('desktop', _('Computador')),
-            ('unknown', _('Desconhecido')),
+            ("mobile", _("Celular")),
+            ("tablet", _("Tablet")),
+            ("desktop", _("Computador")),
+            ("unknown", _("Desconhecido")),
         ],
-        default='unknown'
+        default="unknown",
     )
     device_brand = models.CharField(
-        verbose_name=_('Marca do dispositivo'),
-        max_length=100,
-        blank=True,
-        help_text=_("Marca do dispositivo (ex: Apple, Samsung, etc)")
+        verbose_name=_("Marca do dispositivo"), max_length=100, blank=True, help_text=_("Marca do dispositivo (ex: Apple, Samsung, etc)")
     )
     device_model = models.CharField(
-        verbose_name=_('Modelo do dispositivo'),
-        max_length=100,
-        blank=True,
-        help_text=_("Modelo do dispositivo (ex: iPhone 14 Pro, Galaxy S23)")
+        verbose_name=_("Modelo do dispositivo"), max_length=100, blank=True, help_text=_("Modelo do dispositivo (ex: iPhone 14 Pro, Galaxy S23)")
     )
 
     # sistema operacional
     os_name = models.CharField(
-        verbose_name=_('Nome do sistema operacional'),
-        max_length=50,
-        blank=True,
-        help_text=_("Nome do SO (iOS, Android, Windows, macOS, Linux)")
+        verbose_name=_("Nome do sistema operacional"), max_length=50, blank=True, help_text=_("Nome do SO (iOS, Android, Windows, macOS, Linux)")
     )
-    os_version = models.CharField(
-        verbose_name=_('Versão do sistema operacional'),
-        max_length=50,
-        blank=True,
-        help_text=_("Versão do SO")
-    )
+    os_version = models.CharField(verbose_name=_("Versão do sistema operacional"), max_length=50, blank=True, help_text=_("Versão do SO"))
 
     # client
-    browser_name = models.CharField(
-        verbose_name=_('Nome do navegador'),
-        max_length=50,
-        blank=True,
-        help_text=_("Nome do navegador ou app")
-    )
-    browser_version = models.CharField(
-        verbose_name=_('Versão do navegador'),
-        max_length=50,
-        blank=True
-    )
-    user_agent = models.TextField(
-        verbose_name=_('User agent'),
-        blank=True,
-        help_text=_("User agent completo da requisição")
-    )
+    browser_name = models.CharField(verbose_name=_("Nome do navegador"), max_length=50, blank=True, help_text=_("Nome do navegador ou app"))
+    browser_version = models.CharField(verbose_name=_("Versão do navegador"), max_length=50, blank=True)
+    user_agent = models.TextField(verbose_name=_("User agent"), blank=True, help_text=_("User agent completo da requisição"))
 
     # ip da origem
-    ip_address = models.GenericIPAddressField(
-        verbose_name=_('Endereço IP'),
-        null=True,
-        blank=True,
-        help_text=_("Endereço IP da origem")
-    )
+    ip_address = models.GenericIPAddressField(verbose_name=_("Endereço IP"), null=True, blank=True, help_text=_("Endereço IP da origem"))
 
     # localização geográfica baseado no ip
-    country = models.CharField(
-        verbose_name=_('País'),
-        max_length=100,
-        blank=True,
-        help_text=_("País")
-    )
-    country_code = models.CharField(
-        verbose_name=_('Código do país'),
-        max_length=2,
-        blank=True,
-        help_text=_("Código do país (ISO 3166-1 alpha-2)")
-    )
-    region = models.CharField(
-        verbose_name=_('Estado/Região'),
-        max_length=100,
-        blank=True,
-        help_text=_("Estado/Região")
-    )
-    city = models.CharField(
-        verbose_name=_('Cidade'),
-        max_length=100,
-        blank=True,
-        help_text=_("Cidade")
-    )
-    latitude = models.DecimalField(
-        verbose_name=_('Latitude'),
-        max_digits=9,
-        decimal_places=6,
-        null=True,
-        blank=True
-    )
-    longitude = models.DecimalField(
-        verbose_name=_('Longitude'),
-        max_digits=9,
-        decimal_places=6,
-        null=True,
-        blank=True
-    )
-    timezone = models.CharField(
-        verbose_name=_('Fuso horário'),
-        max_length=50,
-        blank=True,
-        help_text=_("Fuso horário (ex: America/Sao_Paulo)")
-    )
-    isp = models.CharField(
-        verbose_name=_('Provedor de internet'),
-        max_length=255,
-        blank=True,
-        help_text=_("Provedor de internet")
-    )
+    country = models.CharField(verbose_name=_("País"), max_length=100, blank=True, help_text=_("País"))
+    country_code = models.CharField(verbose_name=_("Código do país"), max_length=2, blank=True, help_text=_("Código do país (ISO 3166-1 alpha-2)"))
+    region = models.CharField(verbose_name=_("Estado/Região"), max_length=100, blank=True, help_text=_("Estado/Região"))
+    city = models.CharField(verbose_name=_("Cidade"), max_length=100, blank=True, help_text=_("Cidade"))
+    latitude = models.DecimalField(verbose_name=_("Latitude"), max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(verbose_name=_("Longitude"), max_digits=9, decimal_places=6, null=True, blank=True)
+    timezone = models.CharField(verbose_name=_("Fuso horário"), max_length=50, blank=True, help_text=_("Fuso horário (ex: America/Sao_Paulo)"))
+    isp = models.CharField(verbose_name=_("Provedor de internet"), max_length=255, blank=True, help_text=_("Provedor de internet"))
 
     # informações de uso
-    first_used = models.DateTimeField(
-        verbose_name=_('Primeiro uso'),
-        auto_now_add=True,
-        help_text=_("Primeira vez que o token foi usado")
-    )
-    last_used = models.DateTimeField(
-        verbose_name=_('Último uso'),
-        auto_now=True,
-        help_text=_("Última vez que o token foi usado")
-    )
-    usage_count = models.PositiveIntegerField(
-        verbose_name=_('Contador de uso'),
-        default=0,
-        help_text=_("Número de vezes que o token foi usado")
-    )
+    first_used = models.DateTimeField(verbose_name=_("Primeiro uso"), auto_now_add=True, help_text=_("Primeira vez que o token foi usado"))
+    last_used = models.DateTimeField(verbose_name=_("Último uso"), auto_now=True, help_text=_("Última vez que o token foi usado"))
+    usage_count = models.PositiveIntegerField(verbose_name=_("Contador de uso"), default=0, help_text=_("Número de vezes que o token foi usado"))
 
     # segurança e risco
     is_suspicious = models.BooleanField(
-        verbose_name=_('É suspeito'),
-        default=False,
-        help_text=_("Marcado como suspeito por mudança de IP/localização")
+        verbose_name=_("É suspeito"), default=False, help_text=_("Marcado como suspeito por mudança de IP/localização")
     )
-    suspicious_reason = models.TextField(
-        verbose_name=_('Motivo da suspeita'),
-        blank=True,
-        help_text=_("Motivo da suspeita")
-    )
-    risk_score = models.PositiveSmallIntegerField(
-        verbose_name=_('Pontuação de risco'),
-        default=0,
-        help_text=_("Score de risco (0-100)")
-    )
+    suspicious_reason = models.TextField(verbose_name=_("Motivo da suspeita"), blank=True, help_text=_("Motivo da suspeita"))
+    risk_score = models.PositiveSmallIntegerField(verbose_name=_("Pontuação de risco"), default=0, help_text=_("Score de risco (0-100)"))
 
     # adicionais do app/frontend
-    app_version = models.CharField(
-        verbose_name=_('Versão do app'),
-        max_length=20,
-        blank=True,
-        help_text=_("Versão do app/frontend (ex: 1.2.3)")
-    )
-    fcm_token = models.TextField(
-        verbose_name=_('Token FCM'),
-        blank=True,
-        help_text=_("Token para push notifications (Firebase Cloud Messaging)")
-    )
+    app_version = models.CharField(verbose_name=_("Versão do app"), max_length=20, blank=True, help_text=_("Versão do app/frontend (ex: 1.2.3)"))
+    fcm_token = models.TextField(verbose_name=_("Token FCM"), blank=True, help_text=_("Token para push notifications (Firebase Cloud Messaging)"))
 
     # metadados customizados
-    extra_data = models.JSONField(
-        verbose_name=_('Dados extras'),
-        default=dict,
-        blank=True,
-        help_text=_("Dados adicionais em formato JSON")
-    )
+    extra_data = models.JSONField(verbose_name=_("Dados extras"), default=dict, blank=True, help_text=_("Dados adicionais em formato JSON"))
     scopes = models.JSONField(
-        verbose_name=_('Escopos'),
+        verbose_name=_("Escopos"),
         default=list,
         blank=True,
         help_text=_("Escopos concedidos ao token API key, como 'org:read'."),
@@ -218,25 +99,25 @@ class TokenMetaData(models.Model):
 
         self.is_suspicious = True
         self.suspicious_reason = reason
-        self.save(update_fields=['is_suspicious', 'suspicious_reason'])
+        self.save(update_fields=["is_suspicious", "suspicious_reason"])
 
     def increment_usage(self):
         """Incrementa o contador de uso"""
 
         self.usage_count += 1
-        self.save(update_fields=['usage_count', 'last_used'])
+        self.save(update_fields=["usage_count", "last_used"])
 
     def get_location_string(self):
         """Retorna string formatada da localização"""
 
         parts = [p for p in [self.city, self.region, self.country] if p]
-        return ', '.join(parts) if parts else _('Localização desconhecida')
+        return ", ".join(parts) if parts else _("Localização desconhecida")
 
     class Meta:
-        db_table = 'token_metadata'
-        ordering = ['-last_used']
-        verbose_name = _('Metadado de token')
-        verbose_name_plural = _('Metadados de tokens')
+        db_table = "token_metadata"
+        ordering = ["-last_used"]
+        verbose_name = _("Metadado de token")
+        verbose_name_plural = _("Metadados de tokens")
 
     def __str__(self):
         return f"{self.device_name or self.device_type} - {self.token.user.username}"
