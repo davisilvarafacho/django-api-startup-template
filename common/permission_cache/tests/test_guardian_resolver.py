@@ -63,26 +63,38 @@ def test_guardian_superuser_matches_upstream():
     assert cached.get_group_permissions(user, organization) == {"view_organizacao"}
 
 
-@pytest.mark.parametrize(("user", "obj"), [(UsuarioFactory.build(is_active=False), None), (AnonymousUser(), None)])
-def test_guardian_unsupported_inputs_fail_closed(user, obj):
-    backend = CachedObjectPermissionBackend()
-    organization = Organizacao(nome="Unsaved", slug="unsaved")
+def test_guardian_unsupported_inputs_fail_closed_with_upstream_parity():
+    active_user = UsuarioFactory()
+    inactive_user = UsuarioFactory(is_active=False)
+    organization = Organizacao.objects.create(nome="Acme", slug="acme")
+    upstream = ObjectPermissionBackend()
+    cached = CachedObjectPermissionBackend()
 
-    assert backend.has_perm(user, "view_organizacao", obj) is False
-    assert backend.get_group_permissions(user, obj) == set()
-    assert backend.get_all_permissions(user, obj) == set()
-    assert backend.has_perm(user, "view_organizacao", organization) is False
-    assert backend.has_perm(user, "view_organizacao", object()) is False
+    for user, obj in (
+        (inactive_user, organization),
+        (AnonymousUser(), organization),
+        (active_user, None),
+        (active_user, Organizacao(nome="Unsaved", slug="unsaved")),
+        (active_user, object()),
+    ):
+        assert cached.has_perm(user, "view_organizacao", obj) is False
+        assert cached.has_perm(user, "view_organizacao", obj) == upstream.has_perm(user, "view_organizacao", obj)
+        assert cached.get_group_permissions(user, obj) == set(upstream.get_group_permissions(user, obj))
+        assert cached.get_all_permissions(user, obj) == set(upstream.get_all_permissions(user, obj))
 
 
 def test_guardian_backend_accepts_prefixed_and_unprefixed_codename():
     user = UsuarioFactory()
     organization = Organizacao.objects.create(nome="Acme", slug="acme")
     assign_perm("view_organizacao", user, organization)
-    backend = CachedObjectPermissionBackend()
+    upstream = ObjectPermissionBackend()
+    cached = CachedObjectPermissionBackend()
 
-    assert backend.has_perm(user, "view_organizacao", organization) is True
-    assert backend.has_perm(user, "organizacoes.view_organizacao", organization) is True
+    for permission in ("view_organizacao", "organizacoes.view_organizacao"):
+        assert cached.has_perm(user, permission, organization) is True
+        assert cached.has_perm(user, permission, organization) == upstream.has_perm(user, permission, organization)
+    assert cached.get_group_permissions(user, organization) == set(upstream.get_group_permissions(user, organization))
+    assert cached.get_all_permissions(user, organization) == set(upstream.get_all_permissions(user, organization))
 
 
 def test_guardian_backend_raises_wrong_app_error_like_upstream():
