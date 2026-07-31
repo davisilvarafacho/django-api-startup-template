@@ -22,6 +22,7 @@ nav:
       - Fluxo de desenvolvimento: how-to/fluxo-de-desenvolvimento.md
       - Desenvolvimento local: how-to/desenvolvimento-local.md
       - Proxy reverso com nginx: how-to/proxy-nginx.md
+      - Proteção contra força bruta: how-to/protecao-forca-bruta.md
       - Observabilidade local: how-to/observabilidade-local.md
       - Analytics com PostHog: how-to/analytics-posthog.md
       - Publicar uma versão: how-to/publicar-versao.md

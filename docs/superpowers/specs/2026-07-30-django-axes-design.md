@@ -37,6 +37,18 @@ Três fatos do código atual condicionam o design:
    padrão. O `AccessLog`, por outro lado, grava um registro por login
    bem-sucedido e cresce com o volume de tráfego.
 
+Durante a implementação, dois detalhes adicionais foram confirmados e fazem
+parte do contrato efetivo:
+
+1. `AXES_USERNAME_FORM_FIELD = "username"` é obrigatório. O usuário do projeto
+   usa `email` como `USERNAME_FIELD`, mas o `AuthTokenSerializer` envia a chave
+   literal `username` ao `authenticate()`. Sem esse override, o axes registraria
+   `username=None` e a chave usuário + IP degeneraria em bloqueio apenas por IP.
+2. A view de login passa `request._request` no contexto do serializer. O wrapper
+   `Request` do DRF não propaga para o `HttpRequest` a atribuição de
+   `axes_locked_out`; sem essa forma, o middleware do axes não substituiria a
+   resposta por `429`.
+
 Também foi verificado que o `django-rls` não interfere: o
 `RLSQuerySet._enforce_context()` só exige contexto de tenant para modelos com
 `_rls_policies`, e os modelos do axes são modelos Django comuns. As escritas do

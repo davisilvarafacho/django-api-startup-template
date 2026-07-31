@@ -26,8 +26,8 @@
 
 ## Estado da execução (2026-07-31)
 
-Executado com `superpowers:subagent-driven-development`. **Tasks 1 a 5 concluídas e
-revisadas; Tasks 6 e 7 não iniciadas.** Suíte em 210 testes passando (baseline antes
+Executado com `superpowers:subagent-driven-development`. **Tasks 1 a 6 concluídas e
+revisadas; Task 7 está em verificação final.** Suíte em 210 testes passando (baseline antes
 da branch: 191). Árvore limpa, nada pendente de commit.
 
 | Task | Commits | Suíte | Revisão |
@@ -40,9 +40,11 @@ da branch: 191). Árvore limpa, nada pendente de commit.
 
 ### O que falta
 
-- **Task 6 — documentação.** Não iniciada. É o how-to, a entrada no `nav` do
-  `mkdocs.yml` e o parágrafo no `CLAUDE.md`.
-- **Task 7 — verificação final.** Não iniciada.
+- **Task 6 — documentação.** Concluída: how-to, entrada no `nav` do `mkdocs.yml`,
+  parágrafo no `CLAUDE.md` e registro dos desvios na spec.
+- **Task 7 — verificação final.** Suíte, migrations, documentação e `check` executados;
+  lint global ainda encontra dois `UP017` preexistentes e a verificação manual via
+  stack permanece pendente.
 - **Revisão final da branch inteira** e a triagem dos Minor adiados listados abaixo.
 - **Atualizar a spec** (`docs/superpowers/specs/2026-07-30-django-axes-design.md`) com
   os dois desvios da Task 2, que ela ainda não reflete.
@@ -1019,7 +1021,7 @@ git commit -m "feat: expurgar periodicamente os logs de acesso do axes"
 **Interfaces:**
 - Consumes: todas as tasks anteriores. Nenhum código novo.
 
-- [ ] **Step 1: Escrever o how-to**
+- [x] **Step 1: Escrever o how-to**
 
 Criar `docs/how-to/protecao-forca-bruta.md` cobrindo, nesta ordem:
 
@@ -1032,7 +1034,7 @@ Criar `docs/how-to/protecao-forca-bruta.md` cobrindo, nesta ordem:
 7. **Dependência do proxy**: o `AXES_CLIENT_IP_CALLABLE` confia no `X-Forwarded-For` **apenas** quando `DJANGO_BEHIND_PROXY` está ligado, porque quem garante o valor é o nginx de borda (`docker/nginx/snippets/proxy.conf`). Expor a API sem esse nginx e manter a variável ligada torna o bloqueio por IP contornável. Referenciar `docs/how-to/proxy-nginx.md`.
 8. **Retenção**: o `AccessLog` é expurgado aos 90 dias por tarefa periódica; o `AccessAttempt` se autolimpa.
 
-- [ ] **Step 2: Registrar a página no nav**
+- [x] **Step 2: Registrar a página no nav**
 
 Em `mkdocs.yml`, na seção `how-to` do `nav`, adicionar após a linha `- Proxy reverso com nginx: how-to/proxy-nginx.md`:
 
@@ -1040,11 +1042,11 @@ Em `mkdocs.yml`, na seção `how-to` do `nav`, adicionar após a linha `- Proxy 
       - Proteção contra força bruta: how-to/protecao-forca-bruta.md
 ```
 
-- [ ] **Step 3: Atualizar o CLAUDE.md**
+- [x] **Step 3: Atualizar o CLAUDE.md**
 
 Na seção "Autorização em camadas", adicionar um parágrafo curto explicando que o `AxesStandaloneBackend` é o primeiro item de `AUTHENTICATION_BACKENDS`, que ele apenas verifica bloqueio e delega, e que a resposta de bloqueio é o `resposta_de_bloqueio` em `apps/api/autenticacao/handlers.py`. Apontar para `docs/how-to/protecao-forca-bruta.md`.
 
-- [ ] **Step 4: Validar a documentação**
+- [x] **Step 4: Validar a documentação**
 
 ```bash
 make docs
@@ -1052,7 +1054,7 @@ make docs
 
 Esperado: build sem erro em modo `--strict`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docs/how-to/protecao-forca-bruta.md mkdocs.yml CLAUDE.md
@@ -1063,7 +1065,7 @@ git commit -m "docs: documentar a proteção contra força bruta no login"
 
 ### Task 7: Verificação final
 
-- [ ] **Step 1: Rodar tudo o que a CI roda**
+- [x] **Step 1: Rodar tudo o que a CI roda**
 
 ```bash
 make up
@@ -1075,7 +1077,7 @@ uv run python manage.py makemigrations --check --dry-run
 
 Esperado: tudo verde. Colar a saída real na conclusão — não afirmar sucesso sem ela.
 
-- [ ] **Step 2: Conferir a configuração de deploy**
+- [x] **Step 2: Conferir a configuração de deploy**
 
 ```bash
 make check

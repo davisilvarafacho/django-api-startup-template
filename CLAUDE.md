@@ -168,6 +168,13 @@ ou via `setup_eager_loading(queryset)` estático no serializer (a view aplica so
 `DEFAULT_PERMISSION_CLASSES` é `IsAuthenticated` → `TenantPermission` (aplica o RLS) →
 `TokenScopePermission` (escopos, só para tokens `API_KEY`) → `CustomDjangoModelPermissions`.
 
+Para proteção contra força bruta, `AxesStandaloneBackend` é o primeiro item de
+`AUTHENTICATION_BACKENDS`: ele apenas verifica se a combinação usuário + IP está
+bloqueada e delega a autenticação real aos backends seguintes. A resposta de
+bloqueio é `resposta_de_bloqueio`, em
+`apps/api/autenticacao/handlers.py`. Consulte o
+[how-to de proteção contra força bruta](docs/how-to/protecao-forca-bruta.md).
+
 ### Feature flags
 
 `waffle` (`apps/api/core/feature_flags.py`) para kill-switch e rollout interno — estado
