@@ -7,7 +7,7 @@ from common.permission_cache.keys import layer_scope, user_scope
 
 def _remember_membership_previous(instance, using, raw, update_fields, **kwargs) -> None:
     previous = None
-    tracked_fields = {"usuario", "organizacao", "papel", "ativo"}
+    tracked_fields = {"usuario", "usuario_id", "organizacao", "organizacao_id", "papel", "ativo"}
     if not raw and not instance._state.adding and (update_fields is None or tracked_fields.intersection(update_fields)):
         previous = Vinculo.objects.using(using).filter(pk=instance.pk).values("usuario_id", "organizacao_id", "papel", "ativo").first()
     previous = previous or {}

@@ -76,6 +76,20 @@ def test_membership_user_change_bumps_old_and_new_users():
         assert_user_bump(bump, old_user, new_user)
 
 
+def test_membership_user_id_change_bumps_old_and_new_users():
+    old_user = UsuarioFactory()
+    new_user = UsuarioFactory()
+    organization = Organizacao.objects.create(nome="Acme", slug="acme")
+    membership = Vinculo.objects.create(usuario=old_user, organizacao=organization, papel=Papel.MEMBRO)
+
+    with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+        with transaction.atomic():
+            membership.usuario_id = new_user.pk
+            membership.save(update_fields=["usuario_id"])
+            bump.assert_not_called()
+        assert_user_bump(bump, old_user, new_user)
+
+
 def test_membership_organization_change_keeps_user_invalidation():
     user = UsuarioFactory()
     old_organization = Organizacao.objects.create(nome="Acme", slug="acme")
@@ -86,6 +100,20 @@ def test_membership_organization_change_keeps_user_invalidation():
         with transaction.atomic():
             membership.organizacao = new_organization
             membership.save(update_fields=["organizacao"])
+            bump.assert_not_called()
+        assert_user_bump(bump, user)
+
+
+def test_membership_organization_id_change_keeps_user_invalidation():
+    user = UsuarioFactory()
+    old_organization = Organizacao.objects.create(nome="Acme", slug="acme")
+    new_organization = Organizacao.objects.create(nome="Beta", slug="beta")
+    membership = Vinculo.objects.create(usuario=user, organizacao=old_organization, papel=Papel.MEMBRO)
+
+    with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+        with transaction.atomic():
+            membership.organizacao_id = new_organization.pk
+            membership.save(update_fields=["organizacao_id"])
             bump.assert_not_called()
         assert_user_bump(bump, user)
 
@@ -135,6 +163,14 @@ def test_organization_slug_active_and_delete_bump_tenant_global():
     with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with transaction.atomic():
             deleted_organization.delete()
+            bump.assert_not_called()
+        bump.assert_called_once_with(("tenant:global",), database_alias="default", layer="tenant")
+
+
+def test_organization_create_bumps_tenant_global():
+    with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+        with transaction.atomic():
+            Organizacao.objects.create(nome="Acme", slug="acme")
             bump.assert_not_called()
         bump.assert_called_once_with(("tenant:global",), database_alias="default", layer="tenant")
 
