@@ -124,15 +124,12 @@ _Atualizado em 2026-07-30._
   do lançamento e o gate `makemigrations --check --dry-run` será restaurado.
 
 ### Batch 8 — Domínio & segurança 🚧
-- ✅ Lib para **dados sensíveis** (field-level encryption): wrapper
-  `encrypt(...)`, keyring/rotação Fernet, write-only no DRF e exclusão
-  automática do auditlog.
 - ⏳ Base de código de **notificações** (providers plugáveis, templates, preferências).
+- ✅ Lib para **dados sensíveis** (field-level encryption): wrapper `encrypt(...)`, keyring/rotação Fernet, write-only no DRF e exclusão automática do auditlog.
 - ⏳ **Validação de upload** genérica e plugável.
 - ⏳ **Money handling** + **metadata framework** (JSON key-value por modelo).
 - ⏳ **Idempotency keys** em POST (evita duplicidade em retry de rede/pagamento).
-- ✅ **`django-anymail`**: abstração de e-mail multi-provider; envio padrão pelo
-  Resend, sem acoplamento ao SDK do provider.
+- ✅ **`django-anymail`**: abstração de e-mail multi-provider; envio padrão pelo Resend, sem acoplamento ao SDK do provider.
 
 ## ⏳ Planejado
 
