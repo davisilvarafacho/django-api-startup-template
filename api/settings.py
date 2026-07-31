@@ -186,6 +186,9 @@ DATABASES = {
         "USER": get_env_var("DATABASE_USER"),
         "PASSWORD": get_env_var("DATABASE_PASSWORD"),
         "PORT": get_env_var("DATABASE_PORT"),
+        "TEST": {
+            "NAME": get_env_var("TEST_DATABASE_NAME", "test_base_permission_cache"),
+        },
         "CONN_MAX_AGE": 60 * 60 * 3,  # 3 horas
         "CONN_HEALTH_CHECKS": True,
     },
