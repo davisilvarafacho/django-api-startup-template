@@ -84,8 +84,8 @@ outras 18 migrações do app; passou a depender de `0019_alter_periodictasks_opt
   de repetição foram centralizados em `apps/api/autenticacao/tests/conftest.py`.
 - **Task 5** — resolvido nesta retomada: `desagendar()` remove o `CrontabSchedule`
   criado pela tarefa quando ele não é compartilhado por outro `PeriodicTask`.
-- **Task 5** — `update_or_create` usa `task` como chave, que não é `unique` no schema do
-  `django_celery_beat` (só `name` é).
+- **Task 5** — resolvido nesta retomada: o agendamento usa o nome único como identidade e
+  remove duplicatas legadas da mesma tarefa.
 
 ### Ambiente: como rodar a suíte nesta máquina
 

@@ -11,7 +11,9 @@ from django_celery_beat.models import CrontabSchedule, PeriodicTask
 
 from apps.api.core.tasks import limpar_logs_de_acesso_antigos
 
-desagendar = import_module("apps.api.core.migrations.0001_schedule_access_log_cleanup").desagendar
+migracao_agendamento = import_module("apps.api.core.migrations.0001_schedule_access_log_cleanup")
+agendar = migracao_agendamento.agendar
+desagendar = migracao_agendamento.desagendar
 
 pytestmark = pytest.mark.django_db
 
@@ -53,6 +55,37 @@ def test_a_tarefa_periodica_fica_agendada():
         task="apps.api.core.tasks.limpar_logs_de_acesso_antigos"
     )
 
+    assert tarefa.enabled
+    assert tarefa.crontab.hour == "3"
+
+
+def test_agendamento_por_nome_unico_remove_duplicatas_legadas():
+    PeriodicTask.objects.filter(task="apps.api.core.tasks.limpar_logs_de_acesso_antigos").delete()
+    agenda_legada = CrontabSchedule.objects.create(
+        minute="30",
+        hour="6",
+        day_of_week="*",
+        day_of_month="*",
+        month_of_year="*",
+    )
+    PeriodicTask.objects.create(
+        name="Expurgo legado 1",
+        task="apps.api.core.tasks.limpar_logs_de_acesso_antigos",
+        crontab=agenda_legada,
+    )
+    PeriodicTask.objects.create(
+        name="Expurgo legado 2",
+        task="apps.api.core.tasks.limpar_logs_de_acesso_antigos",
+        crontab=agenda_legada,
+    )
+
+    agendar(django_apps, None)
+    agendar(django_apps, None)
+
+    tarefas = PeriodicTask.objects.filter(task="apps.api.core.tasks.limpar_logs_de_acesso_antigos")
+    assert tarefas.count() == 1
+    tarefa = tarefas.get()
+    assert tarefa.name == "Expurgar logs de acesso antigos"
     assert tarefa.enabled
     assert tarefa.crontab.hour == "3"
 
