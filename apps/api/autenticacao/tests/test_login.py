@@ -1,197 +1,154 @@
-"""Contratos HTTP para emissão de sessão e reautenticação."""
+"""Contrato HTTP de `POST /auth/login/`."""
+from unittest.mock import patch
 
-from datetime import timedelta
+from django.contrib.auth.signals import user_logged_in
 
-from django.core.cache import cache
-from django.db import IntegrityError
-
-from rest_framework import status
-from rest_framework.throttling import ScopedRateThrottle
+from rest_framework.test import APIClient
+from rest_framework.throttling import AnonRateThrottle, ScopedRateThrottle
 
 import pytest
+from threadlocals.threadlocals import set_current_user, set_thread_variable
 
 from apps.api.autenticacao.models import AuthToken, TokenMetaData, TokenType
-from apps.api.autenticacao.services import issue_token
+from apps.api.autenticacao.views import LoginView
+from apps.usuarios.factories import UsuarioFactory
 
 pytestmark = pytest.mark.django_db
 
 
-def _disable_analytics(monkeypatch):
-    monkeypatch.setattr("apps.api.autenticacao.views.posthog.tag", lambda *args, **kwargs: None)
-    monkeypatch.setattr("apps.api.autenticacao.views.capture", lambda *args, **kwargs: None)
-    monkeypatch.setattr("apps.api.autenticacao.views.identify_context", lambda *args, **kwargs: None)
+@pytest.fixture(autouse=True)
+def _limpar_thread_locals():
+    """Limpa o estado que `ThreadLocalMiddleware` deixa entre requests.
+
+    `ThreadLocalMiddleware` nunca limpa `request` sozinho: sem isso, o
+    usuário desta request vazaria como `get_current_user()` para o próximo
+    teste que rodar na mesma thread.
+    """
+    set_current_user(None)
+    set_thread_variable("request", None)
+    yield
+    set_current_user(None)
+    set_thread_variable("request", None)
 
 
-def _session_client(api_client, usuario):
-    issued = issue_token(
-        responsavel=usuario,
-        token_type=TokenType.TOKEN,
-        expiry=timedelta(hours=1),
-        metadata_input={},
-    )
-    api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {issued.plain_token}")
-    return api_client, issued.instance
+@pytest.fixture
+def usuario():
+    return UsuarioFactory(email="login@example.com", password="senha-forte-123")
 
 
-def test_login_emite_sessao_pelo_service(api_client, usuario, monkeypatch):
-    _disable_analytics(monkeypatch)
-    issued_arguments = []
-    original_issue_token = issue_token
+@pytest.fixture
+def client():
+    return APIClient()
 
-    def tracked_issue_token(**kwargs):
-        issued_arguments.append(kwargs)
-        return original_issue_token(**kwargs)
 
-    monkeypatch.setattr("apps.api.autenticacao.views.issue_token", tracked_issue_token)
-
-    response = api_client.post(
+def test_login_com_credenciais_validas_emite_token_de_sessao(client, usuario):
+    response = client.post(
         "/auth/login/",
-        {"email": usuario.email, "password": "Senha123!"},
-        REMOTE_ADDR="127.0.0.1",
+        {"email": usuario.email, "password": "senha-forte-123", "device_name": "Notebook"},
+        format="json",
     )
 
-    assert response.status_code == status.HTTP_200_OK, response.content
+    assert response.status_code == 200
+    assert response.data["token"]
+    assert response.data["session"]["device"]["name"] == "Notebook"
+
     token = AuthToken.objects.get(responsavel=usuario)
     assert token.type == TokenType.TOKEN
-    assert token.metadata.reauthenticated_at is not None
-    assert response.data["token"]
-    assert response.data["expiry"]
-    assert response.data["session"]["id"] == token.digest
-    assert issued_arguments[0]["token_type"] == TokenType.TOKEN
-    assert issued_arguments[0]["responsavel"] == usuario
+    assert token.metadata.device_name == "Notebook"
 
 
-def test_login_nao_deixa_token_parcial_se_metadata_falha(api_client, usuario, monkeypatch):
-    monkeypatch.setattr(TokenMetaData.objects, "create", lambda **kwargs: (_ for _ in ()).throw(IntegrityError("boom")))
-
-    with pytest.raises(IntegrityError, match="boom"):
-        api_client.post("/auth/login/", {"email": usuario.email, "password": "Senha123!"})
-
-    assert not AuthToken.objects.filter(responsavel=usuario).exists()
+def test_login_tem_throttle_especifico(settings):
+    assert LoginView.throttle_scope == "auth_login"
+    assert LoginView.throttle_classes == [AnonRateThrottle, ScopedRateThrottle]
+    assert settings.REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]["auth_login"] == "10/min"
 
 
-def test_login_mantem_alias_username_para_clientes_existentes(api_client, usuario, monkeypatch):
-    _disable_analytics(monkeypatch)
-
-    response = api_client.post(
+def test_login_com_senha_invalida_e_recusado(client, usuario):
+    response = client.post(
         "/auth/login/",
-        {"username": usuario.email, "password": "Senha123!"},
-        REMOTE_ADDR="127.0.0.1",
+        {"email": usuario.email, "password": "senha-errada"},
+        format="json",
     )
 
-    assert response.status_code == status.HTTP_200_OK, response.content
+    assert response.status_code == 401
+    assert response.data["errors"][0]["code"] == "auth.invalid_credentials"
 
 
-def test_login_invalido_retorna_erro_tipado(api_client, usuario):
-    response = api_client.post(
+def test_login_com_usuario_inexistente_e_recusado(client):
+    response = client.post(
         "/auth/login/",
-        {"email": usuario.email, "password": "senha-incorreta"},
+        {"email": "ninguem@example.com", "password": "qualquer"},
+        format="json",
     )
 
-    assert response.status_code == status.HTTP_401_UNAUTHORIZED
-    assert response.data == {
-        "code": "auth.invalid_credentials",
-        "message": "E-mail ou senha inválidos.",
-    }
+    assert response.status_code == 401
+    assert response.data["errors"][0]["code"] == "auth.invalid_credentials"
 
 
-def test_login_respeita_throttle_nomeado(api_client, usuario, monkeypatch):
-    _disable_analytics(monkeypatch)
-    cache.clear()
-    monkeypatch.setattr(
-        ScopedRateThrottle,
-        "THROTTLE_RATES",
-        {
-            **ScopedRateThrottle.THROTTLE_RATES,
-            "auth_login": "1/min",
-        },
+def test_login_respeita_limite_de_sessoes_ativas(client, usuario, monkeypatch):
+    # `settings.REST_KNOX` reconstrói o objeto `knox_settings` via signal, mas
+    # `views.py` já importou a referência antiga; ajustar o atributo direto
+    # no objeto em uso evita depender dessa recarga.
+    monkeypatch.setattr("apps.api.autenticacao.views.knox_settings.TOKEN_LIMIT_PER_USER", 1)
+
+    primeira = client.post(
+        "/auth/login/", {"email": usuario.email, "password": "senha-forte-123"}, format="json"
+    )
+    assert primeira.status_code == 200
+
+    segunda = client.post(
+        "/auth/login/", {"email": usuario.email, "password": "senha-forte-123"}, format="json"
     )
 
-    payload = {"email": usuario.email, "password": "Senha123!"}
-    assert api_client.post("/auth/login/", payload, REMOTE_ADDR="127.0.0.1").status_code == status.HTTP_200_OK
-    assert api_client.post("/auth/login/", payload, REMOTE_ADDR="127.0.0.1").status_code == status.HTTP_429_TOO_MANY_REQUESTS
+    assert segunda.status_code == 403
+    assert segunda.data["errors"][0]["code"] == "auth.token_limit_exceeded"
 
 
-def test_login_limita_apenas_sessoes_e_retorna_envelope_tipado(api_client, usuario, monkeypatch):
-    _disable_analytics(monkeypatch)
-    monkeypatch.setattr("apps.api.autenticacao.views.LoginView.get_token_limit_per_user", lambda self: 1)
-    issue_token(
-        responsavel=usuario,
-        token_type=TokenType.API_KEY,
-        expiry=timedelta(hours=1),
-        metadata_input={},
-    )
+def test_login_dispara_signal_user_logged_in(client, usuario):
+    recebido = []
 
-    payload = {"email": usuario.email, "password": "Senha123!"}
-    first_response = api_client.post("/auth/login/", payload, REMOTE_ADDR="127.0.0.1")
-    second_response = api_client.post("/auth/login/", payload, REMOTE_ADDR="127.0.0.1")
+    def _receiver(sender, request, user, **kwargs):
+        recebido.append(user)
 
-    assert first_response.status_code == status.HTTP_200_OK
-    assert second_response.status_code == status.HTTP_403_FORBIDDEN
-    assert second_response.data == {
-        "code": "auth.too_many_attempts",
-        "message": "Limite de sessões ativas atingido.",
-    }
+    user_logged_in.connect(_receiver)
+    try:
+        client.post(
+            "/auth/login/", {"email": usuario.email, "password": "senha-forte-123"}, format="json"
+        )
+    finally:
+        user_logged_in.disconnect(_receiver)
+
+    assert recebido == [usuario]
 
 
-def test_reauthenticate_atualiza_sessao_atual(api_client, usuario):
-    client, token = _session_client(api_client, usuario)
-    TokenMetaData.objects.filter(token=token).update(reauthenticated_at=None)
+def test_login_com_mudanca_de_pais_marca_risco(client, usuario):
+    anterior_token, _ = AuthToken.objects.create(responsavel=usuario, type=TokenType.TOKEN)
+    TokenMetaData.objects.create(token=anterior_token, country_code="BR")
 
-    response = client.post("/auth/reauthenticate/", {"password": "Senha123!"})
+    with patch(
+        "apps.api.autenticacao.utils.get_geolocation_data",
+        return_value={"country": "France", "country_code": "FR"},
+    ):
+        response = client.post(
+            "/auth/login/", {"email": usuario.email, "password": "senha-forte-123"}, format="json"
+        )
 
-    assert response.status_code == status.HTTP_204_NO_CONTENT, response.content
-    token.metadata.refresh_from_db()
-    assert token.metadata.reauthenticated_at is not None
-
-
-def test_reauthenticate_sem_credencial_retorna_erro_tipado_do_middleware(api_client):
-    response = api_client.post("/auth/reauthenticate/", {"password": "Senha123!"})
-
-    assert response.status_code == status.HTTP_401_UNAUTHORIZED
-    assert response.json() == {
-        "code": "auth.invalid_token",
-        "message": "Token não fornecido.",
-    }
+    assert response.status_code == 200
+    novo_token = AuthToken.objects.exclude(digest=anterior_token.digest).get(responsavel=usuario)
+    assert novo_token.metadata.is_suspicious is True
+    assert novo_token.metadata.risk_score == 50
 
 
-def test_reauthenticate_recusa_api_key(api_client, usuario):
-    issued = issue_token(
-        responsavel=usuario,
-        token_type=TokenType.API_KEY,
-        expiry=timedelta(hours=1),
-        metadata_input={},
-    )
-    api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {issued.plain_token}")
+def test_login_nao_vaza_segredo_em_eventos_de_analytics(client, usuario):
+    with patch("apps.api.autenticacao.views.capture") as capture_mock:
+        response = client.post(
+            "/auth/login/", {"email": usuario.email, "password": "senha-forte-123"}, format="json"
+        )
 
-    response = api_client.post("/auth/reauthenticate/", {"password": "Senha123!"})
+    token_plano = response.data["token"]
 
-    assert response.status_code == status.HTTP_403_FORBIDDEN
-    assert response.data["code"] == "auth.reauthentication_required"
-
-
-def test_reauthenticate_invalida_nao_atualiza_marcador(api_client, usuario):
-    client, token = _session_client(api_client, usuario)
-    TokenMetaData.objects.filter(token=token).update(reauthenticated_at=None)
-
-    response = client.post("/auth/reauthenticate/", {"password": "senha-incorreta"})
-
-    assert response.status_code == status.HTTP_401_UNAUTHORIZED
-    token.metadata.refresh_from_db()
-    assert token.metadata.reauthenticated_at is None
-
-
-def test_reauthenticate_respeita_throttle_nomeado(api_client, usuario, monkeypatch):
-    cache.clear()
-    monkeypatch.setattr(
-        ScopedRateThrottle,
-        "THROTTLE_RATES",
-        {
-            **ScopedRateThrottle.THROTTLE_RATES,
-            "auth_reauthenticate": "1/min",
-        },
-    )
-    client, _ = _session_client(api_client, usuario)
-
-    assert client.post("/auth/reauthenticate/", {"password": "Senha123!"}).status_code == status.HTTP_204_NO_CONTENT
-    assert client.post("/auth/reauthenticate/", {"password": "Senha123!"}).status_code == status.HTTP_429_TOO_MANY_REQUESTS
+    for chamada in capture_mock.call_args_list:
+        propriedades = chamada.kwargs.get("properties") or {}
+        assert token_plano not in str(propriedades)
+        for valor in propriedades.values():
+            assert valor != token_plano

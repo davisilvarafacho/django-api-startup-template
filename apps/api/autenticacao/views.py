@@ -1,23 +1,21 @@
-from datetime import timedelta
-
-from django.contrib.auth.signals import user_logged_in
-from django.db.models import Q
+from django.contrib.auth.signals import user_logged_in, user_logged_out
 from django.utils import timezone
 
-from rest_framework import status, viewsets
+from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
+from rest_framework.throttling import AnonRateThrottle, ScopedRateThrottle, UserRateThrottle
 from rest_framework.views import APIView
 
 import posthog
 from knox.models import get_token_model
-from knox.views import LoginView as KnoxLoginView
+from knox.settings import knox_settings
 from posthog import capture, identify_context, new_context
 
 from apps.api.core.errors import APIError
 from apps.api.core.route_markers import no_tenancy
+from apps.organizacoes.permissions import TenantPermission
 
 from .errors import AuthErrorCode
 from .mfa import (
@@ -35,75 +33,138 @@ from .mfa import (
     verify_login_challenge,
     verify_reauthentication,
 )
-from .models import MFAFactor, MFAFactorType, TokenMetaData, TokenType, TrustedDevice
-from .permissions import RecentAuthenticationPermission
-from .recent_auth import require_recent_auth
-from .serializers import AuthTokenSerializer as CustomAuthTokenSerializer
-from .serializers import LoginResponseSerializer, LoginSerializer, ReauthenticateSerializer
-from .services import issue_token
+from .models import MFAFactor, MFAFactorType, TokenType, TrustedDevice
+from .permissions import APIKeyPermissions, TokenScopePermission
+from .recent_auth import RecentAuthenticationPermission, require_recent_auth
+from .risk import evaluate_login_risk
+from .schema import (
+    document_api_key_create,
+    document_api_key_resume,
+    document_api_key_rotate,
+    document_api_key_suspend,
+    document_login,
+    document_reauthenticate,
+)
+from .serializers import (
+    APIKeySerializer,
+    APIKeyWriteSerializer,
+    LoginResponseSerializer,
+    LoginSerializer,
+    ReauthenticateSerializer,
+    SessionSerializer,
+)
+from .services import (
+    issue_token,
+    resume_api_key,
+    revoke_all_sessions,
+    revoke_api_key,
+    revoke_session,
+    rotate_api_key,
+    suspend_api_key,
+)
 from .utils import build_token_metadata
 
-# class LoginView(KnoxLoginView):
-#     permission_classes = (AllowAny,)
-#
-#     def post(self, request, format=None):
-#         serializer = AuthTokenSerializer(data=request.data)
-#         serializer.is_valid(raise_exception=True)
-#         user = serializer.validated_data["user"]
-#         login(request, user)
-#         return super().post(request, format=None)
+# Nunca importar `knox.models.AuthToken` diretamente: o modelo ativo é o
+# swappable definido em `settings.KNOX_TOKEN_MODEL`.
+AuthToken = get_token_model()
 
 
-class LoginView(KnoxLoginView):
+class LoginView(APIView):
+    """Valida credenciais, emite a sessão e avalia risco. Nada mais mora aqui:
+
+    parsing de dispositivo/geolocalização está em `utils.build_token_metadata`,
+    emissão atômica em `services.issue_token`, e comparação de risco em
+    `risk.evaluate_login_risk`.
+    """
+
     permission_classes = (AllowAny,)
-    throttle_classes = (ScopedRateThrottle,)
+    throttle_classes = [AnonRateThrottle, ScopedRateThrottle]
     throttle_scope = "auth_login"
 
+    @document_login
     def post(self, request):
-        serializer = LoginSerializer(data=request.data, context={"request": request})
+        serializer = LoginSerializer(data=request.data, context={"request": request._request})
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data["user"]
 
-        metadata_input = build_token_metadata(request, request.data)
-        trusted_device = (
-            consume_trusted_device(user, request.data.get("trusted_device_token", "")) if request.data.get("trusted_device_token") else None
-        )
-        if active_factors(user).exists() and trusted_device is None:
-            issued = issue_token(
+        metadata_input = build_token_metadata(request, serializer.validated_data)
+
+        # Gate de MFA: com fator ativo, o login não emite sessão — devolve um
+        # token de pré-autenticação de vida curta, que só o fluxo de challenge
+        # troca por sessão real. Um dispositivo confiável válido pula o desafio.
+        trusted_device_token = request.data.get("trusted_device_token", "")
+        trusted_device = consume_trusted_device(user, trusted_device_token) if trusted_device_token else None
+        if trusted_device is None and active_factors(user).exists():
+            pre_auth = issue_token(
                 responsavel=user,
                 token_type=TokenType.PRE_AUTH,
-                expiry=timezone.now() + PRE_AUTH_LIFETIME,
+                created_by=user,
+                expiry=PRE_AUTH_LIFETIME,
                 metadata_input=metadata_input,
             )
-            return Response({"pre_auth_token": issued.plain_token, "methods": available_methods(user)}, status=status.HTTP_202_ACCEPTED)
+            return Response(
+                {"pre_auth_token": pre_auth.plain_token, "methods": available_methods(user)},
+                status=status.HTTP_202_ACCEPTED,
+            )
 
-        token_limit_per_user = self.get_token_limit_per_user()
-        if token_limit_per_user is not None:
-            now = timezone.now()
-            token = user.auth_token_set.filter(type=TokenType.TOKEN).filter(Q(expiry__isnull=True) | Q(expiry__gt=now))
-            if token.count() >= token_limit_per_user:
-                raise APIError(
-                    AuthErrorCode.TOO_MANY_ATTEMPTS,
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    message="Limite de sessões ativas atingido.",
-                )
+        self._checar_limite_de_sessoes(user)
 
-        metadata_input["reauthenticated_at"] = timezone.now()
         issued = issue_token(
             responsavel=user,
             token_type=TokenType.TOKEN,
-            expiry=self.get_token_ttl(),
+            created_by=user,
+            expiry=knox_settings.TOKEN_TTL,
             metadata_input=metadata_input,
         )
-        instance = issued.instance
-        plain_token = issued.plain_token
+        metadata = issued.instance.metadata
+
+        risco = evaluate_login_risk(metadata)
+        if risco.is_suspicious:
+            metadata.mark_as_suspicious(risco.reason)
+            metadata.risk_score = risco.risk_score
+            metadata.save(update_fields=["risk_score"])
+
         user_logged_in.send(sender=user.__class__, request=request, user=user)
-        metadata = instance.metadata
 
-        # verifica se há comportamento suspeito
-        self.check_suspicious_activity(user, metadata)
+        self._capturar_eventos_posthog(user, metadata, risco)
 
-        # PostHog: identifica o usuário e captura o evento de login
+        response_data = {
+            "token": issued.plain_token,
+            "expiry": issued.instance.expiry,
+            "session": {
+                "uuid": issued.instance.uuid,
+                "device": {
+                    "type": metadata.device_type,
+                    "name": (
+                        metadata.device_name
+                        or f"{metadata.device_brand} {metadata.device_model}".strip()
+                        or "Dispositivo desconhecido"
+                    ),
+                    "location": metadata.get_location_string(),
+                },
+            },
+        }
+        payload = LoginResponseSerializer(response_data).data
+        if trusted_device is not None:
+            # Rotação: o dispositivo confiável consumido no login vira um novo
+            # token, entregue uma única vez, junto da sessão.
+            payload["trusted_device_token"] = trusted_device.plain_token
+        return Response(payload, status=status.HTTP_200_OK)
+
+    def _checar_limite_de_sessoes(self, user):
+        limite = knox_settings.TOKEN_LIMIT_PER_USER
+        if limite is None:
+            return
+
+        sessoes_ativas = AuthToken.objects.filter(
+            responsavel=user, type=TokenType.TOKEN, expiry__gt=timezone.now()
+        ).count()
+
+        if sessoes_ativas >= limite:
+            raise APIError(AuthErrorCode.TOKEN_LIMIT_EXCEEDED, status_code=403)
+
+    def _capturar_eventos_posthog(self, user, metadata, risco):
+        # Nunca dentro da transação de emissão, e nunca com segredo: só campos scrubbed.
         with new_context():
             identify_context(str(user.pk))
             posthog.tag("is_staff", user.is_staff)
@@ -120,89 +181,208 @@ class LoginView(KnoxLoginView):
                 },
             )
 
-        response_serializer = LoginResponseSerializer(
-            {
-                "token": plain_token,
-                "expiry": instance.expiry,
-                "session": {"id": instance.digest, "type": instance.type},
-                "device": {
-                    "type": metadata.device_type,
-                    "name": metadata.device_name or f"{metadata.device_brand} {metadata.device_model}".strip() or "Dispositivo desconhecido",
-                    "location": metadata.get_location_string(),
-                },
-            }
-        )
-        response = response_serializer.data
-        if trusted_device:
-            response["trusted_device_token"] = trusted_device.plain_token
-        return Response(response)
-
-    def check_suspicious_activity(self, user, new_metadata):
-        """Verifica atividades suspeitas comparando com tokens anteriores"""
-
-        # pega tokens recentes do usuário (últimos 7 dias)
-
-        recent_tokens = (
-            TokenMetaData.objects.filter(token__responsavel=user, first_used__gte=timezone.now() - timedelta(days=7))
-            .exclude(token=new_metadata.token)
-            .select_related("token")
-        )
-
-        if not recent_tokens.exists():
-            return  # primeiro login, sem com o que comparar
-
-        # verifica mudança drástica de localização
-        for old_token in recent_tokens:
-            if old_token.country_code and new_metadata.country_code:
-                if old_token.country_code != new_metadata.country_code:
-                    new_metadata.mark_as_suspicious(f"Login de país diferente: {old_token.country} → {new_metadata.country}")
-                    new_metadata.risk_score = 50
-                    new_metadata.save()
-
-                    # PostHog: captura evento de login suspeito
-                    with new_context():
-                        identify_context(str(user.pk))
-                        capture(
-                            "suspicious_login_detected",
-                            properties={
-                                "previous_country_code": old_token.country_code,
-                                "new_country_code": new_metadata.country_code,
-                                "risk_score": new_metadata.risk_score,
-                                "device_type": new_metadata.device_type,
-                            },
-                        )
-
-                    # aqui você pode enviar notificação ao usuário
-                    # send_security_alert(user, new_metadata)
-                    break
+            if risco.is_suspicious:
+                capture('suspicious_login_detected', properties={
+                    'risk_score': risco.risk_score,
+                    'device_type': metadata.device_type,
+                    'country_code': metadata.country_code,
+                })
 
 
-@no_tenancy
 class ReauthenticateView(APIView):
-    """Atualiza a confirmação recente de senha da sessão atual."""
+    """Confirma a identidade da sessão atual (step-up auth).
 
-    permission_classes = (IsAuthenticated,)
-    throttle_classes = (ScopedRateThrottle,)
+    Só tokens de sessão passam por aqui: `session_only` faz o
+    `TokenScopePermission` recusar API keys antes mesmo da senha ser checada.
+    """
+
+    permission_classes = [IsAuthenticated, TokenScopePermission]
+    session_only = True
+    throttle_classes = [UserRateThrottle, ScopedRateThrottle]
     throttle_scope = "auth_reauthenticate"
 
+    @document_reauthenticate
     def post(self, request):
-        auth_token = getattr(request, "auth", None)
-        if auth_token is None or auth_token.type != TokenType.TOKEN:
-            raise APIError(
-                AuthErrorCode.REAUTHENTICATION_REQUIRED,
-                status_code=status.HTTP_403_FORBIDDEN,
-                message="Uma sessão comum é necessária para reautenticar.",
-            )
-
-        serializer = ReauthenticateSerializer(data=request.data, context={"user": request.user})
+        serializer = ReauthenticateSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
 
+        # Com MFA ativo a senha sozinha não reautentica: o step-up só se completa
+        # pelo par `/auth/reauthenticate/challenge/{start,verify}/`, que é quem
+        # grava `reauthenticated_at`.
         if active_factors(request.user).exists():
             return Response({"methods": available_methods(request.user)}, status=status.HTTP_202_ACCEPTED)
 
-        auth_token.metadata.reauthenticated_at = timezone.now()
-        auth_token.metadata.save(update_fields=["reauthenticated_at"])
+        metadata = request.auth.metadata
+        metadata.reauthenticated_at = timezone.now()
+        metadata.save(update_fields=["reauthenticated_at"])
+
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class SessionScopedViewMixin:
+    """Endpoints administrativos de credenciais recusam API keys de saída."""
+
+    permission_classes = [IsAuthenticated, TokenScopePermission]
+    session_only = True
+
+
+class SessionViewSet(
+    SessionScopedViewMixin,
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.UpdateModelMixin,
+    viewsets.GenericViewSet,
+):
+    """Gerencia as sessões (`TokenType.TOKEN`) do usuário autenticado.
+
+    Nunca lista/edita API keys ou tokens de reset; `PATCH` só aceita
+    `device_name`; `DELETE` revoga logicamente (nunca apaga).
+    """
+
+    serializer_class = SessionSerializer
+    lookup_field = "uuid"
+    http_method_names = ["get", "patch", "delete", "post", "head", "options"]
+
+    def get_queryset(self):
+        return (
+            AuthToken.objects.filter(responsavel=self.request.user, type=TokenType.TOKEN, revoked_at__isnull=True)
+            .select_related("metadata")
+            .order_by("-created_at")
+        )
+
+    @action(detail=False, methods=["get"])
+    def current(self, request):
+        serializer = self.get_serializer(request.auth)
+        return Response(serializer.data)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        revoke_session(instance, actor=request.user)
+
+        with new_context():
+            identify_context(str(request.user.pk))
+            capture('session_revoked')
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=False, methods=["post"], url_path="revoke_all_except_current")
+    def revoke_all_except_current(self, request):
+        revoked_count = revoke_all_sessions(request.user, actor=request.user, exclude_uuid=request.auth.uuid)
+
+        with new_context():
+            identify_context(str(request.user.pk))
+            capture('all_sessions_revoked_except_current', properties={'revoked_count': revoked_count})
+
+        return Response({"revoked_count": revoked_count})
+
+
+class LogoutView(APIView):
+    """Revoga logicamente só a sessão atual; nunca API keys/reset."""
+
+    permission_classes = [IsAuthenticated, TokenScopePermission]
+    session_only = True
+
+    def post(self, request):
+        auth_token = request.auth
+        if getattr(auth_token, "type", None) == TokenType.TOKEN:
+            revoke_session(auth_token, actor=request.user)
+
+        user_logged_out.send(sender=request.user.__class__, request=request, user=request.user)
+
+        with new_context():
+            identify_context(str(request.user.pk))
+            capture('user_logged_out')
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class LogoutAllView(APIView):
+    """Revoga logicamente todas as sessões do usuário, incluindo a atual."""
+
+    permission_classes = [IsAuthenticated, TokenScopePermission]
+    session_only = True
+
+    def post(self, request):
+        revoked_count = revoke_all_sessions(request.user, actor=request.user)
+
+        user_logged_out.send(sender=request.user.__class__, request=request, user=request.user)
+
+        with new_context():
+            identify_context(str(request.user.pk))
+            capture('all_sessions_revoked', properties={'revoked_count': revoked_count})
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class APIKeyViewSet(viewsets.ModelViewSet):
+    """CRUD e ciclo de vida de API keys da organização do header.
+
+    Uma API key nunca administra outras credenciais: `session_only` faz o
+    `TokenScopePermission` recusá-la de saída, antes de `APIKeyPermissions`
+    (as permissions humanas explícitas `view_apikey`/`add_apikey`/...).
+    """
+
+    lookup_field = "uuid"
+    permission_classes = [
+        IsAuthenticated,
+        TenantPermission,
+        TokenScopePermission,
+        APIKeyPermissions,
+        RecentAuthenticationPermission,
+    ]
+    session_only = True
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    def get_queryset(self):
+        return (
+            AuthToken.objects.filter(type=TokenType.API_KEY, organization=self.request.organizacao)
+            .select_related("metadata", "responsavel")
+            .order_by("-created_at")
+        )
+
+    def get_serializer_class(self):
+        if self.action in ("create", "partial_update"):
+            return APIKeyWriteSerializer
+        return APIKeySerializer
+
+    def perform_destroy(self, instance):
+        revoke_api_key(instance, actor=self.request.user)
+
+    @document_api_key_create
+    @require_recent_auth()
+    def create(self, request, *args, **kwargs):
+        return super().create(request, *args, **kwargs)
+
+    @require_recent_auth()
+    def partial_update(self, request, *args, **kwargs):
+        return super().partial_update(request, *args, **kwargs)
+
+    @document_api_key_rotate
+    @require_recent_auth()
+    @action(detail=True, methods=["post"])
+    def rotate(self, request, uuid=None):
+        instance = self.get_object()
+        issued = rotate_api_key(instance, actor=request.user)
+        # Plain token só aparece na criação/rotação; não é um campo persistido.
+        issued.instance.token = issued.plain_token
+
+        data = self.get_serializer(issued.instance).data
+        return Response(data, status=status.HTTP_201_CREATED)
+
+    @document_api_key_suspend
+    @action(detail=True, methods=["post"])
+    def suspend(self, request, uuid=None):
+        instance = self.get_object()
+        suspend_api_key(instance, actor=request.user, reason=request.data.get("reason", ""))
+        return Response(self.get_serializer(instance).data)
+
+    @document_api_key_resume
+    @action(detail=True, methods=["post"])
+    def resume(self, request, uuid=None):
+        instance = self.get_object()
+        resume_api_key(instance, actor=request.user)
+        return Response(self.get_serializer(instance).data)
+
 
 
 @no_tenancy
@@ -370,57 +550,4 @@ class MFAAdminResetView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class AuthTokenViewSet(viewsets.ReadOnlyModelViewSet):
-    serializer_class = CustomAuthTokenSerializer
 
-    def get_queryset(self):
-        return get_token_model().objects.filter(responsavel=self.request.user).order_by("-created_at")
-
-    @action(detail=False, methods=["get"])
-    def current(self, request):
-        if not hasattr(request, "auth") or not request.auth:
-            return Response({"detail": "Token não encontrado"}, status=status.HTTP_404_NOT_FOUND)
-
-        serializer = self.get_serializer(request.auth)
-        return Response(serializer.data)
-
-    @action(detail=True, methods=["delete"])
-    def revoke(self, request, pk=None):
-        try:
-            token = self.get_queryset().get(digest=pk)
-
-            # Não permite revogar o token atual
-            if hasattr(request, "auth") and request.auth.digest == token.digest:
-                return Response(
-                    {"detail": "Você não pode revogar o token atual. Use o endpoint de logout."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            token.delete()
-
-            # PostHog: captura revogação de token individual
-            with new_context():
-                identify_context(str(request.user.pk))
-                capture("token_revoked")
-
-            return Response({"detail": "Token revogado com sucesso"}, status=status.HTTP_204_NO_CONTENT)
-        except get_token_model().DoesNotExist:
-            return Response({"detail": "Token não encontrado"}, status=status.HTTP_404_NOT_FOUND)
-
-    @action(detail=False, methods=["delete"])
-    def revoke_all_except_current(self, request):
-        current_digest = request.auth.digest if hasattr(request, "auth") else None
-
-        deleted_count = self.get_queryset().exclude(digest=current_digest).delete()[0]
-
-        # PostHog: captura revogação de todos os tokens
-        with new_context():
-            identify_context(str(request.user.pk))
-            capture(
-                "all_tokens_revoked",
-                properties={
-                    "revoked_count": deleted_count,
-                },
-            )
-
-        return Response({"detail": f"{deleted_count} token(s) revogado(s) com sucesso"})

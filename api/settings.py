@@ -2,6 +2,7 @@ import os
 import pathlib
 import sys
 import warnings
+from datetime import timedelta
 
 from django.core.management.utils import get_random_secret_key
 from django.utils.translation import gettext_lazy as _
@@ -70,6 +71,21 @@ ALLOWED_HOSTS = get_list_from_env("DJANGO_ALLOWED_HOSTS", ["127.0.0.1", "localho
 
 CSRF_TRUSTED_ORIGINS = get_list_from_env("DJANGO_CSRF_TRUSTED_ORIGINS", ["http://127.0.0.1:8000", "http://localhost:8000"])
 
+# A API sempre roda atrás do nginx (`docker/nginx/`), que sobrescreve os
+# `X-Forwarded-*` — o valor que o cliente mandar é descartado antes de chegar
+# aqui. Sem isto o Django enxerga a request como http na porta do gunicorn e
+# monta URLs absolutas (redirects, links do DRF, `build_absolute_uri`) erradas.
+#
+# Desligue apenas se o gunicorn for exposto direto, sem proxy: confiar nesses
+# headers com a porta aberta permitiria forjar `X-Forwarded-Proto: https` e
+# burlar as checagens de conexão segura.
+BEHIND_PROXY = get_bool_from_env("DJANGO_BEHIND_PROXY", True)
+
+if BEHIND_PROXY:
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    USE_X_FORWARDED_HOST = True
+    USE_X_FORWARDED_PORT = True
+
 INTERNAL_IPS = [
     "127.0.0.1",
 ]
@@ -95,6 +111,8 @@ DJANGO_APPS = [
 
 LIBS_APPS = [
     "auditlog",
+    "anymail",
+    "axes",
     "corsheaders",
     "django_celery_beat",
     "django_filters",
@@ -149,7 +167,11 @@ MIDDLEWARE = [
     "waffle.middleware.WaffleMiddleware",
     # Par do PrometheusBeforeMiddleware; fecha a medição da request.
     "django_prometheus.middleware.PrometheusAfterMiddleware",
-] + ENV_MIDDLEWARES
+] + ENV_MIDDLEWARES + [
+    # Troca a resposta por 429 na volta da request quando o bloqueio dispara.
+    # Fica por último para que todos os demais middlewares vejam a resposta final.
+    "axes.middleware.AxesMiddleware",
+]
 
 
 ROOT_URLCONF = "api.urls"
@@ -226,6 +248,9 @@ AUTH_USER_MODEL = "usuarios.Usuario"
 # organização), o backend padrão do Django (permissions/groups) e o `guardian`
 # (permissões por objeto persistidas no banco).
 AUTHENTICATION_BACKENDS = [
+    # Só verifica bloqueio e devolve `None`, delegando a autenticação real aos
+    # backends seguintes. Precisa ser o primeiro para interromper antes deles.
+    "axes.backends.AxesStandaloneBackend",
     "rules.permissions.ObjectPermissionBackend",
     "django.contrib.auth.backends.ModelBackend",
     "guardian.backends.ObjectPermissionBackend",
@@ -234,6 +259,34 @@ AUTHENTICATION_BACKENDS = [
 # Não criar o usuário anônimo do guardian (o modelo de usuário usa e-mail como
 # username e o isolamento por organização torna esse registro desnecessário).
 ANONYMOUS_USER_NAME = None
+
+# Proteção contra força bruta no login. A chave de bloqueio é o par
+# usuário + IP (E lógico): bloquear só por usuário permitiria que qualquer um
+# trancasse a conta alheia, e bloquear só por IP puniria clientes atrás de NAT.
+# Ver docs/superpowers/specs/2026-07-30-django-axes-design.md.
+AXES_ENABLED = get_bool_from_env("AXES_ENABLED", CONFIG_ENVIRONMENT != "test")
+# Sem isso o axes usa `USERNAME_FIELD` do model ("email") como chave nas
+# credenciais. O `AuthTokenSerializer` padrão do DRF sempre chama
+# `authenticate()` com a chave literal "username", então o valor nunca seria
+# encontrado e todo `AccessAttempt` seria gravado com `username=None`.
+AXES_USERNAME_FORM_FIELD = "username"
+AXES_LOCKOUT_PARAMETERS = [["username", "ip_address"]]
+AXES_FAILURE_LIMIT = int(get_env_var("AXES_FAILURE_LIMIT", 5))
+AXES_COOLOFF_TIME = timedelta(minutes=int(get_env_var("AXES_COOLOFF_MINUTES", 30)))
+AXES_RESET_ON_SUCCESS = True
+# Sem isso, um cliente que faz retry automático (app com credencial salva
+# desatualizada) reinicia o cooloff a cada tentativa e nunca sai do bloqueio.
+AXES_RESET_COOL_OFF_ON_FAILURE_DURING_LOCKOUT = False
+AXES_HANDLER = "axes.handlers.database.AxesDatabaseHandler"
+AXES_CLIENT_IP_CALLABLE = "apps.api.autenticacao.utils.get_client_ip"
+AXES_LOCKOUT_CALLABLE = "apps.api.autenticacao.handlers.resposta_de_bloqueio"
+AXES_HTTP_RESPONSE_CODE = 429
+# O admin do axes é a única via de desbloqueio manual antes do fim do cooloff.
+AXES_ENABLE_ADMIN = True
+# Mantido porque o `TokenMetaData` só registra login de API; sem o AccessLog o
+# login bem-sucedido no /admin/ não deixaria trilha nenhuma.
+AXES_DISABLE_ACCESS_LOG = False
+AXES_ENABLE_ACCESS_FAILURE_LOG = False
 
 
 # Row Level Security. O contexto é aplicado por `apps.organizacoes` com
@@ -297,9 +350,13 @@ POSTHOG_DISABLED = get_bool_from_env("POSTHOG_DISABLED", False)
 
 RESEND_API_KEY = get_env_var("RESEND_API_KEY")
 
+ANYMAIL = {
+    "RESEND_API_KEY": RESEND_API_KEY,
+}
+
 DEFAULT_FROM_EMAIL = get_env_var("RESEND_FROM_EMAIL", "nao-responda@base.com.br")
 
-EMAIL_BACKEND = "apps.api.core.email_backends.ResendEmailBackend"
+EMAIL_BACKEND = "anymail.backends.test.EmailBackend" if TESTING else "anymail.backends.resend.EmailBackend"
 
 
 LOGGING_ROOT = os.path.join(BASE_DIR, "logs/")
@@ -315,10 +372,8 @@ LOGGING = build_logging(CONFIG_ENVIRONMENT, LOG_LEVEL, LOGGING_ROOT)
 
 # base
 BASE_AUDITLOG_EXCLUDE_FIELDS = [
-    "data_ultima_alteracao",
-    "hora_ultima_alteracao",
-    "data_criacao",
-    "hora_criacao",
+    "created_at",
+    "last_modified_at",
 ]
 
 
@@ -341,7 +396,6 @@ B2_PUBLIC_BASE_URL = get_env_var("BACKBLAZE_PUBLIC_BASE_URL")
 REST_FRAMEWORK = {
     "PAGE_SIZE": 30,
     "DEFAULT_PAGINATION_CLASS": "apps.api.core.pagination.CustomPagination",
-    "EXCEPTION_HANDLER": "apps.api.core.status_handlers.custom_exception_handler",
     # A autenticação real acontece no AuthenticationMiddleware; aqui o DRF apenas
     # reaproveita o usuário já resolvido.
     "DEFAULT_AUTHENTICATION_CLASSES": [
@@ -349,13 +403,14 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
-        "apps.api.autenticacao.permissions.RecentAuthenticationPermission",
         # Fallback global de tenancy. Vem antes das permissões de modelo para
         # que o contexto de RLS já esteja aplicado. Exceções são declarativas:
         # `public_routes.py` (sem token) e `tenant_free_routes.py` (sem organização).
         "apps.organizacoes.permissions.TenantPermission",
         "apps.api.autenticacao.permissions.TokenScopePermission",
         "apps.api.autenticacao.permissions.CustomDjangoModelPermissions",
+        # No-op sem `@require_recent_auth` declarado na view/action/método.
+        "apps.api.autenticacao.recent_auth.RecentAuthenticationPermission",
     ],
     "DEFAULT_FILTER_BACKENDS": [
         "rest_framework.filters.OrderingFilter",
@@ -369,12 +424,12 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "anon": "100/hour",
         "user": "1000/hour",
-        "auth": "10/min",
         "auth_login": "10/min",
         "auth_reauthenticate": "5/min",
     },
     "DEFAULT_VERSIONING_CLASS": "rest_framework.versioning.NamespaceVersioning",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "EXCEPTION_HANDLER": "apps.api.core.errors.api_exception_handler",
     "TEST_REQUEST_DEFAULT_FORMAT": "json",
     "DATE_INPUT_FORMATS": ["%d/%m/%Y"],
 }
@@ -396,8 +451,9 @@ SCALAR_THEME = "purple"
 # knox
 KNOX_TOKEN_MODEL = "autenticacao.AuthToken"
 
+# MFA
 MFA_SMS_BACKEND = get_env_var("MFA_SMS_BACKEND", "apps.api.autenticacao.mfa_backends.ConsoleSMSBackend")
-MFA_SMS_ENABLED = get_env_var("MFA_SMS_ENABLED", "False").lower() == "true"
+MFA_SMS_ENABLED = get_bool_from_env("MFA_SMS_ENABLED", False)
 
 REST_KNOX = {
     "AUTH_HEADER_PREFIX": "Bearer",

@@ -12,9 +12,9 @@ from .models import Usuario
 @admin.register(Usuario)
 class UsuarioAdmin(BaseModelAdmin, HijackUserAdminMixin, BaseUserAdmin):
     # campos de listagem
-    list_display = ("id", "email", "first_name", "last_name", "is_active", "is_staff", "is_superuser", "data_criacao")
+    list_display = ("id", "email", "first_name", "last_name", "is_active", "is_staff", "is_superuser", "created_at")
     list_display_links = ("id", "email")
-    list_filter = ("is_active", "is_staff", "is_superuser", "data_criacao")
+    list_filter = ("is_active", "is_staff", "is_superuser", "created_at")
     search_fields = ("id", "email", "first_name", "last_name")
     ordering = ("-id",)
 
@@ -22,10 +22,8 @@ class UsuarioAdmin(BaseModelAdmin, HijackUserAdminMixin, BaseUserAdmin):
     readonly_fields = (
         "last_login",
         "date_joined",
-        "data_criacao",
-        "hora_criacao",
-        "data_ultima_alteracao",
-        "hora_ultima_alteracao",
+        "created_at",
+        "last_modified_at",
     )
 
     # Fieldsets para edição (sem username, usando email como identificador principal)
@@ -52,10 +50,8 @@ class UsuarioAdmin(BaseModelAdmin, HijackUserAdminMixin, BaseUserAdmin):
             _("Metadados"),
             {
                 "fields": (
-                    "data_criacao",
-                    "hora_criacao",
-                    "data_ultima_alteracao",
-                    "hora_ultima_alteracao",
+                    "created_at",
+                    "last_modified_at",
                 ),
                 "classes": ("collapse",),
             },

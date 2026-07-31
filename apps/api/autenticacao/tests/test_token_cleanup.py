@@ -1,5 +1,6 @@
 from datetime import timedelta
 from io import StringIO
+from uuid import uuid4
 
 from django.conf import settings
 from django.core.management import call_command
@@ -12,12 +13,26 @@ from celery.schedules import crontab
 from apps.api.autenticacao.models import AuthToken, TokenType
 from apps.api.autenticacao.tasks import cleanup_expired_tokens as cleanup_expired_tokens_task
 from apps.api.autenticacao.token_cleanup import cleanup_expired_tokens
+from apps.organizacoes.models import Organizacao, Vinculo
 
 
 @pytest.fixture
 def token_factory(usuario):
     def create_token(*, type, expiry):
-        token, _ = AuthToken.objects.create(user=usuario, type=type, expiry=expiry)
+        # API key é o único tipo com campos obrigatórios próprios; os demais
+        # nascem só com responsável e tipo.
+        extras = {}
+        if type == TokenType.API_KEY:
+            organizacao = Organizacao.objects.create(nome="Org", slug=f"org-cleanup-{uuid4().hex[:8]}")
+            Vinculo.objects.create(usuario=usuario, organizacao=organizacao)
+            extras = {"created_by": usuario, "name": "Integração", "organization": organizacao}
+
+        # O manager trata `expiry` como relativo (`now() + delta`); aqui os testes
+        # precisam de instantes absolutos no passado, então gravamos depois.
+        token, _ = AuthToken.objects.create(user=usuario, type=type, expiry=None, **extras)
+        if expiry is not None:
+            token.expiry = expiry
+            token.save(update_fields=["expiry"])
         return token
 
     return create_token

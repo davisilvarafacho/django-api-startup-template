@@ -13,8 +13,38 @@ from django.db import transaction
 
 from django_rls.context import clear_rls_context
 
-from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
+from apps.api.autenticacao.models import TokenType
+from apps.api.core.errors import APIError, error_response_for_api_error
+from apps.organizacoes.constants import HEADER_ORGANIZACAO, META_HEADER_ORGANIZACAO
 from apps.organizacoes.context import CHAVE_TENANT
+from apps.organizacoes.errors import OrganizationErrorCode
+
+
+def resolve_token_organization(request, token):
+    """Resolve o slug de tenant a partir do header e/ou do token.
+
+    Sessões humanas continuam usando só o header. Uma API key sempre deriva o
+    tenant da própria credencial; um header divergente é rejeitado — a key
+    nunca opera em outra organização.
+    """
+    header_slug = request.META.get(META_HEADER_ORGANIZACAO) or None
+
+    token_type = getattr(token, "type", None)
+    if token_type != TokenType.API_KEY:
+        return header_slug
+
+    organizacao = getattr(token, "organization", None)
+    if organizacao is None:
+        return header_slug
+
+    if header_slug and header_slug != organizacao.slug:
+        raise APIError(
+            OrganizationErrorCode.TENANT_MISMATCH,
+            status_code=409,
+            field=HEADER_ORGANIZACAO,
+        )
+
+    return organizacao.slug
 
 
 class OrganizacaoMiddleware:
@@ -22,7 +52,11 @@ class OrganizacaoMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        request.organizacao_slug = request.META.get(META_HEADER_ORGANIZACAO) or None
+        try:
+            request.organizacao_slug = resolve_token_organization(request, getattr(request, "auth", None))
+        except APIError as exc:
+            return error_response_for_api_error(exc)
+
         request.organizacao = None
         request.vinculo = None
 

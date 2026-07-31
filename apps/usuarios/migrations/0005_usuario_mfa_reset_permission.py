@@ -4,7 +4,7 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-    dependencies = [("usuarios", "0002_usuario_phone_number_usuario_phone_verified_at")]
+    dependencies = [("usuarios", "0004_usuario_phone_number_usuario_phone_verified_at")]
 
     operations = [
         migrations.AlterModelOptions(

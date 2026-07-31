@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 from rest_framework.authentication import BaseAuthentication
@@ -7,7 +8,10 @@ from rest_framework.exceptions import AuthenticationFailed
 from knox.auth import TokenAuthentication
 from knox.settings import knox_settings
 
+from apps.api.core.errors import APIError
+
 from .constants import REQUEST_ATTR_RESOLVED, RESOLVED_PUBLIC
+from .errors import AuthErrorCode
 from .models import TokenType
 
 
@@ -49,9 +53,18 @@ class PassthroughAuthentication(BaseAuthentication):
 
 
 class TypedTokenAuthentication(TokenAuthentication):
-    """Autenticador Knox que respeita o tipo operacional do token."""
+    """Autenticador Knox que respeita tipo e estado do token, sem apagar nada.
+
+    O Knox padrão apaga tokens expirados do banco (`_cleanup_token`) — ruim
+    para API keys, que precisam permanecer para auditoria mesmo inválidas.
+    Aqui a limpeza automática é desligada e o estado (expirado, revogado,
+    suspenso, responsável inativo) vira `APIError` tipado em `validate_user`.
+    """
 
     allowed_token_types = (TokenType.TOKEN, TokenType.API_KEY)
+
+    def _cleanup_token(self, auth_token) -> bool:
+        return False
 
     def validate_user(self, auth_token):
         token_type = getattr(auth_token, "type", TokenType.TOKEN)
@@ -59,7 +72,19 @@ class TypedTokenAuthentication(TokenAuthentication):
         if token_type not in self.allowed_token_types:
             raise AuthenticationFailed(_("Este token não permite acesso à API."))
 
-        return super().validate_user(auth_token)
+        if auth_token.expiry is not None and auth_token.expiry < timezone.now():
+            raise APIError(AuthErrorCode.EXPIRED_TOKEN, status_code=401)
+
+        if auth_token.revoked_at is not None:
+            raise APIError(AuthErrorCode.REVOKED_TOKEN, status_code=401)
+
+        if auth_token.suspended_at is not None:
+            raise APIError(AuthErrorCode.API_KEY_SUSPENDED, status_code=401)
+
+        if not auth_token.responsavel.is_active:
+            raise APIError(AuthErrorCode.RESPONSIBLE_INACTIVE, status_code=401)
+
+        return (auth_token.responsavel, auth_token)
 
 
 class PreAuthTokenAuthentication(TypedTokenAuthentication):

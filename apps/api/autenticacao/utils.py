@@ -1,5 +1,6 @@
 import logging
 
+from django.conf import settings
 from django.core.cache import cache
 from django.http import HttpRequest
 
@@ -56,15 +57,28 @@ def get_geolocation_data(ip_address: str) -> dict:
     return {}
 
 
-def get_client_ip(request: HttpRequest) -> str:
-    """Pega o IP real do cliente considerando proxies"""
+def get_client_ip(request: HttpRequest) -> str | None:
+    """Resolve o IP de origem da request.
 
-    x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
-    if x_forwarded_for:
-        ip = x_forwarded_for.split(",")[0].strip()
-    else:
-        ip = request.META.get("REMOTE_ADDR")
-    return ip
+    Atrás do proxy de borda o `X-Forwarded-For` é sobrescrito pelo nginx
+    (`docker/nginx/snippets/proxy.conf`), então chega com valor único e não
+    forjável. Fora do proxy o header é escolhido pelo cliente e precisa ser
+    ignorado, sob pena de o bloqueio por IP do django-axes virar contornável.
+
+    Args:
+        request: Request HTTP em processamento.
+
+    Returns:
+        O IP de origem, ou `None` se não for possível determiná-lo.
+    """
+    if settings.BEHIND_PROXY:
+        forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+        if forwarded_for:
+            first_forwarded_for = forwarded_for.split(",", 1)[0].strip()
+            if first_forwarded_for:
+                return first_forwarded_for
+
+    return request.META.get("REMOTE_ADDR")
 
 
 def parse_user_agent(user_agent_string: str | None) -> dict:
@@ -94,36 +108,41 @@ def get_device_type(ua) -> str:
     if ua.is_tablet:
         return "tablet"
     if ua.is_pc:
-        return "desktop"
-    return "unknown"
+        return 'desktop'
+    return 'unknown'
 
 
 def build_token_metadata(request: HttpRequest, payload: dict) -> dict:
-    """Monta metadados operacionais da request e do payload de autenticação."""
-    user_agent = request.META.get("HTTP_USER_AGENT", "")
+    """Monta os campos de `TokenMetaData` a partir da request e do payload de login.
+
+    `payload` são os campos opcionais enviados pelo cliente (`device_name`,
+    `app_version`, `fcm_token`); dispositivo e localização vêm da request.
+    """
+    user_agent = request.META.get('HTTP_USER_AGENT', '')
     device_info = parse_user_agent(user_agent)
+
     ip_address = get_client_ip(request)
     geo_data = get_geolocation_data(ip_address)
 
     return {
-        "device_name": payload.get("device_name", ""),
-        "device_type": device_info.get("device_type", "unknown"),
-        "device_brand": device_info.get("device_brand", ""),
-        "device_model": device_info.get("device_model", ""),
-        "os_name": device_info.get("os_name", ""),
-        "os_version": device_info.get("os_version", ""),
-        "browser_name": device_info.get("browser_name", ""),
-        "browser_version": device_info.get("browser_version", ""),
-        "user_agent": user_agent,
-        "ip_address": ip_address,
-        "country": geo_data.get("country", ""),
-        "country_code": geo_data.get("country_code", ""),
-        "region": geo_data.get("region", ""),
-        "city": geo_data.get("city", ""),
-        "latitude": geo_data.get("latitude"),
-        "longitude": geo_data.get("longitude"),
-        "timezone": geo_data.get("timezone", ""),
-        "isp": geo_data.get("isp", ""),
-        "app_version": payload.get("app_version", ""),
-        "fcm_token": payload.get("fcm_token", ""),
+        'device_name': payload.get('device_name', ''),
+        'device_type': device_info.get('device_type', 'unknown'),
+        'device_brand': device_info.get('device_brand', ''),
+        'device_model': device_info.get('device_model', ''),
+        'os_name': device_info.get('os_name', ''),
+        'os_version': device_info.get('os_version', ''),
+        'browser_name': device_info.get('browser_name', ''),
+        'browser_version': device_info.get('browser_version', ''),
+        'user_agent': user_agent,
+        'ip_address': ip_address,
+        'country': geo_data.get('country', ''),
+        'country_code': geo_data.get('country_code', ''),
+        'region': geo_data.get('region', ''),
+        'city': geo_data.get('city', ''),
+        'latitude': geo_data.get('latitude'),
+        'longitude': geo_data.get('longitude'),
+        'timezone': geo_data.get('timezone', ''),
+        'isp': geo_data.get('isp', ''),
+        'app_version': payload.get('app_version', ''),
+        'fcm_token': payload.get('fcm_token', ''),
     }

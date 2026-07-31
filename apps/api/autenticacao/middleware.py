@@ -11,12 +11,12 @@ recebem `request.user` preenchido, e o DRF apenas reaproveita o resultado via
 import logging
 
 from django.conf import settings
-from django.http import JsonResponse
 from django.utils import timezone
 
 from rest_framework import status
 from rest_framework.exceptions import AuthenticationFailed
 
+from apps.api.core.errors import APIError, error_response, error_response_for_api_error
 from apps.api.core.route_markers import MARCADOR_PUBLICA, tem_marcador, view_do_path
 from apps.api.core.routes_registry import routes_registry
 
@@ -72,24 +72,25 @@ class AuthenticationMiddleware:
         """Resolve o usuário ou devolve a resposta de erro que encerra a request."""
         try:
             result = self.run_authenticators(request)
+        except APIError as exc:
+            return error_response_for_api_error(exc)
         except AuthenticationFailed as exc:
-            return JsonResponse(
-                {"code": AuthErrorCode.INVALID_TOKEN.value, "message": str(exc.detail)},
-                status=status.HTTP_401_UNAUTHORIZED,
+            return error_response(
+                AuthErrorCode.INVALID_TOKEN,
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                message=str(exc.detail),
             )
 
         if result is None:
-            return JsonResponse(
-                {"code": AuthErrorCode.INVALID_TOKEN.value, "message": "Token não fornecido."},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
+            return error_response(AuthErrorCode.TOKEN_NOT_PROVIDED, status_code=status.HTTP_401_UNAUTHORIZED)
 
         user, auth_token = result
 
         if getattr(auth_token, "type", None) == TokenType.PRE_AUTH and not request.path_info.startswith("/auth/mfa/challenge/"):
-            return JsonResponse(
-                {"code": AuthErrorCode.INVALID_TOKEN.value, "message": "Pré-autenticação não permite acesso a esta rota."},
-                status=status.HTTP_401_UNAUTHORIZED,
+            return error_response(
+                AuthErrorCode.INVALID_TOKEN,
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                message="Pré-autenticação não permite acesso a esta rota.",
             )
 
         # Não usamos `set_current_user`: ele grava num global da thread que nunca é

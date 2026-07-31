@@ -5,7 +5,7 @@ from django.db import migrations
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("autenticacao", "0003_drop_legacy_knox_authtoken"),
+        ("autenticacao", "0006_drop_legacy_knox_authtoken"),
         ("knox", "0009_extend_authtoken_field"),
     ]
 

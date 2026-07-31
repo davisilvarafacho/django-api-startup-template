@@ -4,7 +4,7 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-    dependencies = [("autenticacao", "0002_mfafactor_mfachallenge_mfarecoverycode_trusteddevice_and_more")]
+    dependencies = [("autenticacao", "0005_mfafactor_mfachallenge_mfarecoverycode_trusteddevice_and_more")]
 
     operations = [
         migrations.RunSQL(

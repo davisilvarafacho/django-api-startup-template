@@ -16,88 +16,34 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name="AuthToken",
             fields=[
-                (
-                    "digest",
-                    models.CharField(
-                        db_comment="Hash criptográfico irreversível do segredo do token.",
-                        help_text="Hash criptográfico irreversível do segredo do token.",
-                        max_length=128,
-                        primary_key=True,
-                        serialize=False,
-                        verbose_name="Digest",
-                    ),
-                ),
-                (
-                    "token_key",
-                    models.CharField(
-                        db_comment="Prefixo não sensível do token usado para identificação rápida.",
-                        db_index=True,
-                        help_text="Prefixo não sensível do token usado para identificação rápida.",
-                        max_length=25,
-                        verbose_name="Prefixo do token",
-                    ),
-                ),
-                (
-                    "created_at",
-                    models.DateTimeField(
-                        auto_now_add=True,
-                        db_comment="Data e hora de emissão do token.",
-                        help_text="Data e hora de emissão do token.",
-                        verbose_name="Criado em",
-                    ),
-                ),
-                (
-                    "expiry",
-                    models.DateTimeField(
-                        blank=True,
-                        db_comment="Data e hora de expiração do token, obrigatória para tipos efêmeros.",
-                        help_text="Data e hora de expiração do token, obrigatória para tipos efêmeros.",
-                        null=True,
-                        verbose_name="Expira em",
-                    ),
-                ),
+                ("digest", models.CharField(max_length=128, primary_key=True, serialize=False)),
+                ("token_key", models.CharField(db_index=True, max_length=25)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("expiry", models.DateTimeField(blank=True, null=True)),
                 (
                     "type",
                     models.PositiveSmallIntegerField(
-                        choices=[(1, "Token"), (2, "Reset de senha"), (3, "Pré-autenticação"), (999, "API key")],
-                        db_comment="Tipo operacional do token.",
+                        choices=[(1, "Token"), (2, "Reset de senha"), (999, "API key")],
                         db_index=True,
                         default=1,
-                        help_text="Tipo operacional do token.",
-                        verbose_name="Tipo",
                     ),
                 ),
-                (
-                    "scopes",
-                    models.JSONField(
-                        blank=True,
-                        db_comment="Escopos autorizados para o token, aplicáveis a API keys.",
-                        default=list,
-                        help_text="Escopos autorizados para o token, aplicáveis a API keys.",
-                        verbose_name="Escopos",
-                    ),
-                ),
+                ("scopes", models.JSONField(blank=True, default=list)),
                 (
                     "responsavel",
                     models.ForeignKey(
-                        db_comment="Usuário responsável pelo token.",
-                        help_text="Usuário responsável pelo token.",
                         on_delete=django.db.models.deletion.CASCADE,
                         related_name="auth_token_set",
                         to=settings.AUTH_USER_MODEL,
-                        verbose_name="Responsável",
                     ),
                 ),
             ],
             options={
                 "db_table": "auth_token",
-                "ordering": ("-created_at",),
                 "swappable": "KNOX_TOKEN_MODEL",
-                "verbose_name": "Token de autenticação",
-                "verbose_name_plural": "Tokens de autenticação",
                 "constraints": [
                     models.CheckConstraint(
-                        condition=models.Q(("type__in", (3, 2)), _negated=True) | models.Q(("expiry__isnull", False)),
+                        condition=models.Q(("type__in", (2,)), _negated=True) | models.Q(("expiry__isnull", False)),
                         name="auth_token_ephemeral_requires_expiry",
                     ),
                 ],
@@ -138,16 +84,6 @@ class Migration(migrations.Migration):
                 ("first_used", models.DateTimeField(auto_now_add=True, help_text="Primeira vez que o token foi usado", verbose_name="Primeiro uso")),
                 ("last_used", models.DateTimeField(auto_now=True, help_text="Última vez que o token foi usado", verbose_name="Último uso")),
                 ("usage_count", models.PositiveIntegerField(default=0, help_text="Número de vezes que o token foi usado", verbose_name="Contador de uso")),
-                (
-                    "reauthenticated_at",
-                    models.DateTimeField(
-                        blank=True,
-                        db_comment="Data e hora da última confirmação recente de senha da sessão.",
-                        help_text="Data e hora da última confirmação recente de senha da sessão.",
-                        null=True,
-                        verbose_name="Reautenticado em",
-                    ),
-                ),
                 ("is_suspicious", models.BooleanField(default=False, help_text="Marcado como suspeito por mudança de IP/localização", verbose_name="É suspeito")),
                 ("suspicious_reason", models.TextField(blank=True, help_text="Motivo da suspeita", verbose_name="Motivo da suspeita")),
                 ("risk_score", models.PositiveSmallIntegerField(default=0, help_text="Score de risco (0-100)", verbose_name="Pontuação de risco")),

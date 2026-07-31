@@ -116,7 +116,7 @@ def test_confirmacao_recusa_desafio_com_entrega_falha(usuario):
 
 @pytest.mark.django_db
 def test_api_configura_e_confirma_totp_reautenticado(api_client, usuario):
-    issued = issue_token(responsavel=usuario, token_type=TokenType.TOKEN, expiry=None, metadata_input={})
+    issued = issue_token(responsavel=usuario, token_type=TokenType.TOKEN, created_by=usuario, expiry=None, metadata_input={})
     issued.instance.metadata.reauthenticated_at = timezone.now()
     issued.instance.metadata.save(update_fields=["reauthenticated_at"])
     api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {issued.plain_token}")

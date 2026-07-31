@@ -10,14 +10,13 @@ class UsuarioFalso:
     is_active = True
 
 
-class MetadadosFalsos:
-    def __init__(self, token_type):
-        self.type = token_type
-
-
 class TokenFalso:
     def __init__(self, token_type=None):
-        self.user = UsuarioFalso()
+        self.responsavel = UsuarioFalso()
+        self.user = self.responsavel
+        self.expiry = None
+        self.revoked_at = None
+        self.suspended_at = None
         if token_type is not None:
             self.type = token_type
 
@@ -28,7 +27,6 @@ def test_auth_token_tem_tipo_com_valores_publicos():
     assert field.default == TokenType.TOKEN
     assert TokenType.TOKEN == 1
     assert TokenType.RESET_PASSWORD == 2
-    assert TokenType.PRE_AUTH == 3
     assert TokenType.API_KEY == 999
 
 
@@ -41,16 +39,15 @@ def test_autenticacao_aceita_token_de_sessao_e_api_key():
         assert auth.validate_user(token) == (token.user, token)
 
 
-@pytest.mark.parametrize("token_type", [TokenType.RESET_PASSWORD, TokenType.PRE_AUTH])
-def test_autenticacao_recusa_tokens_efemeros(token_type):
+def test_autenticacao_recusa_token_de_reset_de_senha():
     auth = TypedTokenAuthentication()
-    token = TokenFalso(token_type)
+    token = TokenFalso(TokenType.RESET_PASSWORD)
 
     with pytest.raises(AuthenticationFailed, match="não permite acesso"):
         auth.validate_user(token)
 
 
-def test_autenticacao_trata_token_sem_tipo_como_sessao():
+def test_autenticacao_trata_token_sem_tipo_explicito_como_sessao():
     auth = TypedTokenAuthentication()
     token = TokenFalso()
 

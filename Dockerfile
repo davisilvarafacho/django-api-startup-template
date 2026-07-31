@@ -37,7 +37,8 @@ RUN groupadd -r django && useradd -r -g django django
 WORKDIR /app
 
 COPY --from=builder /app/.venv /app/.venv
-ENV PATH="/app/.venv/bin:$PATH"
+ENV PATH="/app/.venv/bin:$PATH" \
+    DJANGO_ENVIRONMENT=production
 
 # Copiar código da aplicação
 COPY --chown=django:django . .
@@ -50,7 +51,8 @@ RUN mkdir -p /app/logs /app/staticfiles /app/mediafiles \
 USER django
 
 # Coletar arquivos estáticos
-RUN python manage.py collectstatic --noinput --clear
+RUN DJANGO_SECRET_KEY=build-only-collectstatic-key \
+    python manage.py collectstatic --noinput --clear
 
 # Expor porta
 EXPOSE 80

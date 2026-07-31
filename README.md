@@ -14,10 +14,13 @@ uv run python manage.py runserver
 Comandos comuns:
 
 ```bash
-uv run pytest
+uv run pytest --nomigrations
 uv run python manage.py migrate
 uv lock --upgrade
 ```
+
+Até o reset integral das migrations, previsto antes do lançamento, a suíte usa
+`--nomigrations`.
 
 O arquivo `uv.lock` deve ser versionado. Após modificar as dependências, use `uv add <pacote>` (ou `uv remove <pacote>`) e inclua as alterações em `pyproject.toml` e `uv.lock` no commit.
 
@@ -47,16 +50,84 @@ BACKBLAZE_BUCKET_NAME="meu-bucket"
 
 Opcionalmente, defina `BACKBLAZE_BUCKET_ID` para evitar a busca pelo nome do bucket, `BACKBLAZE_LOCATION` para usar um prefixo (por exemplo, `media`) e `BACKBLAZE_PUBLIC_BASE_URL` para servir arquivos por um domínio próprio/CDN. Se a última variável não estiver configurada, `FieldFile.url` usa a URL de download do próprio B2. Para buckets privados, use URLs assinadas ou uma camada de entrega autenticada; a URL padrão não concede acesso por si só.
 
-## Emails com Resend
+### Migrar arquivos entre storages
 
-O backend padrão de email usa a API do Resend. Configure uma chave com permissão de envio e um remetente de um domínio verificado no Resend:
+O comando `migrate_storage` copia qualquer storage Django para outro. Para
+backends que recebem opções, configure aliases em `STORAGES`:
+
+```python
+STORAGES = {
+    # ... aliases existentes ...
+    "legacy_media": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+        "OPTIONS": {"location": "/dados/media-legada"},
+    },
+    "backblaze": {
+        "BACKEND": "apps.api.core.b2_storage.BackblazeB2Storage",
+    },
+}
+```
+
+O storage de origem precisa oferecer suporte funcional a `listdir()` para que o
+comando descubra os arquivos. Em uma cópia real, origem e destino também
+precisam oferecer `size()` para verificar a cópia. O `--dry-run` não chama
+`size()`, `open()`, `save()` nem `delete()`.
+
+Simule a migração antes de gravar:
+
+```bash
+uv run python manage.py migrate_storage \
+  --source legacy_media \
+  --destination backblaze \
+  --dry-run
+```
+
+Copie uma subárvore e troque o prefixo:
+
+```bash
+uv run python manage.py migrate_storage \
+  --source legacy_media \
+  --destination backblaze \
+  --source-prefix uploads \
+  --destination-prefix media
+```
+
+Objetos existentes são ignorados. Use `--overwrite` para substituí-los ou
+`--remove-on-success` para apagar cada origem somente após confirmar nome e
+tamanho no destino.
+
+Substitua objetos que já existem no destino:
+
+```bash
+uv run python manage.py migrate_storage \
+  --source legacy_media \
+  --destination backblaze \
+  --overwrite
+```
+
+Mova os objetos, removendo cada origem somente depois da cópia verificada:
+
+```bash
+uv run python manage.py migrate_storage \
+  --source legacy_media \
+  --destination backblaze \
+  --remove-on-success
+```
+
+> `--overwrite` pode apagar o objeto anterior antes do upload e não é atômico
+> para todos os backends. Faça backup e use `--dry-run` primeiro. Não use aliases
+> diferentes que apontem para a mesma localização física.
+
+## Emails com Anymail + Resend
+
+O projeto usa [django-anymail](https://anymail.dev/) como abstração de e-mail e envia pelo Resend por padrão. Configure uma chave com permissão de envio e um remetente de um domínio verificado no Resend:
 
 ```bash
 RESEND_API_KEY="re_..."
 RESEND_FROM_EMAIL="Minha API <nao-responda@exemplo.com>"
 ```
 
-O backend suporta mensagens texto, HTML (`EmailMultiAlternatives`), cópia, cópia oculta, `reply_to`, cabeçalhos extras e anexos comuns do Django.
+Continue usando as APIs padrão do Django. O backend suporta mensagens texto, HTML (`EmailMultiAlternatives`), cópia, cópia oculta, `reply_to`, cabeçalhos extras e anexos comuns do Django.
 
 ## Infraestrutura local (Postgres + Redis + Celery)
 

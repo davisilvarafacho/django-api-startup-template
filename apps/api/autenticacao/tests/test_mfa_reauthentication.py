@@ -11,7 +11,7 @@ def test_reauth_com_mfa_so_atualiza_apos_segundo_fator(api_client, usuario):
     enrollment = start_enrollment(usuario, MFAFactorType.TOTP)
     confirm_enrollment(usuario, MFAFactorType.TOTP, pyotp.TOTP(enrollment.plain_secret).now())
     MFAFactor.objects.filter(pk=enrollment.factor.pk).update(totp_last_counter=None)
-    issued = issue_token(responsavel=usuario, token_type=TokenType.TOKEN, expiry=None, metadata_input={})
+    issued = issue_token(responsavel=usuario, token_type=TokenType.TOKEN, created_by=usuario, expiry=None, metadata_input={})
     api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {issued.plain_token}")
 
     started = api_client.post("/auth/reauthenticate/", {"password": "Senha123!"})
