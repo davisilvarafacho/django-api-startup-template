@@ -7,6 +7,7 @@ from django.core.management.utils import get_random_secret_key
 from django.utils.translation import gettext_lazy as _
 
 import sentry_sdk
+from celery.schedules import crontab
 
 from api.configure_enviroment import configure_enviroment
 from api.logging_config import build_logging
@@ -477,6 +478,17 @@ CELERY_TASK_SOFT_TIME_LIMIT = 60 * 25  # soft limit: 25 min
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+
+AUTH_TOKEN_SESSION_RETENTION_DAYS = 90
+
+AUTH_TOKEN_CLEANUP_BATCH_SIZE = 500
+
+CELERY_BEAT_SCHEDULE = {
+    "cleanup-expired-auth-tokens": {
+        "task": "autenticacao.cleanup_expired_tokens",
+        "schedule": crontab(hour=0, minute=0),
+    },
+}
 
 # sm testes, executa as tasks de forma síncrona e propaga exceções.
 CELERY_TASK_ALWAYS_EAGER = TESTING
