@@ -12,6 +12,7 @@ Cada app expõe um `tenant_free_routes.py`:
 Rotas públicas (sem token) já são isentas por consequência: sem usuário não há
 vínculo a validar.
 """
+
 from apps.api.core.routes_registry import RouteRegistry
 
 __all__ = ["tenant_free_registry"]

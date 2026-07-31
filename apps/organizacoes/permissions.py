@@ -15,8 +15,9 @@ from apps.api.core.routes_registry import routes_registry
 from apps.organizacoes.constants import HEADER_ORGANIZACAO
 from apps.organizacoes.context import definir_organizacao_atual
 from apps.organizacoes.errors import OrganizationErrorCode
-from apps.organizacoes.models import Papel, Vinculo
+from apps.organizacoes.models import Papel
 from apps.organizacoes.routes import tenant_free_registry
+from common.permission_cache.resolvers.tenant import TenantAccessResolver
 
 
 def _is_api_key(request):
@@ -27,7 +28,7 @@ class TenantPermission(BasePermission):
     """Resolve a organização da request e aplica o contexto de RLS.
 
     Aplica `SET LOCAL` dentro da transação aberta pelo `OrganizacaoMiddleware` e
-    expõe `request.organizacao` e `request.vinculo` para as views.
+    expõe `request.tenant` para as views.
     """
 
     message = "Usuário sem vínculo ativo nesta organização."
@@ -51,6 +52,10 @@ class TenantPermission(BasePermission):
 
             organizacao = auth_token.organization
             request.organizacao = organizacao
+            # Uma API key não tem vínculo (e portanto não tem papel), então não
+            # há `TenantAccess` a cachear aqui: só o id, que é o contrato que as
+            # views usam para filtrar por organização.
+            request.organizacao_id = organizacao.id
             definir_organizacao_atual(organizacao.id)
             return True
 
@@ -73,19 +78,15 @@ class TenantPermission(BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
 
-        vinculo = (
-            Vinculo.objects.select_related("organizacao")
-            .filter(organizacao__slug=slug, usuario=request.user, is_active=True)
-            .first()
-        )
+        tenant = TenantAccessResolver().by_slug(request.user.pk, slug)
 
-        if vinculo is None:
+        if tenant is None:
             raise APIError(OrganizationErrorCode.MEMBERSHIP_REQUIRED, status_code=403, message=self.message)
 
-        request.organizacao = vinculo.organizacao
-        request.vinculo = vinculo
+        request.tenant = tenant
+        request.organizacao_id = tenant.organization_id
 
-        definir_organizacao_atual(vinculo.organizacao_id)
+        definir_organizacao_atual(tenant.organization_id)
 
         return True
 
@@ -104,12 +105,12 @@ class PapelMinimoPermission(BasePermission):
         if _is_api_key(request):
             return True
 
-        vinculo = getattr(request, "vinculo", None)
-        if vinculo is None:
+        tenant = getattr(request, "tenant", None)
+        if tenant is None:
             return False
 
         papel_minimo = self.get_papel_minimo(view)
-        if not vinculo.tem_papel_minimo(papel_minimo):
+        if not tenant.has_minimum_role(papel_minimo):
             raise APIError(OrganizationErrorCode.ROLE_INSUFFICIENT, status_code=403, message=self.message)
 
         return True

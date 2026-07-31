@@ -42,3 +42,4 @@ nav:
       - '0002 — Logs estruturados e retenção': adr/0002-logs-estruturados-e-retencao.md
       - '0003 — Feature flags': adr/0003-feature-flags.md
       - '0004 — Depreciação de API': adr/0004-politica-de-deprecacao-de-api.md
+      - '0005 — Cache semântico de autorização': adr/0005-cache-semantico-de-autorizacao.md

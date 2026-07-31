@@ -7,6 +7,7 @@ enxergaria `AnonymousUser`. Resolvendo aqui, todos os middlewares internos já
 recebem `request.user` preenchido, e o DRF apenas reaproveita o resultado via
 `apps.api.autenticacao.authentications.PassthroughAuthentication`.
 """
+
 import logging
 
 from django.conf import settings
@@ -125,9 +126,9 @@ class UpdateTokenLastUsedMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        if hasattr(request, 'auth') and request.auth:
-            if hasattr(request.auth, 'metadata'):
+        if hasattr(request, "auth") and request.auth:
+            if hasattr(request.auth, "metadata"):
                 request.auth.metadata.last_used = timezone.now()
-                request.auth.metadata.save(update_fields=['last_used'])
+                request.auth.metadata.save(update_fields=["last_used"])
 
         return self.get_response(request)

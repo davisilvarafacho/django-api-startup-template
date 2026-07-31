@@ -1,4 +1,5 @@
 """Testes dos health checks (não tocam o banco: as dependências são mockadas)."""
+
 import json
 
 from django.test import RequestFactory

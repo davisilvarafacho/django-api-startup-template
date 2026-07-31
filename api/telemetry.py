@@ -12,6 +12,7 @@ para o Tempo (ver docker-compose.observability.yml).
 A correlação com o log é feita pelo `ContextFilter` de `api/logging_config.py`,
 que lê o span corrente e escreve `trace_id`/`span_id` em cada linha.
 """
+
 import logging
 
 logger = logging.getLogger(__name__)
@@ -35,10 +36,7 @@ def setup_telemetry():
     try:
         instrumentar(settings)
     except ImportError:
-        logger.warning(
-            "OTEL_ENABLED=True mas as libs não estão instaladas. "
-            "Rode `uv sync --group observability` ou desligue a telemetria."
-        )
+        logger.warning("OTEL_ENABLED=True mas as libs não estão instaladas. Rode `uv sync --group observability` ou desligue a telemetria.")
         return
 
     _configurada = True

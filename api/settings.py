@@ -207,6 +207,9 @@ DATABASES = {
         "USER": get_env_var("DATABASE_USER"),
         "PASSWORD": get_env_var("DATABASE_PASSWORD"),
         "PORT": get_env_var("DATABASE_PORT"),
+        "TEST": {
+            "NAME": get_env_var("TEST_DATABASE_NAME", "test_base_permission_cache"),
+        },
         "CONN_MAX_AGE": 60 * 60 * 3,  # 3 horas
         "CONN_HEALTH_CHECKS": True,
     },
@@ -251,9 +254,12 @@ AUTHENTICATION_BACKENDS = [
     # backends seguintes. Precisa ser o primeiro para interromper antes deles.
     "axes.backends.AxesStandaloneBackend",
     "rules.permissions.ObjectPermissionBackend",
-    "django.contrib.auth.backends.ModelBackend",
-    "guardian.backends.ObjectPermissionBackend",
+    "common.permission_cache.backends.CachedModelBackend",
+    "common.permission_cache.backends.CachedObjectPermissionBackend",
 ]
+
+# CachedObjectPermissionBackend subclasses and compatibility-tests Guardian's backend.
+SILENCED_SYSTEM_CHECKS = ["guardian.W001"]
 
 # Não criar o usuário anônimo do guardian (o modelo de usuário usa e-mail como
 # username e o isolamento por organização torna esse registro desnecessário).
@@ -484,6 +490,19 @@ REDIS_PORT = get_env_var("REDIS_PORT", "6379")
 
 REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}"
 
+AUTHORIZATION_CACHE = {
+    "ENABLED": get_bool_from_env("AUTHORIZATION_CACHE_ENABLED", True),
+    "ALIAS": "permissions",
+    "TIMEOUT": 60 * 30,
+    "KEY_PREFIX": get_env_var(
+        "AUTHORIZATION_CACHE_KEY_PREFIX",
+        f"authz:v1:{ENVIROMENT or CONFIG_ENVIRONMENT}",
+    ),
+    "MAX_RETRIES": 2,
+}
+
+AUTHORIZATION_REDIS_URL = get_env_var("AUTHORIZATION_REDIS_URL") or f"{REDIS_URL}/4"
+
 
 # cache
 # sm testes, cache em memória para não exigir Redis rodando.
@@ -491,6 +510,10 @@ if TESTING:
     CACHES = {
         "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
         "cachalot": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
+        "permissions": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "KEY_PREFIX": AUTHORIZATION_CACHE["KEY_PREFIX"],
+        },
     }
 else:
     CACHES = {
@@ -504,6 +527,19 @@ else:
             "BACKEND": "django_redis.cache.RedisCache",
             "LOCATION": f"{REDIS_URL}/3",
             "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
+        },
+        "permissions": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": AUTHORIZATION_REDIS_URL,
+            "KEY_PREFIX": AUTHORIZATION_CACHE["KEY_PREFIX"],
+            "OPTIONS": {
+                "CLIENT_CLASS": "django_redis.client.DefaultClient",
+                "SERIALIZER": "django_redis.serializers.json.JSONSerializer",
+                "REDIS_CLIENT_KWARGS": {
+                    "socket_connect_timeout": 1,
+                    "socket_timeout": 1,
+                },
+            },
         },
     }
 

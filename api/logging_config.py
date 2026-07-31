@@ -14,6 +14,7 @@ Formato por ambiente:
 Todo evento carrega `request_id` e, quando a telemetria está ligada, `trace_id` /
 `span_id` — é o que amarra log ↔ Sentry ↔ trace no Tempo.
 """
+
 import logging
 import os
 
@@ -201,10 +202,7 @@ def build_logging(environment, level, log_root):
                 "level": "INFO",
                 "propagate": False,
             },
-            **{
-                nome: {"handlers": handlers_ativos, "level": "WARNING", "propagate": False}
-                for nome in LOGGERS_RUIDOSOS
-            },
+            **{nome: {"handlers": handlers_ativos, "level": "WARNING", "propagate": False} for nome in LOGGERS_RUIDOSOS},
         },
         "root": {
             "handlers": handlers_ativos,

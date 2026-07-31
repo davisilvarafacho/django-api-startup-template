@@ -4,7 +4,7 @@ from rest_framework import serializers
 
 from apps.api.core.errors import APIError
 from apps.organizacoes.errors import OrganizationErrorCode
-from apps.organizacoes.models import Vinculo
+from apps.organizacoes.models import Organizacao, Vinculo
 
 from .errors import AuthErrorCode
 from .recent_auth import user_has_mfa_enabled, verify_mfa_code
@@ -151,9 +151,9 @@ class APIKeyWriteSerializer(APIKeySerializer):
         return list(validate_scope_delegation(request.user, scopes))
 
     def validate_responsavel(self, responsavel):
-        organizacao = self.context["request"].organizacao
+        organizacao_id = self.context["request"].organizacao_id
         vinculo_ativo = Vinculo.objects.filter(
-            organizacao=organizacao, usuario=responsavel, is_active=True
+            organizacao_id=organizacao_id, usuario=responsavel, is_active=True
         ).exists()
         if not vinculo_ativo:
             raise APIError(
@@ -172,7 +172,9 @@ class APIKeyWriteSerializer(APIKeySerializer):
             created_by=request.user,
             name=validated_data["name"],
             scopes=validated_data.get("scopes", []),
-            organization=request.organizacao,
+            # A permission resolve a organização pelo cache, que carrega só o id;
+            # `issue_token` precisa da instância para validar o vínculo do responsável.
+            organization=Organizacao.objects.get(pk=request.organizacao_id),
             expiry=validated_data.get("expiry"),
         )
         instance = issued.instance

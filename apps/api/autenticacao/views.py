@@ -286,7 +286,7 @@ class APIKeyViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return (
-            AuthToken.objects.filter(type=TokenType.API_KEY, organization=self.request.organizacao)
+            AuthToken.objects.filter(type=TokenType.API_KEY, organization_id=self.request.organizacao_id)
             .select_related("metadata", "responsavel")
             .order_by("-created_at")
         )

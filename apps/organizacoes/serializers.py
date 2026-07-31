@@ -69,13 +69,13 @@ class VinculoSerializer(serializers.ModelSerializer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         request = self.context.get("request")
-        organizacao = getattr(request, "organizacao", None)
-        if organizacao is not None:
-            self.fields["times"].queryset = Time.objects.filter(organizacao=organizacao, is_active=True)
+        tenant = getattr(request, "tenant", None)
+        if tenant is not None:
+            self.fields["times"].queryset = Time.objects.filter(organizacao_id=tenant.organization_id, is_active=True)
 
     def validate_papel(self, papel):
         request = self.context["request"]
-        if papel > request.vinculo.papel:
+        if papel > request.tenant.role:
             raise APIError(
                 OrganizationErrorCode.ROLE_INSUFFICIENT,
                 status_code=422,
@@ -113,7 +113,7 @@ class ConviteCreateSerializer(ConviteSerializer):
 
     def validate_papel(self, papel):
         request = self.context["request"]
-        if papel > request.vinculo.papel:
+        if papel > request.tenant.role:
             raise APIError(
                 OrganizationErrorCode.ROLE_INSUFFICIENT,
                 status_code=422,

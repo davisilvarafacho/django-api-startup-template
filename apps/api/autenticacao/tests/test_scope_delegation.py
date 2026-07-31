@@ -24,9 +24,17 @@ def registro_isolado(monkeypatch):
     return registry
 
 
-def _com_permissao(usuario, app_label, codename):
+def _com_permissao(usuario, app_label, codename, capturar_on_commit=None):
     permission = Permission.objects.get(content_type__app_label=app_label, codename=codename)
-    usuario.user_permissions.add(permission)
+    if capturar_on_commit is None:
+        usuario.user_permissions.add(permission)
+    else:
+        # O cache de autorização só invalida no commit, que nunca acontece dentro
+        # da transação do teste. Sem executar os callbacks pendentes, uma checagem
+        # negativa anterior deixa o snapshot vazio grudado e a permission recém
+        # concedida não é enxergada.
+        with capturar_on_commit(execute=True):
+            usuario.user_permissions.add(permission)
     # `has_perm` cacheia por instância; recarrega para refletir a nova permission.
     return Usuario.objects.get(pk=usuario.pk)
 
@@ -60,7 +68,7 @@ def test_usuario_delega_action_customizada_que_possui(registro_isolado):
 
 
 @pytest.mark.django_db
-def test_resource_wildcard_exige_todas_as_permissions(registro_isolado):
+def test_resource_wildcard_exige_todas_as_permissions(registro_isolado, django_capture_on_commit_callbacks):
     usuario = UsuarioFactory()
     usuario = _com_permissao(usuario, "organizacoes", "view_time")
 
@@ -68,20 +76,20 @@ def test_resource_wildcard_exige_todas_as_permissions(registro_isolado):
         validate_scope_delegation(usuario, ["teams:*"])
 
     for codename in ("add_time", "change_time", "delete_time"):
-        usuario = _com_permissao(usuario, "organizacoes", codename)
+        usuario = _com_permissao(usuario, "organizacoes", codename, django_capture_on_commit_callbacks)
 
     assert validate_scope_delegation(usuario, ["teams:*"]) == ("teams:*",)
 
 
 @pytest.mark.django_db
-def test_global_wildcard_exige_permission_especial_ou_superuser(registro_isolado):
+def test_global_wildcard_exige_permission_especial_ou_superuser(registro_isolado, django_capture_on_commit_callbacks):
     usuario = UsuarioFactory()
 
     with pytest.raises(APIError) as exc:
         validate_scope_delegation(usuario, ["*"])
     assert exc.value.code == "auth.scope_not_delegable"
 
-    usuario = _com_permissao(usuario, "autenticacao", "grant_unrestricted_apikey")
+    usuario = _com_permissao(usuario, "autenticacao", "grant_unrestricted_apikey", django_capture_on_commit_callbacks)
 
     assert validate_scope_delegation(usuario, ["*"]) == ("*",)
 

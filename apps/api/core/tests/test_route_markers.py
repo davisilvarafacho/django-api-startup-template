@@ -1,4 +1,5 @@
 """Testes dos marcadores de rota por decorator (não tocam o banco)."""
+
 from apps.api.core.route_markers import (
     MARCADOR_PUBLICA,
     MARCADOR_SEM_TENANCY,

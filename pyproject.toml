@@ -199,7 +199,7 @@ norecursedirs = ["examples", ".git", ".venv", "node_modules", "site", "staticfil
 addopts = "--cov --cov-report=term-missing --cov-report=xml"
 
 [tool.coverage.run]
-source = ["apps", "api", "utils"]
+source = ["apps", "api", "common", "utils"]
 omit = [
   "*/migrations/*",
   "*/tests/*",

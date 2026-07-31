@@ -2,5 +2,12 @@ from django.apps import AppConfig
 
 
 class AutenticacaoConfig(AppConfig):
-    default_auto_field = 'django.db.models.BigAutoField'
-    name = 'apps.api.autenticacao'
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.api.autenticacao"
+
+    def ready(self):
+        from common.permission_cache.signals.django import connect_django_signals
+        from common.permission_cache.signals.guardian import connect_guardian_signals
+
+        connect_django_signals()
+        connect_guardian_signals()

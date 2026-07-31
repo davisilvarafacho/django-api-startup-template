@@ -6,6 +6,7 @@ connection pool em *transaction mode* (PgBouncer), onde a conexão volta ao pool
 a cada transação: um `SET` de sessão poderia vazar para outro cliente, um
 `SET LOCAL` morre no commit.
 """
+
 from contextlib import contextmanager
 
 from django.db import transaction

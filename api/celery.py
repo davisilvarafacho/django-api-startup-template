@@ -4,6 +4,7 @@ O worker é iniciado com `celery -A api worker` e o beat com
 `celery -A api beat --scheduler django_celery_beat.schedulers:DatabaseScheduler`.
 Toda a configuração vem do settings do Django, com o prefixo `CELERY_`.
 """
+
 import logging
 import os
 

@@ -13,6 +13,7 @@ Os três tipos do waffle:
 - `Flag` — condicional por usuário/grupo/porcentagem.
 - `Sample` — porcentagem pura, sorteada a cada consulta.
 """
+
 from rest_framework import permissions
 from rest_framework.exceptions import NotFound
 

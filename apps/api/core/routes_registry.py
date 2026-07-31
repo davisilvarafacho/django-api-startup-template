@@ -15,6 +15,7 @@ Hoje existem dois registries:
 A comparação é por `startswith`, então declare prefixos granulares: `/auth/`
 tornaria pública inclusive `logout/`.
 """
+
 import importlib
 import logging
 
