@@ -396,6 +396,9 @@ SCALAR_THEME = "purple"
 # knox
 KNOX_TOKEN_MODEL = "autenticacao.AuthToken"
 
+MFA_SMS_BACKEND = get_env_var("MFA_SMS_BACKEND", "apps.api.autenticacao.mfa_backends.ConsoleSMSBackend")
+MFA_SMS_ENABLED = get_env_var("MFA_SMS_ENABLED", "False").lower() == "true"
+
 REST_KNOX = {
     "AUTH_HEADER_PREFIX": "Bearer",
 }
