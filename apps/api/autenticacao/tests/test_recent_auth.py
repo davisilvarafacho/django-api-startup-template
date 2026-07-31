@@ -11,10 +11,12 @@ from rest_framework.test import APIRequestFactory
 
 import pytest
 
+from apps.api.autenticacao.errors import AuthErrorCode
 from apps.api.autenticacao.models import TokenType
 from apps.api.autenticacao.permissions import RecentAuthenticationPermission
 from apps.api.autenticacao.recent_auth import require_recent_auth
 from apps.api.autenticacao.services import issue_token
+from apps.api.core.errors import APIError
 
 
 def test_decorator_marca_idade_maxima():
@@ -41,6 +43,13 @@ def test_permissao_aceita_sessao_reautenticada_recente():
     assert RecentAuthenticationPermission().has_permission(request, view) is True
 
 
+def test_permissao_aceita_view_sem_marcador():
+    request = APIRequestFactory().post("/qualquer/")
+    view = SimpleNamespace()
+
+    assert RecentAuthenticationPermission().has_permission(request, view) is True
+
+
 def test_permissao_recusa_sessao_com_reautenticacao_expirada():
     request = APIRequestFactory().post("/qualquer/")
     request.auth = SimpleNamespace(
@@ -54,7 +63,14 @@ def test_permissao_recusa_sessao_com_reautenticacao_expirada():
 
     view = SimpleNamespace(action="post", post=post)
 
-    assert RecentAuthenticationPermission().has_permission(request, view) is False
+    with pytest.raises(APIError) as error:
+        RecentAuthenticationPermission().has_permission(request, view)
+
+    assert error.value.status_code == status.HTTP_403_FORBIDDEN
+    assert error.value.detail == {
+        "code": AuthErrorCode.REAUTHENTICATION_REQUIRED,
+        "message": "Reautenticação recente obrigatória.",
+    }
 
 
 def test_permissao_recusa_api_key_mesmo_com_marcador_recente():
@@ -70,7 +86,26 @@ def test_permissao_recusa_api_key_mesmo_com_marcador_recente():
 
     view = SimpleNamespace(action="post", post=post)
 
-    assert RecentAuthenticationPermission().has_permission(request, view) is False
+    with pytest.raises(APIError) as error:
+        RecentAuthenticationPermission().has_permission(request, view)
+
+    assert error.value.code == AuthErrorCode.REAUTHENTICATION_REQUIRED
+
+
+def test_permissao_recusa_token_sem_metadata():
+    request = APIRequestFactory().post("/qualquer/")
+    request.auth = SimpleNamespace(type=TokenType.TOKEN)
+
+    @require_recent_auth()
+    def post():
+        return None
+
+    view = SimpleNamespace(action="post", post=post)
+
+    with pytest.raises(APIError) as error:
+        RecentAuthenticationPermission().has_permission(request, view)
+
+    assert error.value.code == AuthErrorCode.REAUTHENTICATION_REQUIRED
 
 
 @pytest.mark.parametrize("target", ["handler", "class"])
@@ -108,13 +143,17 @@ def test_permissao_recusa_sessao_sem_marcador_valido(reauthenticated_at):
 
     view = SimpleNamespace(action="post", post=post)
 
-    assert RecentAuthenticationPermission().has_permission(request, view) is False
+    with pytest.raises(APIError) as error:
+        RecentAuthenticationPermission().has_permission(request, view)
+
+    assert error.value.code == AuthErrorCode.REAUTHENTICATION_REQUIRED
 
 
 @pytest.mark.django_db
 @override_settings(ROOT_URLCONF="apps.api.autenticacao.tests.recent_auth_urls")
-def test_endpoint_marcado_exige_reautenticacao_recente_pela_permissao_global(api_client, usuario):
-    """Uma view sem ``permission_classes`` recebe o step-up do padrão global."""
+@pytest.mark.parametrize("path", ["/recent-auth-probe/", "/recent-auth-apiview-probe/"])
+def test_endpoint_marcado_exige_reautenticacao_recente_pela_permissao_global(api_client, usuario, path):
+    """Actions e APIViews decoradas recebem o step-up do padrão global."""
     issued = issue_token(
         responsavel=usuario,
         token_type=TokenType.TOKEN,
@@ -123,14 +162,18 @@ def test_endpoint_marcado_exige_reautenticacao_recente_pela_permissao_global(api
     )
     api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {issued.plain_token}")
 
-    denied = api_client.post("/recent-auth-probe/")
+    denied = api_client.post(path)
 
     assert denied.status_code == status.HTTP_403_FORBIDDEN
+    assert denied.data == {
+        "code": "auth.reauthentication_required",
+        "message": "Reautenticação recente obrigatória.",
+    }
 
     issued.instance.metadata.reauthenticated_at = timezone.now()
     issued.instance.metadata.save(update_fields=["reauthenticated_at"])
 
-    accepted = api_client.post("/recent-auth-probe/")
+    accepted = api_client.post(path)
 
     assert accepted.status_code == status.HTTP_200_OK
     assert accepted.data == {"detail": "step-up aceito"}

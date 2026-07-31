@@ -3,9 +3,12 @@ from datetime import timedelta
 from django.core.exceptions import ImproperlyConfigured
 from django.utils import timezone
 
-from rest_framework import exceptions
+from rest_framework import exceptions, status
 from rest_framework.permissions import BasePermission, DjangoModelPermissions, IsAdminUser
 
+from apps.api.core.errors import APIError
+
+from .errors import AuthErrorCode
 from .models import TokenType
 
 
@@ -63,33 +66,46 @@ class RecentAuthenticationPermission(BasePermission):
     message = "Reautenticação recente obrigatória."
 
     def has_permission(self, request, view):
-        requirement = self.get_requirement(view)
+        requirement = self.get_requirement(request, view)
         if requirement is None:
             return True
 
         auth_token = getattr(request, "auth", None)
         if auth_token is None or auth_token.type != TokenType.TOKEN:
-            return False
+            self.raise_reauthentication_required()
 
         metadata = getattr(auth_token, "metadata", None)
         reauthenticated_at = getattr(metadata, "reauthenticated_at", None)
         if reauthenticated_at is None:
-            return False
+            self.raise_reauthentication_required()
 
         max_age = requirement["max_age"]
-        return reauthenticated_at >= timezone.now() - timedelta(seconds=max_age)
+        if reauthenticated_at < timezone.now() - timedelta(seconds=max_age):
+            self.raise_reauthentication_required()
+
+        return True
 
     @staticmethod
-    def get_requirement(view):
+    def get_requirement(request, view):
         action_name = getattr(view, "action", None)
         action = getattr(view, action_name, None) if action_name else None
+        method_name = getattr(request, "method", "").lower()
+        method_handler = getattr(view, method_name, None) if method_name else None
 
-        for target in (action, getattr(view, "handler", None), view):
+        for target in (action, method_handler, getattr(view, "handler", None), view):
             requirement = getattr(target, "_recent_auth_required", None)
             if requirement is not None:
                 return requirement
 
         return None
+
+    def raise_reauthentication_required(self):
+        """Interrompe a request marcada com o envelope de step-up padronizado."""
+        raise APIError(
+            AuthErrorCode.REAUTHENTICATION_REQUIRED,
+            status_code=status.HTTP_403_FORBIDDEN,
+            message=self.message,
+        )
 
 
 class CustomDjangoModelPermissions(DjangoModelPermissions):
