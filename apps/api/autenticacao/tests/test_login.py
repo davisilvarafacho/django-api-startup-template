@@ -112,6 +112,28 @@ def test_login_respeita_throttle_nomeado(api_client, usuario, monkeypatch):
     assert api_client.post("/auth/login/", payload, REMOTE_ADDR="127.0.0.1").status_code == status.HTTP_429_TOO_MANY_REQUESTS
 
 
+def test_login_limita_apenas_sessoes_e_retorna_envelope_tipado(api_client, usuario, monkeypatch):
+    _disable_analytics(monkeypatch)
+    monkeypatch.setattr("apps.api.autenticacao.views.LoginView.get_token_limit_per_user", lambda self: 1)
+    issue_token(
+        responsavel=usuario,
+        token_type=TokenType.API_KEY,
+        expiry=timedelta(hours=1),
+        metadata_input={},
+    )
+
+    payload = {"email": usuario.email, "password": "Senha123!"}
+    first_response = api_client.post("/auth/login/", payload, REMOTE_ADDR="127.0.0.1")
+    second_response = api_client.post("/auth/login/", payload, REMOTE_ADDR="127.0.0.1")
+
+    assert first_response.status_code == status.HTTP_200_OK
+    assert second_response.status_code == status.HTTP_403_FORBIDDEN
+    assert second_response.data == {
+        "code": "auth.too_many_attempts",
+        "message": "Limite de sessões ativas atingido.",
+    }
+
+
 def test_reauthenticate_atualiza_sessao_atual(api_client, usuario):
     client, token = _session_client(api_client, usuario)
     TokenMetaData.objects.filter(token=token).update(reauthenticated_at=None)

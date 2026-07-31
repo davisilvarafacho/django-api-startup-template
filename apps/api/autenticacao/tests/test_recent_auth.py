@@ -3,8 +3,10 @@
 from datetime import timedelta
 from types import SimpleNamespace
 
+from django.test import override_settings
 from django.utils import timezone
 
+from rest_framework import status
 from rest_framework.test import APIRequestFactory
 
 import pytest
@@ -12,6 +14,7 @@ import pytest
 from apps.api.autenticacao.models import TokenType
 from apps.api.autenticacao.permissions import RecentAuthenticationPermission
 from apps.api.autenticacao.recent_auth import require_recent_auth
+from apps.api.autenticacao.services import issue_token
 
 
 def test_decorator_marca_idade_maxima():
@@ -106,3 +109,28 @@ def test_permissao_recusa_sessao_sem_marcador_valido(reauthenticated_at):
     view = SimpleNamespace(action="post", post=post)
 
     assert RecentAuthenticationPermission().has_permission(request, view) is False
+
+
+@pytest.mark.django_db
+@override_settings(ROOT_URLCONF="apps.api.autenticacao.tests.recent_auth_urls")
+def test_endpoint_marcado_exige_reautenticacao_recente_pela_permissao_global(api_client, usuario):
+    """Uma view sem ``permission_classes`` recebe o step-up do padrão global."""
+    issued = issue_token(
+        responsavel=usuario,
+        token_type=TokenType.TOKEN,
+        expiry=timedelta(hours=1),
+        metadata_input={},
+    )
+    api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {issued.plain_token}")
+
+    denied = api_client.post("/recent-auth-probe/")
+
+    assert denied.status_code == status.HTTP_403_FORBIDDEN
+
+    issued.instance.metadata.reauthenticated_at = timezone.now()
+    issued.instance.metadata.save(update_fields=["reauthenticated_at"])
+
+    accepted = api_client.post("/recent-auth-probe/")
+
+    assert accepted.status_code == status.HTTP_200_OK
+    assert accepted.data == {"detail": "step-up aceito"}

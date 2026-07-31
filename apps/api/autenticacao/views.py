@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 from django.contrib.auth.signals import user_logged_in
+from django.db.models import Q
 from django.utils import timezone
 
 from rest_framework import status, viewsets
@@ -49,9 +50,13 @@ class LoginView(KnoxLoginView):
         token_limit_per_user = self.get_token_limit_per_user()
         if token_limit_per_user is not None:
             now = timezone.now()
-            token = user.auth_token_set.filter(expiry__gt=now)
+            token = user.auth_token_set.filter(type=TokenType.TOKEN).filter(Q(expiry__isnull=True) | Q(expiry__gt=now))
             if token.count() >= token_limit_per_user:
-                return Response({"error": "Maximum amount of tokens allowed per user exceeded."}, status=status.HTTP_403_FORBIDDEN)
+                raise APIError(
+                    AuthErrorCode.TOO_MANY_ATTEMPTS,
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    message="Limite de sessões ativas atingido.",
+                )
 
         metadata_input = build_token_metadata(request, request.data)
         metadata_input["reauthenticated_at"] = timezone.now()

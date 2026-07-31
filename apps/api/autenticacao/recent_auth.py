@@ -10,6 +10,10 @@ def require_recent_auth(max_age: int = 300, require_mfa: bool | None = None):
     Args:
         max_age: Idade máxima, em segundos, da confirmação de senha.
         require_mfa: Reserva o requisito de segundo fator para a integração MFA.
+
+    Views que sobrescrevem ``permission_classes`` deixam de receber a permissão
+    global automaticamente e devem incluir ``RecentAuthenticationPermission``
+    de forma explícita.
     """
 
     def decorator(action: Callable):
