@@ -277,6 +277,7 @@ AXES_RESET_ON_SUCCESS = True
 AXES_RESET_COOL_OFF_ON_FAILURE_DURING_LOCKOUT = False
 AXES_HANDLER = "axes.handlers.database.AxesDatabaseHandler"
 AXES_CLIENT_IP_CALLABLE = "apps.api.autenticacao.utils.get_client_ip"
+AXES_LOCKOUT_CALLABLE = "apps.api.autenticacao.handlers.resposta_de_bloqueio"
 AXES_HTTP_RESPONSE_CODE = 429
 # O admin do axes é a única via de desbloqueio manual antes do fim do cooloff.
 AXES_ENABLE_ADMIN = True
