@@ -20,6 +20,14 @@ def test_tipos_efemeros_sao_explicitos():
     assert AuthToken.EPHEMERAL_TYPES == frozenset({TokenType.PRE_AUTH, TokenType.RESET_PASSWORD})
 
 
+@pytest.mark.parametrize("field_name", ["digest", "token_key", "responsavel", "created_at", "expiry", "type", "scopes"])
+def test_campos_de_auth_token_documentam_o_schema(field_name):
+    field = AuthToken._meta.get_field(field_name)
+
+    assert field.help_text
+    assert field.help_text == field.db_comment
+
+
 @pytest.mark.django_db
 def test_typed_authentication_autentica_token_do_modelo_configurado(usuario):
     instance, plain_token = AuthToken.objects.create(user=usuario, type=TokenType.TOKEN)

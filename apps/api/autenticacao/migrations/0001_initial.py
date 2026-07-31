@@ -16,15 +16,77 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name="AuthToken",
             fields=[
-                ("digest", models.CharField(max_length=128, primary_key=True, serialize=False)),
-                ("token_key", models.CharField(db_index=True, max_length=25)),
-                ("created_at", models.DateTimeField(auto_now_add=True)),
-                ("expiry", models.DateTimeField(blank=True, null=True)),
-                ("type", models.PositiveSmallIntegerField(choices=[(1, "Token"), (2, "Reset de senha"), (3, "Pré-autenticação"), (999, "API key")], db_index=True, default=1)),
-                ("scopes", models.JSONField(blank=True, default=list)),
+                (
+                    "digest",
+                    models.CharField(
+                        db_comment="Hash criptográfico irreversível do segredo do token.",
+                        help_text="Hash criptográfico irreversível do segredo do token.",
+                        max_length=128,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="Digest",
+                    ),
+                ),
+                (
+                    "token_key",
+                    models.CharField(
+                        db_comment="Prefixo não sensível do token usado para identificação rápida.",
+                        db_index=True,
+                        help_text="Prefixo não sensível do token usado para identificação rápida.",
+                        max_length=25,
+                        verbose_name="Prefixo do token",
+                    ),
+                ),
+                (
+                    "created_at",
+                    models.DateTimeField(
+                        auto_now_add=True,
+                        db_comment="Data e hora de emissão do token.",
+                        help_text="Data e hora de emissão do token.",
+                        verbose_name="Criado em",
+                    ),
+                ),
+                (
+                    "expiry",
+                    models.DateTimeField(
+                        blank=True,
+                        db_comment="Data e hora de expiração do token, obrigatória para tipos efêmeros.",
+                        help_text="Data e hora de expiração do token, obrigatória para tipos efêmeros.",
+                        null=True,
+                        verbose_name="Expira em",
+                    ),
+                ),
+                (
+                    "type",
+                    models.PositiveSmallIntegerField(
+                        choices=[(1, "Token"), (2, "Reset de senha"), (3, "Pré-autenticação"), (999, "API key")],
+                        db_comment="Tipo operacional do token.",
+                        db_index=True,
+                        default=1,
+                        help_text="Tipo operacional do token.",
+                        verbose_name="Tipo",
+                    ),
+                ),
+                (
+                    "scopes",
+                    models.JSONField(
+                        blank=True,
+                        db_comment="Escopos autorizados para o token, aplicáveis a API keys.",
+                        default=list,
+                        help_text="Escopos autorizados para o token, aplicáveis a API keys.",
+                        verbose_name="Escopos",
+                    ),
+                ),
                 (
                     "responsavel",
-                    models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="auth_token_set", to=settings.AUTH_USER_MODEL),
+                    models.ForeignKey(
+                        db_comment="Usuário responsável pelo token.",
+                        help_text="Usuário responsável pelo token.",
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="auth_token_set",
+                        to=settings.AUTH_USER_MODEL,
+                        verbose_name="Responsável",
+                    ),
                 ),
             ],
             options={

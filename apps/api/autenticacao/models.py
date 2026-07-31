@@ -44,6 +44,11 @@ class AuthTokenManager(models.Manager):
 class AuthToken(models.Model):
     """Token swappable compatível com Knox, com estado e expiração tipados.
 
+    Esta é uma exceção arquitetural deliberada à herança de ``Base``: ``Base``
+    adiciona tenant, RLS e campos de ciclo de vida incompatíveis com o contrato
+    do Knox. Como modelo swappable, ``AuthToken`` deve preservar esse contrato
+    e, por isso, herda diretamente de ``models.Model``.
+
     `EPHEMERAL_TYPES` reúne somente credenciais de curta duração, que podem ser
     removidas assim que expiram.
     """
@@ -52,20 +57,56 @@ class AuthToken(models.Model):
 
     objects = AuthTokenManager()
 
-    digest = models.CharField(max_length=CONSTANTS.DIGEST_LENGTH, primary_key=True)
+    digest = models.CharField(
+        _("Digest"),
+        max_length=CONSTANTS.DIGEST_LENGTH,
+        primary_key=True,
+        help_text=_("Hash criptográfico irreversível do segredo do token."),
+        db_comment=_("Hash criptográfico irreversível do segredo do token."),
+    )
     token_key = models.CharField(
+        _("Prefixo do token"),
         max_length=CONSTANTS.MAXIMUM_TOKEN_PREFIX_LENGTH + CONSTANTS.TOKEN_KEY_LENGTH,
         db_index=True,
+        help_text=_("Prefixo não sensível do token usado para identificação rápida."),
+        db_comment=_("Prefixo não sensível do token usado para identificação rápida."),
     )
     responsavel = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
+        verbose_name=_("Responsável"),
+        to=settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="auth_token_set",
+        help_text=_("Usuário responsável pelo token."),
+        db_comment=_("Usuário responsável pelo token."),
     )
-    created_at = models.DateTimeField(auto_now_add=True)
-    expiry = models.DateTimeField(null=True, blank=True)
-    type = models.PositiveSmallIntegerField(choices=TokenType.choices, default=TokenType.TOKEN, db_index=True)
-    scopes = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(
+        _("Criado em"),
+        auto_now_add=True,
+        help_text=_("Data e hora de emissão do token."),
+        db_comment=_("Data e hora de emissão do token."),
+    )
+    expiry = models.DateTimeField(
+        _("Expira em"),
+        blank=True,
+        null=True,
+        help_text=_("Data e hora de expiração do token, obrigatória para tipos efêmeros."),
+        db_comment=_("Data e hora de expiração do token, obrigatória para tipos efêmeros."),
+    )
+    type = models.PositiveSmallIntegerField(
+        _("Tipo"),
+        choices=TokenType.choices,
+        default=TokenType.TOKEN,
+        db_index=True,
+        help_text=_("Tipo operacional do token."),
+        db_comment=_("Tipo operacional do token."),
+    )
+    scopes = models.JSONField(
+        _("Escopos"),
+        blank=True,
+        default=list,
+        help_text=_("Escopos autorizados para o token, aplicáveis a API keys."),
+        db_comment=_("Escopos autorizados para o token, aplicáveis a API keys."),
+    )
 
     class Meta:
         db_table = "auth_token"
