@@ -3,7 +3,7 @@
 from datetime import timedelta
 
 from django.conf import settings
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
 from apps.api.autenticacao.models import TokenType
@@ -31,11 +31,15 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        result = cleanup_expired_tokens(
-            now=timezone.now(),
-            batch_size=options["batch_size"],
-            session_retention=timedelta(days=options["session_retention_days"]),
-            dry_run=options["dry_run"],
-        )
+        try:
+            result = cleanup_expired_tokens(
+                now=timezone.now(),
+                batch_size=options["batch_size"],
+                session_retention=timedelta(days=options["session_retention_days"]),
+                dry_run=options["dry_run"],
+            )
+        except ValueError as exc:
+            raise CommandError(str(exc)) from exc
+
         for token_type in TokenType:
             self.stdout.write(f"{token_type.name}: examinados={result.examined[int(token_type)]} removidos={result.deleted[int(token_type)]}")

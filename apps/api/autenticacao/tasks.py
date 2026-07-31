@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 @shared_task(
     name="autenticacao.cleanup_expired_tokens",
+    ignore_result=True,
     autoretry_for=(OperationalError,),
     retry_backoff=True,
     retry_kwargs={"max_retries": 3},
@@ -37,4 +38,3 @@ def cleanup_expired_tokens():
             "deleted_by_type": result.deleted,
         },
     )
-    return result

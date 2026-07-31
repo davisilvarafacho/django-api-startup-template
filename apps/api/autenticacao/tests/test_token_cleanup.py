@@ -3,6 +3,7 @@ from io import StringIO
 
 from django.conf import settings
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.utils import timezone
 
 import pytest
@@ -81,6 +82,24 @@ def test_cleanup_deletes_all_candidates_in_bounded_batches(token_factory):
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("batch_size", "session_retention", "message"),
+    [
+        (0, timedelta(days=90), "batch_size deve ser maior que zero"),
+        (50, timedelta(days=-1), "session_retention não pode ser negativa"),
+    ],
+)
+def test_cleanup_rejects_invalid_parameters_without_deleting_tokens(token_factory, batch_size, session_retention, message):
+    now = timezone.now()
+    token = token_factory(type=TokenType.PRE_AUTH, expiry=now - timedelta(seconds=1))
+
+    with pytest.raises(ValueError, match=message):
+        cleanup_expired_tokens(now=now, batch_size=batch_size, session_retention=session_retention)
+
+    assert AuthToken.objects.filter(pk=token.pk).exists()
+
+
+@pytest.mark.django_db
 def test_cleanup_command_converts_arguments_and_supports_dry_run(token_factory):
     now = timezone.now()
     token = token_factory(type=TokenType.PRE_AUTH, expiry=now - timedelta(seconds=1))
@@ -95,15 +114,34 @@ def test_cleanup_command_converts_arguments_and_supports_dry_run(token_factory):
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("option", "value", "message"),
+    [
+        ("--batch-size", "0", "batch_size deve ser maior que zero"),
+        ("--session-retention-days", "-1", "session_retention não pode ser negativa"),
+    ],
+)
+def test_cleanup_command_rejects_invalid_parameters_without_deleting_tokens(token_factory, option, value, message):
+    now = timezone.now()
+    token = token_factory(type=TokenType.PRE_AUTH, expiry=now - timedelta(seconds=1))
+
+    with pytest.raises(CommandError, match=message):
+        call_command("cleanup_expired_auth_tokens", option, value)
+
+    assert AuthToken.objects.filter(pk=token.pk).exists()
+
+
+@pytest.mark.django_db
 def test_cleanup_task_reuses_service_with_configured_retention(token_factory):
     now = timezone.now()
     token = token_factory(type=TokenType.PRE_AUTH, expiry=now - timedelta(seconds=1))
 
     result = cleanup_expired_tokens_task.run()
 
-    assert result.deleted[TokenType.PRE_AUTH] == 1
+    assert result is None
     assert not AuthToken.objects.filter(pk=token.pk).exists()
     assert cleanup_expired_tokens_task.name == "autenticacao.cleanup_expired_tokens"
+    assert cleanup_expired_tokens_task.ignore_result is True
     assert cleanup_expired_tokens_task.autoretry_for
     assert cleanup_expired_tokens_task.retry_backoff is True
     assert cleanup_expired_tokens_task.retry_kwargs == {"max_retries": 3}

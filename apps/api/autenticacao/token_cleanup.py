@@ -49,6 +49,8 @@ def cleanup_expired_tokens(*, now, batch_size: int, session_retention: timedelta
     """
     if batch_size < 1:
         raise ValueError("batch_size deve ser maior que zero.")
+    if session_retention < timedelta(0):
+        raise ValueError("session_retention não pode ser negativa.")
 
     ephemeral_querysets = [(int(token_type), AuthToken.objects.filter(type=token_type, expiry__lte=now)) for token_type in AuthToken.EPHEMERAL_TYPES]
     session_queryset = (int(TokenType.TOKEN), AuthToken.objects.filter(type=TokenType.TOKEN, expiry__lte=now - session_retention))
