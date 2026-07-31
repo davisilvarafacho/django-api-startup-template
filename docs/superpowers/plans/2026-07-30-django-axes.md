@@ -24,6 +24,104 @@
 
 ---
 
+## Estado da execução (2026-07-31)
+
+Executado com `superpowers:subagent-driven-development`. **Tasks 1 a 5 concluídas e
+revisadas; Tasks 6 e 7 não iniciadas.** Suíte em 210 testes passando (baseline antes
+da branch: 191). Árvore limpa, nada pendente de commit.
+
+| Task | Commits | Suíte | Revisão |
+|---|---|---|---|
+| 1 — IP do cliente | `037d8c6..0bc87d2` | 196 | limpa, 1 Minor adiado |
+| 2 — ativar o axes | `0bc87d2..3347c71` | 200 | limpa, 2 desvios do plano |
+| 3 — resposta JSON | `3347c71..2e5924c` | 203 | limpa, 3 Minor adiados |
+| 4 — política | `2e5924c..6df5a82` | 207 | limpa, 1 Minor adiado |
+| 5 — expurgo | `6df5a82..72c6f6c` | 210 | 1 Important corrigido |
+
+### O que falta
+
+- **Task 6 — documentação.** Não iniciada. É o how-to, a entrada no `nav` do
+  `mkdocs.yml` e o parágrafo no `CLAUDE.md`.
+- **Task 7 — verificação final.** Não iniciada.
+- **Revisão final da branch inteira** e a triagem dos Minor adiados listados abaixo.
+- **Atualizar a spec** (`docs/superpowers/specs/2026-07-30-django-axes-design.md`) com
+  os dois desvios da Task 2, que ela ainda não reflete.
+
+### Desvios do plano já aplicados no código
+
+Ambos foram confirmados no código-fonte do django-axes e do DRF, e cada um tem teste
+que falha sem a correção. **A spec ainda não os reflete.**
+
+1. **`AXES_USERNAME_FORM_FIELD = "username"`** precisou entrar no `api/settings.py`. O
+   default do axes é `get_user_model().USERNAME_FIELD` (`axes/conf.py:46-47`), que
+   neste projeto é `"email"` — mas o `AuthTokenSerializer` do DRF sempre chama
+   `authenticate()` com a chave literal `"username"`. Sem o override, todo
+   `AccessAttempt` gravaria `username=None` e a chave E `[["username", "ip_address"]]`
+   degeneraria para bloqueio só por IP. A docstring de `get_client_username` afirma que
+   o default é `"username"` e **está errada**.
+2. **`apps/api/autenticacao/views.py` usa `context={"request": request._request}`**, e
+   não `request`. O `Request` do DRF só implementa `__getattr__` (proxy de leitura), então
+   o `axes_locked_out` que o backend atribui ficaria preso no wrapper e nunca chegaria ao
+   `HttpRequest` que o `AxesMiddleware` inspeciona. O axes contaria certo no banco e
+   nunca devolveria 429 pela HTTP.
+
+Além desses, a Task 5 teve um achado Important corrigido em `72c6f6c`: a migração de
+agendamento dependia de `django_celery_beat.0001_initial`, o que a posicionava antes das
+outras 18 migrações do app; passou a depender de `0019_alter_periodictasks_options`.
+
+### Minor adiados, para a revisão final triar
+
+- **Task 1** — `get_client_ip` devolve `""` se o primeiro elemento do `X-Forwarded-For`
+  vier vazio (ex.: `", 1.2.3.4"`), em vez de cair no `REMOTE_ADDR`. Inalcançável atrás do
+  nginx atual, que sobrescreve o header; vira alcançável com ALB/Cloudflare na borda, e
+  daria ao axes uma chave de bloqueio degenerada compartilhada.
+- **Task 3** — `get_cool_off()` é chamado sem `request` em `handlers.py`. Inócuo enquanto
+  `AXES_COOLOFF_TIME` for um `timedelta` estático; divergiria se virasse callable.
+- **Task 3** — o cálculo do prazo restante pega a linha mais recente por OR entre combos,
+  enquanto o axes decide por combo. Divergência teórica, só apareceria se
+  `AXES_LOCKOUT_PARAMETERS` ganhasse múltiplos combos.
+- **Task 3** — `test_bloqueio_nao_revela_o_prazo_no_corpo` é quase tautológico, porque a
+  mensagem é constante sem interpolação.
+- **Tasks 2-4** — a fixture `ambiente_axes` e os helpers de POST em `/auth/login/` estão
+  duplicados nos três arquivos de teste do axes. Cabe um `conftest.py` em
+  `apps/api/autenticacao/tests/`.
+- **Task 5** — `desagendar()` remove o `PeriodicTask` mas deixa o `CrontabSchedule` órfão
+  no rollback.
+- **Task 5** — `update_or_create` usa `task` como chave, que não é `unique` no schema do
+  `django_celery_beat` (só `name` é).
+
+### Ambiente: como rodar a suíte nesta máquina
+
+A porta 5432 está ocupada por um container `postgres` avulso, alheio ao projeto (ao lado
+da stack do n8n/dify/vault), então o `db` do `docker-compose.yml` **não sobe** e o
+`make up` falha. O container `drf-base-api-db-1` ficou parado em estado `Created`; o
+volume `postgres_data` está intacto e ele volta com `docker compose up -d db` assim que a
+porta for liberada.
+
+A suíte roda contra o postgres avulso, no qual foi criado o banco `base`:
+
+```bash
+docker exec postgres psql -U postgres \
+    -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='test_base';" \
+    -c "DROP DATABASE IF EXISTS test_base;"
+
+DATABASE_HOST=127.0.0.1 DATABASE_PORT=5432 DATABASE_USER=postgres \
+DATABASE_PASSWORD=postgres DATABASE_NAME=base \
+    uv run --group test pytest -p no:cacheprovider -q --no-cov
+```
+
+O `DROP DATABASE` prévio não é opcional: o teardown do pytest não consegue derrubar o
+`test_base` enquanto sobrarem conexões abertas, e aí a execução seguinte falha inteira
+na criação do banco (191 erros, todos com a mesma causa).
+
+### Pendência pré-existente, não causada por esta branch
+
+`make lint` acusa 2 erros `UP017` em `apps/api/core/b2_storage.py` e
+`apps/api/core/tests/test_b2_storage.py`. Confirmado via `git stash` por três
+implementadores diferentes como anterior a esta branch.
+
+---
+
 ### Task 1: Endurecer a resolução de IP do cliente
 
 O `get_client_ip` atual pega o primeiro elemento do `X-Forwarded-For` incondicionalmente. Isso é correto atrás do nginx de borda — que sobrescreve o header com `$remote_addr` em `docker/nginx/snippets/proxy.conf:23` — e **spoofável fora dele**. Como esta função vai virar o `AXES_CLIENT_IP_CALLABLE`, um deploy exposto diretamente permitiria rotacionar o header, nunca acumular tentativa e passar pelo axes sem bloqueio.
@@ -36,7 +134,7 @@ O `get_client_ip` atual pega o primeiro elemento do `X-Forwarded-For` incondicio
 - Consumes: `settings.BEHIND_PROXY`, já definido em `api/settings.py:80`.
 - Produces: `apps.api.autenticacao.utils.get_client_ip(request) -> str | None`. As Tasks 2, 3 e 4 dependem desta assinatura; a Task 2 a registra em `AXES_CLIENT_IP_CALLABLE`.
 
-- [ ] **Step 1: Escrever os testes que falham**
+- [x] **Step 1: Escrever os testes que falham**
 
 Criar `apps/api/autenticacao/tests/test_client_ip.py`:
 
@@ -91,7 +189,7 @@ def test_devolve_none_quando_nao_ha_origem_identificavel(settings):
     assert get_client_ip(request) is None
 ```
 
-- [ ] **Step 2: Rodar os testes e confirmar que falham**
+- [x] **Step 2: Rodar os testes e confirmar que falham**
 
 ```bash
 uv run --group test pytest apps/api/autenticacao/tests/test_client_ip.py -q
@@ -99,7 +197,7 @@ uv run --group test pytest apps/api/autenticacao/tests/test_client_ip.py -q
 
 Esperado: FAIL em `test_ignora_o_forwarded_for_quando_nao_esta_atras_do_proxy` com `AssertionError: assert '203.0.113.10' == '172.18.0.5'`. Os demais passam, porque a implementação atual já cobre esses casos.
 
-- [ ] **Step 3: Implementar**
+- [x] **Step 3: Implementar**
 
 Em `apps/api/autenticacao/utils.py`, adicionar `from django.conf import settings` ao bloco de imports do Django (junto de `from django.core.cache import cache` e `from django.http import HttpRequest`), e substituir a função inteira:
 
@@ -128,7 +226,7 @@ def get_client_ip(request: HttpRequest) -> str | None:
 
 O retorno `None` é seguro para os dois consumidores: `TokenMetaData.ip_address` é `null=True, blank=True` (`apps/api/autenticacao/models.py:96-101`) e o `AccessAttempt.ip_address` do axes também aceita nulo.
 
-- [ ] **Step 4: Rodar os testes e confirmar que passam**
+- [x] **Step 4: Rodar os testes e confirmar que passam**
 
 ```bash
 uv run --group test pytest apps/api/autenticacao/tests/test_client_ip.py -q
@@ -136,7 +234,7 @@ uv run --group test pytest apps/api/autenticacao/tests/test_client_ip.py -q
 
 Esperado: 5 passed.
 
-- [ ] **Step 5: Rodar o lint**
+- [x] **Step 5: Rodar o lint**
 
 ```bash
 make lint
@@ -144,7 +242,7 @@ make lint
 
 Esperado: sem erros.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/api/autenticacao/utils.py apps/api/autenticacao/tests/test_client_ip.py
@@ -169,7 +267,7 @@ A resposta de bloqueio nesta task ainda é a padrão do axes (texto puro, status
 - Consumes: `apps.api.autenticacao.utils.get_client_ip` (Task 1).
 - Produces: settings `AXES_FAILURE_LIMIT` (5), `AXES_COOLOFF_TIME` (30 min), `AXES_LOCKOUT_PARAMETERS` (`[["username", "ip_address"]]`), `AXES_ENABLED` (falso em teste). As Tasks 3, 4 e 6 dependem desses valores.
 
-- [ ] **Step 1: Escrever os testes que falham**
+- [x] **Step 1: Escrever os testes que falham**
 
 Criar `apps/api/autenticacao/tests/test_axes_login.py`:
 
@@ -255,7 +353,7 @@ O parâmetro `settings` é a fixture do pytest-django, a mesma já usada no `amb
 
 Nota sobre a contagem: com `AXES_FAILURE_LIMIT = 5`, as tentativas 1 a 4 retornam 400 e a **quinta** já retorna 429 — o handler marca `request.axes_locked_out` assim que `failures_since_start >= limite`, e o middleware troca aquela mesma resposta.
 
-- [ ] **Step 2: Rodar os testes e confirmar que falham**
+- [x] **Step 2: Rodar os testes e confirmar que falham**
 
 ```bash
 make up
@@ -264,7 +362,7 @@ uv run --group test pytest apps/api/autenticacao/tests/test_axes_login.py -q
 
 Esperado: FAIL. `test_falha_no_limite_bloqueia_com_429` falha com `assert 400 == 429` (o axes ainda não está instalado) e `settings.AXES_FAILURE_LIMIT` levanta `AttributeError`.
 
-- [ ] **Step 3: Registrar as variáveis de ambiente**
+- [x] **Step 3: Registrar as variáveis de ambiente**
 
 Em `utils/env.py`, adicionar as três chaves **nas duas listas** — a tupla `ENVS` e o `Literal` `EnviromentVar`. São listas duplicadas que precisam andar juntas. Inserir em ambas, após o bloco `# api`, um bloco novo:
 
@@ -275,7 +373,7 @@ Em `utils/env.py`, adicionar as três chaves **nas duas listas** — a tupla `EN
     "AXES_COOLOFF_MINUTES",
 ```
 
-- [ ] **Step 4: Ligar o axes no settings**
+- [x] **Step 4: Ligar o axes no settings**
 
 Em `api/settings.py`:
 
@@ -330,7 +428,7 @@ AXES_DISABLE_ACCESS_LOG = False
 AXES_ENABLE_ACCESS_FAILURE_LOG = False
 ```
 
-- [ ] **Step 5: Corrigir o bloqueador do LoginView**
+- [x] **Step 5: Corrigir o bloqueador do LoginView**
 
 Em `apps/api/autenticacao/views.py:37`, trocar:
 
@@ -347,7 +445,7 @@ por:
         serializer = AuthTokenSerializer(data=request.data, context={"request": request})
 ```
 
-- [ ] **Step 6: Aplicar as migrações do axes**
+- [x] **Step 6: Aplicar as migrações do axes**
 
 ```bash
 make migrate
@@ -355,7 +453,7 @@ make migrate
 
 Esperado: as migrações do app `axes` são aplicadas. Nenhuma migração nova precisa ser criada.
 
-- [ ] **Step 7: Rodar os testes e confirmar que passam**
+- [x] **Step 7: Rodar os testes e confirmar que passam**
 
 ```bash
 uv run --group test pytest apps/api/autenticacao/tests/test_axes_login.py -q
@@ -363,7 +461,7 @@ uv run --group test pytest apps/api/autenticacao/tests/test_axes_login.py -q
 
 Esperado: 4 passed.
 
-- [ ] **Step 8: Confirmar que não há migração pendente e que a suíte inteira passa**
+- [x] **Step 8: Confirmar que não há migração pendente e que a suíte inteira passa**
 
 ```bash
 uv run python manage.py makemigrations --check --dry-run
@@ -373,7 +471,7 @@ make lint
 
 Esperado: nenhuma migração pendente, suíte verde, lint limpo. Se algum teste de autenticação já existente quebrar, a causa provável é o axes ficar ligado onde não deveria — conferir que `AXES_ENABLED` resolve para `False` sob `pytest`.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add api/settings.py utils/env.py apps/api/autenticacao/views.py apps/api/autenticacao/tests/test_axes_login.py
@@ -397,7 +495,7 @@ O corpo segue a forma usada em `apps/api/core/status_handlers.py`: `{"mensagem":
 - Consumes: settings da Task 2 (`AXES_COOLOFF_TIME`, `AXES_FAILURE_LIMIT`, `AXES_LOCKOUT_PARAMETERS`).
 - Produces: `apps.api.autenticacao.handlers.resposta_de_bloqueio(request, credentials) -> JsonResponse`. É a assinatura que o axes invoca em `get_lockout_response` (`axes/helpers.py:450-457`) — dois argumentos posicionais.
 
-- [ ] **Step 1: Escrever os testes que falham**
+- [x] **Step 1: Escrever os testes que falham**
 
 Criar `apps/api/autenticacao/tests/test_axes_resposta.py`:
 
@@ -471,7 +569,7 @@ def test_bloqueio_informa_o_prazo_no_header_retry_after(settings):
     assert 0 < segundos <= settings.AXES_COOLOFF_TIME.total_seconds()
 ```
 
-- [ ] **Step 2: Rodar os testes e confirmar que falham**
+- [x] **Step 2: Rodar os testes e confirmar que falham**
 
 ```bash
 uv run --group test pytest apps/api/autenticacao/tests/test_axes_resposta.py -q
@@ -479,7 +577,7 @@ uv run --group test pytest apps/api/autenticacao/tests/test_axes_resposta.py -q
 
 Esperado: FAIL. O `Content-Type` é `text/html` e não há header `Retry-After`, porque a resposta ainda é a padrão do axes.
 
-- [ ] **Step 3: Implementar o handler**
+- [x] **Step 3: Implementar o handler**
 
 Criar `apps/api/autenticacao/handlers.py`:
 
@@ -570,7 +668,7 @@ def resposta_de_bloqueio(request: HttpRequest, credentials: dict | None = None) 
     return resposta
 ```
 
-- [ ] **Step 4: Registrar o callable no settings**
+- [x] **Step 4: Registrar o callable no settings**
 
 Em `api/settings.py`, no bloco do axes criado na Task 2, adicionar logo após a linha `AXES_CLIENT_IP_CALLABLE`:
 
@@ -578,7 +676,7 @@ Em `api/settings.py`, no bloco do axes criado na Task 2, adicionar logo após a 
 AXES_LOCKOUT_CALLABLE = "apps.api.autenticacao.handlers.resposta_de_bloqueio"
 ```
 
-- [ ] **Step 5: Rodar os testes e confirmar que passam**
+- [x] **Step 5: Rodar os testes e confirmar que passam**
 
 ```bash
 uv run --group test pytest apps/api/autenticacao/tests/test_axes_resposta.py -q
@@ -586,7 +684,7 @@ uv run --group test pytest apps/api/autenticacao/tests/test_axes_resposta.py -q
 
 Esperado: 3 passed.
 
-- [ ] **Step 6: Confirmar que a Task 2 não regrediu**
+- [x] **Step 6: Confirmar que a Task 2 não regrediu**
 
 ```bash
 uv run --group test pytest apps/api/autenticacao/ -q
@@ -595,7 +693,7 @@ make lint
 
 Esperado: tudo verde. O `test_falha_no_limite_bloqueia_com_429` continua passando, agora com corpo JSON.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/api/autenticacao/handlers.py api/settings.py apps/api/autenticacao/tests/test_axes_resposta.py
@@ -614,7 +712,7 @@ A política foi configurada na Task 2, mas nada ainda prova que ela se comporta 
 **Interfaces:**
 - Consumes: settings da Task 2 e o handler da Task 3. Nenhum código novo de produção.
 
-- [ ] **Step 1: Escrever os testes**
+- [x] **Step 1: Escrever os testes**
 
 Criar `apps/api/autenticacao/tests/test_axes_politica.py`:
 
@@ -708,7 +806,7 @@ def test_tentativa_durante_o_bloqueio_nao_estende_o_cooloff():
 
 O último teste checa o `attempt_time` no banco em vez de comparar dois valores de `Retry-After`: o relógio congelado é a causa, e o header é só a consequência. Assim o teste não depende de tempo decorrido entre as duas requisições.
 
-- [ ] **Step 2: Rodar os testes**
+- [x] **Step 2: Rodar os testes**
 
 ```bash
 uv run --group test pytest apps/api/autenticacao/tests/test_axes_politica.py -q
@@ -716,7 +814,7 @@ uv run --group test pytest apps/api/autenticacao/tests/test_axes_politica.py -q
 
 Esperado: 4 passed. Se `test_bloqueio_nao_alcanca_o_mesmo_usuario_em_outro_ip` falhar com 429, a chave de bloqueio não está no formato E — conferir que `AXES_LOCKOUT_PARAMETERS` é `[["username", "ip_address"]]`, com a lista aninhada, e não `["username", "ip_address"]`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add apps/api/autenticacao/tests/test_axes_politica.py
@@ -740,7 +838,7 @@ O agendamento vai numa migração de dados porque o projeto usa o `DatabaseSched
 - Consumes: o comando `axes_reset_logs` do django-axes, disponível a partir da Task 2.
 - Produces: `apps.api.core.tasks.limpar_logs_de_acesso_antigos(dias: int = 90) -> int`.
 
-- [ ] **Step 1: Escrever os testes que falham**
+- [x] **Step 1: Escrever os testes que falham**
 
 Criar `apps/api/core/tests/test_limpeza_logs_acesso.py`:
 
@@ -800,7 +898,7 @@ def test_a_tarefa_periodica_fica_agendada():
     assert tarefa.crontab.hour == "3"
 ```
 
-- [ ] **Step 2: Rodar os testes e confirmar que falham**
+- [x] **Step 2: Rodar os testes e confirmar que falham**
 
 ```bash
 uv run --group test pytest apps/api/core/tests/test_limpeza_logs_acesso.py -q
@@ -808,7 +906,7 @@ uv run --group test pytest apps/api/core/tests/test_limpeza_logs_acesso.py -q
 
 Esperado: FAIL com `ImportError: cannot import name 'limpar_logs_de_acesso_antigos'`.
 
-- [ ] **Step 3: Implementar a task**
+- [x] **Step 3: Implementar a task**
 
 Em `apps/api/core/tasks.py`, adicionar após a task `ping`:
 
@@ -838,7 +936,7 @@ from axes.handlers.proxy import AxesProxyHandler
 
 Chamar o handler direto em vez de `call_command("axes_reset_logs", age=dias)` porque é exatamente o que o comando faz (`axes/management/commands/axes_reset_logs.py`), sem passar por parsing de argumentos, e devolve a contagem para o teste e para o log do Celery.
 
-- [ ] **Step 4: Criar a migração de agendamento**
+- [x] **Step 4: Criar a migração de agendamento**
 
 Criar `apps/api/core/migrations/0001_schedule_access_log_cleanup.py`:
 
@@ -884,7 +982,7 @@ class Migration(migrations.Migration):
     ]
 ```
 
-- [ ] **Step 5: Aplicar e rodar os testes**
+- [x] **Step 5: Aplicar e rodar os testes**
 
 ```bash
 make migrate
@@ -893,7 +991,7 @@ uv run --group test pytest apps/api/core/tests/test_limpeza_logs_acesso.py -q
 
 Esperado: 3 passed.
 
-- [ ] **Step 6: Confirmar que não há migração pendente**
+- [x] **Step 6: Confirmar que não há migração pendente**
 
 ```bash
 uv run python manage.py makemigrations --check --dry-run
@@ -902,7 +1000,7 @@ make lint
 
 Esperado: nenhuma migração pendente, lint limpo.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/api/core/tasks.py apps/api/core/migrations/0001_schedule_access_log_cleanup.py apps/api/core/tests/test_limpeza_logs_acesso.py
