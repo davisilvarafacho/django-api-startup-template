@@ -1,5 +1,6 @@
 import logging
 
+from django.conf import settings
 from django.core.cache import cache
 from django.http import HttpRequest
 
@@ -59,15 +60,28 @@ def get_geolocation_data(ip_address: str) -> dict:
     return {}
 
 
-def get_client_ip(request: HttpRequest) -> str:
-    """Pega o IP real do cliente considerando proxies"""
+def get_client_ip(request: HttpRequest) -> str | None:
+    """Resolve o IP de origem da request.
 
-    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-    if x_forwarded_for:
-        ip = x_forwarded_for.split(',')[0].strip()
-    else:
-        ip = request.META.get('REMOTE_ADDR')
-    return ip
+    Atrás do proxy de borda o `X-Forwarded-For` é sobrescrito pelo nginx
+    (`docker/nginx/snippets/proxy.conf`), então chega com valor único e não
+    forjável. Fora do proxy o header é escolhido pelo cliente e precisa ser
+    ignorado, sob pena de o bloqueio por IP do django-axes virar contornável.
+
+    Args:
+        request: Request HTTP em processamento.
+
+    Returns:
+        O IP de origem, ou `None` se não for possível determiná-lo.
+    """
+    if settings.BEHIND_PROXY:
+        forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+        if forwarded_for:
+            first_forwarded_for = forwarded_for.split(",", 1)[0].strip()
+            if first_forwarded_for:
+                return first_forwarded_for
+
+    return request.META.get("REMOTE_ADDR")
 
 
 def parse_user_agent(user_agent_string: str | None) -> dict:

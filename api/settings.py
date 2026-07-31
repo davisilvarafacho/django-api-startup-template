@@ -2,6 +2,7 @@ import os
 import pathlib
 import sys
 import warnings
+from datetime import timedelta
 
 from django.core.management.utils import get_random_secret_key
 from django.utils.translation import gettext_lazy as _
@@ -110,6 +111,7 @@ DJANGO_APPS = [
 LIBS_APPS = [
     "auditlog",
     "anymail",
+    "axes",
     "corsheaders",
     "django_celery_beat",
     "django_filters",
@@ -164,7 +166,11 @@ MIDDLEWARE = [
     "waffle.middleware.WaffleMiddleware",
     # Par do PrometheusBeforeMiddleware; fecha a medição da request.
     "django_prometheus.middleware.PrometheusAfterMiddleware",
-] + ENV_MIDDLEWARES
+] + ENV_MIDDLEWARES + [
+    # Troca a resposta por 429 na volta da request quando o bloqueio dispara.
+    # Fica por último para que todos os demais middlewares vejam a resposta final.
+    "axes.middleware.AxesMiddleware",
+]
 
 
 ROOT_URLCONF = "api.urls"
@@ -241,6 +247,9 @@ AUTH_USER_MODEL = "usuarios.Usuario"
 # organização), o backend padrão do Django (permissions/groups) e o `guardian`
 # (permissões por objeto persistidas no banco).
 AUTHENTICATION_BACKENDS = [
+    # Só verifica bloqueio e devolve `None`, delegando a autenticação real aos
+    # backends seguintes. Precisa ser o primeiro para interromper antes deles.
+    "axes.backends.AxesStandaloneBackend",
     "rules.permissions.ObjectPermissionBackend",
     "django.contrib.auth.backends.ModelBackend",
     "guardian.backends.ObjectPermissionBackend",
@@ -249,6 +258,34 @@ AUTHENTICATION_BACKENDS = [
 # Não criar o usuário anônimo do guardian (o modelo de usuário usa e-mail como
 # username e o isolamento por organização torna esse registro desnecessário).
 ANONYMOUS_USER_NAME = None
+
+# Proteção contra força bruta no login. A chave de bloqueio é o par
+# usuário + IP (E lógico): bloquear só por usuário permitiria que qualquer um
+# trancasse a conta alheia, e bloquear só por IP puniria clientes atrás de NAT.
+# Ver docs/superpowers/specs/2026-07-30-django-axes-design.md.
+AXES_ENABLED = get_bool_from_env("AXES_ENABLED", CONFIG_ENVIRONMENT != "test")
+# Sem isso o axes usa `USERNAME_FIELD` do model ("email") como chave nas
+# credenciais. O `AuthTokenSerializer` padrão do DRF sempre chama
+# `authenticate()` com a chave literal "username", então o valor nunca seria
+# encontrado e todo `AccessAttempt` seria gravado com `username=None`.
+AXES_USERNAME_FORM_FIELD = "username"
+AXES_LOCKOUT_PARAMETERS = [["username", "ip_address"]]
+AXES_FAILURE_LIMIT = int(get_env_var("AXES_FAILURE_LIMIT", 5))
+AXES_COOLOFF_TIME = timedelta(minutes=int(get_env_var("AXES_COOLOFF_MINUTES", 30)))
+AXES_RESET_ON_SUCCESS = True
+# Sem isso, um cliente que faz retry automático (app com credencial salva
+# desatualizada) reinicia o cooloff a cada tentativa e nunca sai do bloqueio.
+AXES_RESET_COOL_OFF_ON_FAILURE_DURING_LOCKOUT = False
+AXES_HANDLER = "axes.handlers.database.AxesDatabaseHandler"
+AXES_CLIENT_IP_CALLABLE = "apps.api.autenticacao.utils.get_client_ip"
+AXES_LOCKOUT_CALLABLE = "apps.api.autenticacao.handlers.resposta_de_bloqueio"
+AXES_HTTP_RESPONSE_CODE = 429
+# O admin do axes é a única via de desbloqueio manual antes do fim do cooloff.
+AXES_ENABLE_ADMIN = True
+# Mantido porque o `TokenMetaData` só registra login de API; sem o AccessLog o
+# login bem-sucedido no /admin/ não deixaria trilha nenhuma.
+AXES_DISABLE_ACCESS_LOG = False
+AXES_ENABLE_ACCESS_FAILURE_LOG = False
 
 
 # Row Level Security. O contexto é aplicado por `apps.organizacoes` com

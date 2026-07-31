@@ -21,7 +21,11 @@ class LoginSerializer(serializers.Serializer):
     fcm_token = serializers.CharField(required=False, allow_blank=True, default="")
 
     def validate(self, attrs):
-        user = authenticate(username=attrs["email"], password=attrs["password"])
+        user = authenticate(
+            request=self.context.get("request"),
+            username=attrs["email"],
+            password=attrs["password"],
+        )
 
         if user is None:
             raise APIError(AuthErrorCode.INVALID_CREDENTIALS, status_code=401)

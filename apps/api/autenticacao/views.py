@@ -67,7 +67,7 @@ class LoginView(APIView):
 
     @document_login
     def post(self, request):
-        serializer = LoginSerializer(data=request.data)
+        serializer = LoginSerializer(data=request.data, context={"request": request._request})
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data["user"]
 
