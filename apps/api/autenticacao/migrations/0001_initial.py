@@ -29,7 +29,10 @@ class Migration(migrations.Migration):
             ],
             options={
                 "db_table": "auth_token",
+                "ordering": ("-created_at",),
                 "swappable": "KNOX_TOKEN_MODEL",
+                "verbose_name": "Token de autenticação",
+                "verbose_name_plural": "Tokens de autenticação",
                 "constraints": [
                     models.CheckConstraint(
                         condition=models.Q(("type__in", (3, 2)), _negated=True) | models.Q(("expiry__isnull", False)),

@@ -69,7 +69,10 @@ class AuthToken(models.Model):
 
     class Meta:
         db_table = "auth_token"
+        ordering = ("-created_at",)
         swappable = "KNOX_TOKEN_MODEL"
+        verbose_name = _("Token de autenticação")
+        verbose_name_plural = _("Tokens de autenticação")
         constraints = [
             models.CheckConstraint(
                 condition=~models.Q(type__in=(TokenType.PRE_AUTH, TokenType.RESET_PASSWORD)) | models.Q(expiry__isnull=False),

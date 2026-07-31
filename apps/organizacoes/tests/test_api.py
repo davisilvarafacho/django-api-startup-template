@@ -1,4 +1,5 @@
 """Testes da camada HTTP de organizacoes."""
+
 from datetime import timedelta
 
 from django.utils import timezone
@@ -7,9 +8,9 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 import pytest
-from knox.models import AuthToken
 from threadlocals.threadlocals import set_current_user, set_thread_variable
 
+from apps.api.autenticacao.models import AuthToken
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
 from apps.organizacoes.models import Convite, Organizacao, Papel, Time, Vinculo
 from apps.usuarios.factories import UsuarioFactory

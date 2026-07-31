@@ -6,6 +6,7 @@ from apps.api.base.serializers import BaseModelSerpySerializer
 
 
 class AuthTokenSerializer(BaseModelSerpySerializer):
+    id = serpy.StrField(attr="digest")
     digest = serpy.StrField()
     token_key = serpy.StrField()
     created = serpy.Field()

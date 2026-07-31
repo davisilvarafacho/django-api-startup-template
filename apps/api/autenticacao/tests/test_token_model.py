@@ -6,7 +6,9 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 
 import pytest
+from knox.models import get_token_model
 
+from apps.api.autenticacao.authentications import TypedTokenAuthentication
 from apps.api.autenticacao.models import AuthToken, TokenType
 
 
@@ -16,6 +18,17 @@ def test_settings_aponta_para_token_proprio(settings):
 
 def test_tipos_efemeros_sao_explicitos():
     assert AuthToken.EPHEMERAL_TYPES == frozenset({TokenType.PRE_AUTH, TokenType.RESET_PASSWORD})
+
+
+@pytest.mark.django_db
+def test_typed_authentication_autentica_token_do_modelo_configurado(usuario):
+    instance, plain_token = AuthToken.objects.create(user=usuario, type=TokenType.TOKEN)
+
+    authenticated_user, authenticated_token = TypedTokenAuthentication().authenticate_credentials(plain_token.encode())
+
+    assert get_token_model() is AuthToken
+    assert authenticated_user == usuario
+    assert authenticated_token == instance
 
 
 @pytest.mark.django_db
