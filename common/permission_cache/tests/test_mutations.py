@@ -4,11 +4,13 @@ from pathlib import Path
 from unittest.mock import call, patch
 
 from django.contrib.auth.models import Permission
+from django.contrib.contenttypes.models import ContentType, ContentTypeManager
 from django.db import connections, transaction
 from django.test.utils import CaptureQueriesContext
 
 import pytest
 from guardian.ctypes import get_content_type
+from guardian.utils import get_user_obj_perms_model
 
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
 from apps.usuarios.factories import UsuarioFactory
@@ -54,6 +56,43 @@ def replica_alias():
 
 def guardian_inserts(queries) -> list[str]:
     return [query["sql"] for query in queries if 'INSERT INTO "guardian_userobjectpermission"' in query["sql"]]
+
+
+def guardian_deletes(queries) -> list[str]:
+    return [query["sql"] for query in queries if 'DELETE FROM "guardian_userobjectpermission"' in query["sql"]]
+
+
+def create_divergent_guardian_permission(replica_alias, users, organization):
+    content_type = ContentType.objects.using(replica_alias).create(app_label="replica_only", model="organizacao")
+    permission = Permission.objects.using(replica_alias).create(
+        content_type_id=content_type.pk,
+        codename="view_organizacao",
+        name="Can view replica organization",
+    )
+    permission_model = get_user_obj_perms_model()
+    rows = permission_model.objects.using(replica_alias).bulk_create(
+        [
+            permission_model(
+                user_id=user.pk,
+                permission_id=permission.pk,
+                content_type_id=content_type.pk,
+                object_pk=organization.pk,
+            )
+            for user in users
+        ]
+    )
+    return content_type, permission_model, rows
+
+
+def alias_content_type_lookup(replica_alias, divergent_content_type):
+    original_get_for_model = ContentTypeManager.get_for_model
+
+    def get_for_model(manager, model, for_concrete_model=True):
+        if manager.db == replica_alias:
+            return divergent_content_type
+        return original_get_for_model(manager, model, for_concrete_model=for_concrete_model)
+
+    return patch.object(ContentTypeManager, "get_for_model", get_for_model)
 
 
 def test_bulk_create_memberships_invalidates_every_user_after_commit():
@@ -225,6 +264,52 @@ def test_guardian_assign_to_many_writes_on_object_database_alias(replica_alias):
         )
 
 
+@pytest.mark.django_db(transaction=True, databases="__all__")
+def test_guardian_bulk_remove_uses_alias_content_type_when_ids_diverge(replica_alias):
+    user = UsuarioFactory()
+    organization = create_organization("guardian-replica-remove-bulk")
+    content_type, permission_model, rows = create_divergent_guardian_permission(replica_alias, [user], organization)
+    user._state.db = replica_alias
+    organization._state.db = replica_alias
+
+    with (
+        alias_content_type_lookup(replica_alias, content_type),
+        patch("common.permission_cache.invalidation.bump_epoch_scopes"),
+        CaptureQueriesContext(connections["default"]) as default_queries,
+        CaptureQueriesContext(connections[replica_alias]) as replica_queries,
+    ):
+        removed = guardian_bulk_remove("view_organizacao", user, [organization])
+
+    assert removed[0] == 1
+    assert not permission_model.objects.using(replica_alias).filter(pk=rows[0].pk).exists()
+    assert guardian_deletes(default_queries) == []
+    assert len(guardian_deletes(replica_queries)) == 1
+
+
+@pytest.mark.django_db(transaction=True, databases="__all__")
+def test_guardian_remove_from_many_uses_alias_content_type_when_ids_diverge(replica_alias):
+    first = UsuarioFactory()
+    second = UsuarioFactory()
+    organization = create_organization("guardian-replica-remove-many")
+    users = [first, second]
+    content_type, permission_model, rows = create_divergent_guardian_permission(replica_alias, users, organization)
+    for instance in (*users, organization):
+        instance._state.db = replica_alias
+
+    with (
+        alias_content_type_lookup(replica_alias, content_type),
+        patch("common.permission_cache.invalidation.bump_epoch_scopes"),
+        CaptureQueriesContext(connections["default"]) as default_queries,
+        CaptureQueriesContext(connections[replica_alias]) as replica_queries,
+    ):
+        removed = guardian_remove_from_many("view_organizacao", users, organization)
+
+    assert removed[0] == 2
+    assert not permission_model.objects.using(replica_alias).filter(pk__in=[row.pk for row in rows]).exists()
+    assert guardian_deletes(default_queries) == []
+    assert len(guardian_deletes(replica_queries)) == 1
+
+
 def test_permission_bulk_wrappers_bump_global_layers():
     content_type = get_content_type(create_organization("permission-bulk"))
     permissions = [
@@ -296,7 +381,6 @@ MODEL_KINDS = {
 }
 GUARDIAN_MODEL_FACTORIES = {"get_user_obj_perms_model", "get_group_obj_perms_model"}
 MANAGER_ATTRIBUTES = {"objects", "_base_manager", "_default_manager"}
-QUERYSET_METHODS = {"all", "exclude", "filter", "select_for_update", "using"}
 MUTATION_METHODS = {"bulk_create", "bulk_update", "update"}
 AUTHORIZATION_STATE_FIELDS = {"is_active", "is_superuser"}
 
@@ -319,7 +403,9 @@ class AuthorizationWriteVisitor(ast.NodeVisitor):
         if isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name) and node.func.id in self.guardian_factories:
                 return "guardian object-permission bulk mutation"
-            if isinstance(node.func, ast.Attribute) and node.func.attr in QUERYSET_METHODS:
+            if isinstance(node.func, ast.Attribute) and node.func.attr in self.guardian_factories:
+                return "guardian object-permission bulk mutation"
+            if isinstance(node.func, ast.Attribute):
                 return self.expression_kind(node.func.value)
         return None
 
@@ -429,6 +515,16 @@ def scan_authorization_writes(source: str) -> list[tuple[str, int]]:
         (
             "Usuario.objects.bulk_update(users, ['is_active'])\n",
             "user authorization-state update",
+            1,
+        ),
+        (
+            "Vinculo.objects.filter(ativo=True).order_by('pk').update(papel=30)\n",
+            "membership bulk mutation",
+            1,
+        ),
+        (
+            "guardian.utils.get_user_obj_perms_model().objects.order_by('pk').bulk_create([])\n",
+            "guardian object-permission bulk mutation",
             1,
         ),
     ],

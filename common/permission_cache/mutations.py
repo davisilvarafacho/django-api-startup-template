@@ -141,6 +141,45 @@ def _assign_guardian_permission_to_many(
     return manager.bulk_create(assigned, ignore_conflicts=ignore_conflicts)
 
 
+def _bulk_remove_guardian_permissions(
+    perm: Permission | str,
+    identity: Usuario | Group,
+    objects: list[models.Model],
+    database_alias: str,
+) -> tuple[int, dict[str, int]]:
+    if not objects:
+        return 0, {}
+    manager = _guardian_model(identity).objects.db_manager(database_alias)
+    content_type = _guardian_content_type(objects[0], database_alias)
+    permission = _guardian_permission(perm, content_type, database_alias)
+    filters = {f"{manager.user_or_group_field}_id": identity.pk, "permission_id": permission.pk}
+    if manager.is_generic():
+        filters.update(content_type_id=content_type.pk, object_pk__in=[str(obj.pk) for obj in objects])
+    else:
+        filters["content_object_id__in"] = [obj.pk for obj in objects]
+    return manager.filter(**filters).delete()
+
+
+def _remove_guardian_permission_from_many(
+    perm: Permission | str,
+    identities: list[Usuario | Group],
+    obj: models.Model,
+    database_alias: str,
+) -> tuple[int, dict[str, int]]:
+    manager = _guardian_model(identities[0]).objects.db_manager(database_alias)
+    content_type = _guardian_content_type(obj, database_alias)
+    permission = _guardian_permission(perm, content_type, database_alias)
+    filters = {
+        f"{manager.user_or_group_field}_id__in": [identity.pk for identity in identities],
+        "permission_id": permission.pk,
+    }
+    if manager.is_generic():
+        filters.update(content_type_id=content_type.pk, object_pk=str(obj.pk))
+    else:
+        filters["content_object_id"] = obj.pk
+    return manager.filter(**filters).delete()
+
+
 def bulk_create_memberships(
     memberships: Iterable[Vinculo],
     *,
@@ -240,10 +279,9 @@ def guardian_bulk_remove(
 ) -> tuple[int, dict[str, int]]:
     object_list = list(objects)
     database_alias = _database_alias(object_list, user_or_group._state.db or DEFAULT_DB_ALIAS)
-    manager = _guardian_model(user_or_group).objects.db_manager(database_alias)
     with transaction.atomic(using=database_alias):
         with suppress_guardian_signal_invalidation():
-            removed = manager.bulk_remove_perm(perm, user_or_group, object_list)
+            removed = _bulk_remove_guardian_permissions(perm, user_or_group, object_list, database_alias)
         _schedule_guardian_objects(object_list, database_alias)
     return removed
 
@@ -257,10 +295,9 @@ def guardian_remove_from_many(
     if not identities:
         return 0, {}
     database_alias = obj._state.db or DEFAULT_DB_ALIAS
-    manager = _guardian_model(identities[0]).objects.db_manager(database_alias)
     with transaction.atomic(using=database_alias):
         with suppress_guardian_signal_invalidation():
-            removed = manager.remove_perm_from_many(perm, identities, obj)
+            removed = _remove_guardian_permission_from_many(perm, identities, obj, database_alias)
         _schedule_guardian_objects([obj], database_alias)
     return removed
 
