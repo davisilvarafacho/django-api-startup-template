@@ -31,7 +31,7 @@ def test_tenant_permission_sets_request_tenant_and_rls_context():
         assert TenantPermission().has_permission(request, TimeViewSet()) is True
 
     assert request.tenant == TenantAccess(organization.pk, "acme", membership.pk, Papel.GESTOR)
-    define_rls.assert_called_once_with(organization.pk)
+    define_rls.assert_called_once_with(request.tenant.organization_id)
 
 
 def test_papel_minimo_permission_reads_tenant_dataclass():

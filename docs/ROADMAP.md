@@ -6,7 +6,7 @@ com o que **já foi implementado** e o que está **planejado**, em ondas (batche
 **Legenda:** ✅ feito · 🚧 em andamento · ⏳ planejado · 🧠 brainstorm próprio antes de
 codar · 🔎 estudar antes · ⏸️ adiado
 
-_Atualizado em 2026-07-29._
+_Atualizado em 2026-07-31._
 
 ---
 
@@ -103,7 +103,7 @@ _Atualizado em 2026-07-29._
 - ✅ Papéis estilo **Saleor** (ordem crescente) somados às permissions do Django.
 - ✅ Tipagem operacional de `knox.AuthToken` via `TokenMetaData.type` (1=token, 2=reset_password, 999=api_key); reset password não autentica API.
 - ✅ **Scoped API tokens**: `TokenMetaData.scopes` + `TokenScopePermission` global via `required_token_scopes` na view.
-- ⏳ **Cache de permissão**.
+- ✅ **Cache de permissão**.
 - ⏳ **MFA/2FA** + checagem de senha vazada (HaveIBeenPwned).
 - ⏳ **Field-level permissions** (serializers dinâmicos por papel).
 - ⏳ Ciclo de vida de conta: verificação de e-mail, social auth, desativação/exclusão, gestão de sessões e dispositivos.

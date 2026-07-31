@@ -1,18 +1,25 @@
 import copy
+from io import StringIO
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AnonymousUser, Group, Permission
 from django.core.cache import caches
 from django.core.cache.backends.locmem import LocMemCache
+from django.core.management.base import BaseCommand
 from django.db import connection
 from django.test import override_settings
 from django.test.utils import CaptureQueriesContext
 
+from rest_framework.request import Request
+from rest_framework.test import APIRequestFactory, force_authenticate
+
 import pytest
 import rules
 from asgiref.sync import async_to_sync
+from celery import shared_task
 from guardian.shortcuts import assign_perm
 
+from apps.api.autenticacao.permissions import CustomDjangoModelPermissions
 from apps.organizacoes.models import Organizacao
 from apps.usuarios.factories import UsuarioFactory
 from common.permission_cache.backends import CachedModelBackend
@@ -25,6 +32,11 @@ from common.permission_cache.types import DjangoPermissionSnapshot, encode_envel
 pytestmark = pytest.mark.django_db
 
 Usuario = get_user_model()
+
+
+@shared_task(name="tests.permission_cache_reloaded_user_has_permission")
+def reloaded_user_has_permission(user_id, permission_name):
+    return Usuario.objects.get(pk=user_id).has_perm(permission_name)
 
 
 @pytest.fixture(autouse=True)
@@ -178,6 +190,77 @@ def test_kill_switch_bypasses_permission_snapshots():
         assert backend.get_all_permissions(user) == {"organizacoes.view_organizacao"}
     assert len(first_queries) > 0
     assert len(second_queries) > 0
+
+
+@pytest.mark.parametrize("cache_enabled", [True, False])
+def test_direct_user_has_perm_preserves_result_with_cache_enabled_or_disabled(settings, cache_enabled):
+    settings.AUTHORIZATION_CACHE = {**settings.AUTHORIZATION_CACHE, "ENABLED": cache_enabled}
+    user = UsuarioFactory()
+    user.user_permissions.add(permission("view_organizacao"))
+
+    assert user.has_perm("organizacoes.view_organizacao") is True
+    assert user.has_perm("organizacoes.delete_organizacao") is False
+
+
+def test_drf_model_permissions_transparently_use_cached_backend():
+    class OrganizationView:
+        queryset = Organizacao.objects.all()
+
+    user = UsuarioFactory()
+    user.user_permissions.add(permission("view_organizacao"))
+    factory = APIRequestFactory()
+    first_raw_request = factory.get("/organizacoes/")
+    force_authenticate(first_raw_request, user=user)
+    first_request = Request(first_raw_request)
+    permission_class = CustomDjangoModelPermissions()
+
+    assert permission_class.has_permission(first_request, OrganizationView()) is True
+
+    reloaded = Usuario.objects.get(pk=user.pk)
+    second_raw_request = factory.get("/organizacoes/")
+    force_authenticate(second_raw_request, user=reloaded)
+    second_request = Request(second_raw_request)
+    with CaptureQueriesContext(connection) as queries:
+        assert permission_class.has_permission(second_request, OrganizationView()) is True
+    assert len(queries) == 0
+
+
+def test_user_has_module_perms_preserves_django_admin_behavior():
+    user = UsuarioFactory()
+    user.user_permissions.add(permission("view_organizacao"))
+
+    assert user.has_module_perms("organizacoes") is True
+    assert user.has_module_perms("usuarios") is False
+
+
+def test_celery_eager_task_reloads_user_and_preserves_permission_result():
+    user = UsuarioFactory()
+    user.user_permissions.add(permission("view_organizacao"))
+
+    assert user.has_perm("organizacoes.view_organizacao") is True
+    assert reloaded_user_has_permission.delay(user.pk, "organizacoes.view_organizacao").get() is True
+
+
+def test_management_command_context_resolves_permissions_without_request():
+    class ResolvePermissionCommand(BaseCommand):
+        requires_system_checks = []
+
+        def handle(self, *args, **options):
+            user = Usuario.objects.get(pk=options["user_id"])
+            snapshot = DjangoPermissionResolver().resolve(user)
+            return "allowed" if "organizacoes.view_organizacao" in snapshot.all_permissions else "denied"
+
+    user = UsuarioFactory()
+    user.user_permissions.add(permission("view_organizacao"))
+
+    result = ResolvePermissionCommand(stdout=StringIO()).execute(
+        force_color=False,
+        no_color=False,
+        skip_checks=True,
+        user_id=user.pk,
+    )
+
+    assert result == "allowed"
 
 
 def test_empty_permission_snapshot_is_cached():

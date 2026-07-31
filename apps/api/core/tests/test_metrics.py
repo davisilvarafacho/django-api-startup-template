@@ -1,9 +1,11 @@
 """Testes do controle de acesso ao /metrics (não tocam o banco)."""
+
 from django.test import RequestFactory
 
 import pytest
 
 from apps.api.core import metrics as modulo
+from common.permission_cache import metrics as permission_cache_metrics
 
 
 @pytest.fixture
@@ -74,3 +76,19 @@ def test_faixas_privadas_liberadas(factory, ip):
 @pytest.mark.parametrize("ip", ["", "nao-e-ip", "8.8.8.8"])
 def test_valores_invalidos_ou_publicos_bloqueados(ip):
     assert modulo._ip_interno(ip) is False
+
+
+def test_exposicao_inclui_metricas_do_cache_de_autorizacao(factory):
+    permission_cache_metrics.record_operation("django", "hit")
+    permission_cache_metrics.record_invalidation("tenant", "success")
+    permission_cache_metrics.record_fallback("guardian", "read_error")
+    with permission_cache_metrics.time_resolve("rules", "database"):
+        pass
+
+    response = modulo.metrics_view(factory.get("/metrics", REMOTE_ADDR="127.0.0.1"))
+    exposition = response.content.decode()
+
+    assert "authorization_cache_operations_total" in exposition
+    assert "authorization_cache_invalidations_total" in exposition
+    assert "authorization_cache_fallback_total" in exposition
+    assert "authorization_cache_resolve_seconds" in exposition
