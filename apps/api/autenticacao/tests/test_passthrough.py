@@ -3,6 +3,7 @@
 Não tocam o banco: os autenticadores Knox são substituídos por dublês, já que o
 que está sob teste é o fluxo de decisão, não a validação do token em si.
 """
+
 import json
 
 from django.test import RequestFactory
@@ -89,7 +90,10 @@ def test_rota_privada_sem_token_retorna_401(rf, rota_privada):
     resposta = middleware(rf.get("/v1/pedidos/"))
 
     assert resposta.status_code == 401
-    assert json.loads(resposta.content)["mensagem"] == "Token não fornecido."
+    assert json.loads(resposta.content) == {
+        "code": "auth.invalid_token",
+        "message": "Token não fornecido.",
+    }
     assert chamadas == []
 
 
@@ -100,7 +104,10 @@ def test_rota_privada_com_token_invalido_retorna_401(rf, rota_privada):
     resposta = middleware(rf.get("/v1/pedidos/"))
 
     assert resposta.status_code == 401
-    assert json.loads(resposta.content)["mensagem"] == "Invalid token."
+    assert json.loads(resposta.content) == {
+        "code": "auth.invalid_token",
+        "message": "Invalid token.",
+    }
     assert chamadas == []
 
 

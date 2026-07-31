@@ -145,6 +145,16 @@ def test_reauthenticate_atualiza_sessao_atual(api_client, usuario):
     assert token.metadata.reauthenticated_at is not None
 
 
+def test_reauthenticate_sem_credencial_retorna_erro_tipado_do_middleware(api_client):
+    response = api_client.post("/auth/reauthenticate/", {"password": "Senha123!"})
+
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+    assert response.json() == {
+        "code": "auth.invalid_token",
+        "message": "Token não fornecido.",
+    }
+
+
 def test_reauthenticate_recusa_api_key(api_client, usuario):
     issued = issue_token(
         responsavel=usuario,

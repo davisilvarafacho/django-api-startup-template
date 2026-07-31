@@ -7,6 +7,7 @@ enxergaria `AnonymousUser`. Resolvendo aqui, todos os middlewares internos já
 recebem `request.user` preenchido, e o DRF apenas reaproveita o resultado via
 `apps.api.autenticacao.authentications.PassthroughAuthentication`.
 """
+
 import logging
 
 from django.conf import settings
@@ -21,6 +22,7 @@ from apps.api.core.routes_registry import routes_registry
 
 from .authentications import QueryParamTokenAuthentication, TypedTokenAuthentication
 from .constants import REQUEST_ATTR_RESOLVED, RESOLVED_PRIVATE, RESOLVED_PUBLIC
+from .errors import AuthErrorCode
 
 logger = logging.getLogger(__name__)
 
@@ -70,10 +72,16 @@ class AuthenticationMiddleware:
         try:
             result = self.run_authenticators(request)
         except AuthenticationFailed as exc:
-            return JsonResponse({"mensagem": str(exc.detail)}, status=status.HTTP_401_UNAUTHORIZED)
+            return JsonResponse(
+                {"code": AuthErrorCode.INVALID_TOKEN.value, "message": str(exc.detail)},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
 
         if result is None:
-            return JsonResponse({"mensagem": "Token não fornecido."}, status=status.HTTP_401_UNAUTHORIZED)
+            return JsonResponse(
+                {"code": AuthErrorCode.INVALID_TOKEN.value, "message": "Token não fornecido."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
 
         user, auth_token = result
 
@@ -118,9 +126,9 @@ class UpdateTokenLastUsedMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        if hasattr(request, 'auth') and request.auth:
-            if hasattr(request.auth, 'metadata'):
+        if hasattr(request, "auth") and request.auth:
+            if hasattr(request.auth, "metadata"):
                 request.auth.metadata.last_used = timezone.now()
-                request.auth.metadata.save(update_fields=['last_used'])
+                request.auth.metadata.save(update_fields=["last_used"])
 
         return self.get_response(request)
