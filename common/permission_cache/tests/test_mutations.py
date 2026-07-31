@@ -585,7 +585,7 @@ def scan_authorization_writes(source: str) -> list[tuple[str, int]]:
             3,
         ),
         (
-            "queryset = Vinculo.objects.filter(ativo=True)\nqueryset.update(papel=30)\n",
+            "queryset = Vinculo.objects.filter(is_active=True)\nqueryset.update(papel=30)\n",
             "membership bulk mutation",
             2,
         ),
@@ -605,7 +605,7 @@ def scan_authorization_writes(source: str) -> list[tuple[str, int]]:
             1,
         ),
         (
-            "Vinculo.objects.filter(ativo=True).order_by('pk').update(papel=30)\n",
+            "Vinculo.objects.filter(is_active=True).order_by('pk').update(papel=30)\n",
             "membership bulk mutation",
             1,
         ),
@@ -634,7 +634,7 @@ def test_authorization_write_scan_follows_model_manager_and_queryset_indirection
     "source",
     [
         "Permission.objects.get(codename='view')\naudit.update(status='seen')\n",
-        "Vinculo.objects.filter(ativo=True)\nmetrics.update(value=1)\n",
+        "Vinculo.objects.filter(is_active=True)\nmetrics.update(value=1)\n",
         "users = Usuario.objects.filter(is_active=True)\nusers.update(first_name='Ada')\n",
         "def memberships():\n    rows = Vinculo.objects.all()\n\ndef metrics(rows):\n    rows.update(value=1)\n",
         "summary = Usuario.objects.aggregate(total=Count('pk'))\nsummary.update(is_active=False)\n",

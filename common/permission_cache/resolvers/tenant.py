@@ -79,7 +79,7 @@ class TenantAccessResolver:
         with cachalot_disabled(all_queries=True):
             row = (
                 Vinculo.objects.using(database_alias)
-                .filter(usuario_id=user_id, ativo=True, organizacao__ativo=True, **organization_filter)
+                .filter(usuario_id=user_id, is_active=True, organizacao__is_active=True, **organization_filter)
                 .values("id", "papel", "organizacao_id", "organizacao__slug")
                 .first()
             )

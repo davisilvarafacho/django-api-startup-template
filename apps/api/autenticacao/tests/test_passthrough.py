@@ -18,6 +18,7 @@ from apps.api.autenticacao.constants import (
     RESOLVED_PRIVATE,
     RESOLVED_PUBLIC,
 )
+from apps.api.autenticacao.errors import AuthErrorCode
 from apps.api.autenticacao.middleware import AuthenticationMiddleware
 
 
@@ -88,9 +89,11 @@ def test_rota_privada_sem_token_retorna_401(rf, rota_privada):
     middleware, chamadas = build_middleware(AutenticadorFalso(resultado=None))
 
     resposta = middleware(rf.get("/v1/pedidos/"))
+    payload = json.loads(resposta.content)
 
     assert resposta.status_code == 401
-    assert json.loads(resposta.content)["mensagem"] == "Token não fornecido."
+    assert payload["errors"][0]["code"] == AuthErrorCode.TOKEN_NOT_PROVIDED.value
+    assert "request_id" in payload
     assert chamadas == []
 
 
@@ -99,9 +102,25 @@ def test_rota_privada_com_token_invalido_retorna_401(rf, rota_privada):
     middleware, chamadas = build_middleware(AutenticadorFalso(erro=erro))
 
     resposta = middleware(rf.get("/v1/pedidos/"))
+    payload = json.loads(resposta.content)
 
     assert resposta.status_code == 401
-    assert json.loads(resposta.content)["mensagem"] == "Invalid token."
+    assert payload["errors"][0]["code"] == AuthErrorCode.INVALID_TOKEN.value
+    assert payload["errors"][0]["message"] == "Invalid token."
+    assert chamadas == []
+
+
+def test_rota_privada_com_api_error_usa_o_codigo_e_status_do_erro(rf, rota_privada):
+    from apps.api.core.errors import APIError
+
+    erro = APIError(AuthErrorCode.EXPIRED_TOKEN, status_code=401)
+    middleware, chamadas = build_middleware(AutenticadorFalso(erro=erro))
+
+    resposta = middleware(rf.get("/v1/pedidos/"))
+    payload = json.loads(resposta.content)
+
+    assert resposta.status_code == 401
+    assert payload["errors"][0]["code"] == AuthErrorCode.EXPIRED_TOKEN.value
     assert chamadas == []
 
 

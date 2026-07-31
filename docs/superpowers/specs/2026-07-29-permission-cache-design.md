@@ -585,7 +585,7 @@ não serão declaradas cobertas sem Redis real.
 
 ## Decisões duráveis
 
-O ADR 0004 registra:
+O ADR 0005 registra:
 
 - cache semântico sobre Django Cache Framework e `django-redis`;
 - Cachalot apenas como cache de query complementar;

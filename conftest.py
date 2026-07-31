@@ -9,14 +9,32 @@ import pytest
 from redis import Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError
+from threadlocals.threadlocals import set_current_user, set_thread_variable
+
+
+@pytest.fixture(autouse=True)
+def _isolar_usuario_da_thread():
+    """Impede que o usuário de um teste vaze para o seguinte.
+
+    `Base.save()` preenche `created_by` com `get_current_user()`, que vive num
+    threadlocal populado pelo middleware de autenticação. Sem limpar entre
+    testes, um teste que fez request autenticada deixa o usuário lá; o rollback
+    apaga a linha e o teste seguinte grava um `created_by` órfão, estourando a
+    FK na hora do commit/teardown.
+    """
+    set_current_user(None)
+    set_thread_variable("request", None)
+    yield
+    set_current_user(None)
+    set_thread_variable("request", None)
 
 
 @pytest.fixture(scope="session")
-def redis_permission_cache():
+def _redis_permission_cache_url():
+    """Resolve a URL do Redis real uma vez por sessão e checa disponibilidade."""
     redis_url = os.environ.get("AUTHORIZATION_REDIS_URL") or (
         f"redis://{os.environ.get('REDIS_HOST', '127.0.0.1')}:{os.environ.get('REDIS_PORT', '6379')}/15"
     )
-    key_prefix = f"authz:test:{uuid4().hex}"
     client = Redis.from_url(redis_url, socket_connect_timeout=1, socket_timeout=1)
 
     try:
@@ -26,6 +44,23 @@ def redis_permission_cache():
         if os.environ.get("CI"):
             pytest.fail("Redis real indisponível no CI")
         pytest.skip("Redis real indisponível")
+
+    client.close()
+    return redis_url
+
+
+@pytest.fixture
+def redis_permission_cache(_redis_permission_cache_url):
+    """Aponta o alias `permissions` para o Redis real durante um único teste.
+
+    Precisa ser de escopo de função: `override_settings` troca o `settings`
+    global por um `UserSettingsHolder`, cujo `SETTINGS_MODULE` é `None`. Mantido
+    aberto por toda a sessão, isso vazaria para qualquer teste posterior que leia
+    `settings.SETTINGS_MODULE`.
+    """
+    redis_url = _redis_permission_cache_url
+    key_prefix = f"authz:test:{uuid4().hex}"
+    client = Redis.from_url(redis_url, socket_connect_timeout=1, socket_timeout=1)
 
     permission_cache = {
         "BACKEND": "django_redis.cache.RedisCache",

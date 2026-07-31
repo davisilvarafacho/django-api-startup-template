@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 from django.core.files.base import ContentFile
@@ -44,7 +44,9 @@ class BackblazeB2StorageTests(SimpleTestCase):
 
         created_at = self.storage.get_created_time("users/avatar.png")
 
-        self.assertEqual(created_at, datetime(2023, 11, 14, 22, 13, 20, tzinfo=UTC))
+        # `datetime.UTC` só existe no Python 3.11; o projeto suporta 3.10.
+        expected = datetime(2023, 11, 14, 22, 13, 20, tzinfo=timezone.utc)  # noqa: UP017
+        self.assertEqual(created_at, expected)
 
     def test_path_traversal_is_rejected(self):
         with self.assertRaises(ValueError):

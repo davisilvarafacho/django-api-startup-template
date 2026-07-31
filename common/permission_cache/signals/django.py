@@ -95,9 +95,12 @@ def _group_permission_changed(action, using, **kwargs) -> None:
 
 def _remember_user_auth_flags(instance, using, raw, update_fields, **kwargs) -> None:
     previous_flags = None
-    relevant_fields = {"is_active", "is_superuser"}
+    # `is_deleted` entra aqui porque exclusão é lógica: `Base.delete()` faz um
+    # `save(update_fields=["is_deleted"])` e nunca dispara `post_delete`. Sem
+    # rastrear o campo, excluir um usuário não invalidaria o cache dele.
+    relevant_fields = {"is_active", "is_superuser", "is_deleted"}
     if not raw and not instance._state.adding and (update_fields is None or relevant_fields.intersection(update_fields)):
-        previous_flags = Usuario.objects.using(using).filter(pk=instance.pk).values_list("is_active", "is_superuser").first()
+        previous_flags = Usuario.all_objects.using(using).filter(pk=instance.pk).values_list("is_active", "is_superuser", "is_deleted").first()
     setattr(instance, _PREVIOUS_AUTH_FLAGS_ATTRIBUTE, previous_flags)
 
 
@@ -105,7 +108,7 @@ def _user_saved(instance, using, **kwargs) -> None:
     previous_flags = getattr(instance, _PREVIOUS_AUTH_FLAGS_ATTRIBUTE, None)
     if hasattr(instance, _PREVIOUS_AUTH_FLAGS_ATTRIBUTE):
         delattr(instance, _PREVIOUS_AUTH_FLAGS_ATTRIBUTE)
-    if previous_flags is not None and previous_flags != (instance.is_active, instance.is_superuser):
+    if previous_flags is not None and previous_flags != (instance.is_active, instance.is_superuser, instance.is_deleted):
         _schedule_user_layers((instance.pk,), using, ("django", "tenant", "guardian"))
 
 

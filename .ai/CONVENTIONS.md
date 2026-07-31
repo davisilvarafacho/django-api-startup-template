@@ -35,7 +35,39 @@ para comportar múltiplos arquivos de teste.
             test_*.py
 ```
 
-### 1.3. QuerySets
+### 1.3. Criação de Apps
+
+Apps **devem** ser criados pelo comando do projeto, não pelo `startapp` do Django:
+
+```bash
+python manage.py start_api_app vendas                    # apps/vendas/
+python manage.py start_api_app pedidos --parent vendas   # apps/vendas/subapps/pedidos/
+```
+
+O comando cria a estrutura desta seção (incluindo `tests/` como pacote e um
+`subapps/` para apps do mesmo domínio), e registra o app em `BUSINESS_APPS`. O
+`--parent` aceita o nome de qualquer app já existente, em qualquer profundidade.
+
+### 1.4. Pasta `common/`
+
+A pasta `common/`, na raiz do projeto, é o lugar das **implementações próprias** —
+código que o projeto escreve por conta própria em vez de consumir pronto de uma lib.
+
+Exemplos do que pertence a `common/`:
+
+- serialização própria (ex.: camadas de serialização construídas no projeto);
+- cache de permissões;
+- encrypt/decrypt de fields;
+- e demais mecanismos de infraestrutura escritos internamente.
+
+Regras:
+
+- Não é lugar para código de domínio: regra de negócio pertence ao app em `apps/`.
+- Não é depósito de helpers avulsos: utilitários genéricos continuam em `utils/`.
+- Cada implementação **deve** ficar em seu próprio módulo/pacote, nomeado pelo que
+  implementa (ex.: `common/encrypted_fields.py`, `common/permission_cache.py`).
+
+### 1.5. QuerySets
 
 - **Obrigatório** utilizar `select_related` (e, quando aplicável, `prefetch_related`)
   para evitar consultas N+1.
@@ -56,6 +88,12 @@ para comportar múltiplos arquivos de teste.
 - A docstring de cada classe de choices **deve** indicar o modelo e a coluna onde é
   originalmente utilizada.
 - **Devem** ficar sempre no começo do arquivo `models.py` (não em arquivo separado).
+
+**Exceção — códigos de erro da API:** códigos de erro são `models.TextChoices`, mas
+ficam obrigatoriamente em `<app>/errors.py` (nunca em `models.py`), registrados em
+`apps.api.core.errors.error_codes` via descoberta automática. Toda falha da API é
+levantada com `APIError(code, status_code=...)`, nunca com uma string solta — ver
+`docs/superpowers/specs/2026-07-28-api-errors-design.md`.
 
 ### 2.2. Ordem dos Argumentos dos Fields
 
@@ -97,6 +135,11 @@ A classe `Meta` de cada model **deve** declarar, no mínimo, os seguintes atribu
   - Exemplo concreto: as actions `ativar`/`inativar` do `BaseModelViewSet` usam a
     permissão `can_toggle_<model>` (ex.: `can_toggle_produto`).
 
+Credenciais swappable podem usar o nome do recurso administrado no sufixo
+(`*_apikey`) em vez do nome técnico do model (`*_authtoken`). Isso mantém
+separadas as permissions humanas de administração de API keys das permissions
+default sobre a tabela unificada de tokens.
+
 ### 2.4. Herança
 
 - Todo model **deve** herdar da classe base do projeto (`Base`).
@@ -104,10 +147,25 @@ A classe `Meta` de cada model **deve** declarar, no mínimo, os seguintes atribu
   - Manager de "ativos" (`ativos`) além do `objects` (`CustomManager`, que aplica
     `defer` dos `queryset_deferred_fields`).
   - Campo `ativo` para soft-active (ligado às actions `ativar`/`inativar`).
-  - `owner` preenchido automaticamente com o usuário corrente no `save()`.
+  - `created_by` preenchido automaticamente com o usuário corrente no `save()`
+    (via `CreationAuditMixin`); não existe `last_modified_by` — quem alterou por
+    último vive no `history`, não num FK.
   - Histórico de auditoria (`history`, via `django-auditlog`).
-  - Timestamps de criação/alteração (`data_criacao`, `hora_criacao`, …).
+  - Timestamps `created_at`/`last_modified_at`.
   - Utilitários: `clonar()`, `as_dict()`, `get_fields()` e afins.
+  - `api_scope_resource = None` por padrão — ver §2.7 para expor o model como
+    recurso público de scopes/permissions.
+
+**Exceções arquiteturais explícitas:**
+
+- Modelos do control plane de identidade/tenancy (`Usuario`, `Organizacao`,
+  `Vinculo` e `Convite`) herdam de `BaseGlobal`: precisam ser consultados antes
+  de existir contexto RLS, mas mantêm `created_by`, `created_at` e
+  `last_modified_at`.
+- Modelos de credencial que implementam contratos externos (como o
+  `AuthToken` swappable do Knox) podem herdar diretamente do mixin mínimo
+  necessário. A exceção deve estar documentada no model e não remove os campos
+  comuns de autoria/timestamps aplicáveis.
 
 ### 2.5. Métodos Obrigatórios
 
@@ -121,7 +179,32 @@ A classe `Meta` de cada model **deve** declarar, no mínimo, os seguintes atribu
   (somados aos `read_only_fields` da `Base`). O `BaseModelSerializer` consome ambos
   automaticamente.
 
-### 2.7. `help_text` e `db_comment`
+### 2.7. Scopes e Permissions Públicas (`resource:action`)
+
+- A interface pública e estável de scopes de API key e permissions humanas é
+  `resource:action` (ex.: `teams:read`, `invitations:accept`); codenames Django
+  (`app_label.codename`) são um detalhe interno, nunca expostos a clientes.
+- Um model expõe seu recurso com `api_scope_resource = "recurso"`; `None`
+  (o default) significa que o model não é exposto.
+- Um ViewSet pode sobrescrever com `scope_resource = "recurso"` quando a
+  superfície pública diverge do model consultado (ex.: sem `queryset` estático).
+  Regra: **default no model, override na view** — só sobrescreva quando
+  necessário.
+- Actions CRUD (`read`/`create`/`update`/`delete`) são derivadas automaticamente
+  da action do ViewSet; actions customizadas declaram o scope com
+  `@require_token_scopes("recurso:action")`.
+- Cada action customizada também deve declarar no model a tradução interna para
+  uma permission Django, via
+  `api_scope_custom_actions = {"action": "can_action_model"}`. O registry nunca
+  considera delegável uma action sem codename correspondente.
+- Wildcards: `resource:*` (qualquer action do recurso) e `*` (qualquer recurso).
+  Delegar `*` a uma API key exige superuser ou a permission
+  `autenticacao.grant_unrestricted_apikey` — ver
+  `apps.api.autenticacao.scope_delegation.validate_scope_delegation`.
+- Fonte da verdade: `apps.api.core.scope_registry` (`ScopeRegistry`,
+  `parse_scope`, `matches_scope`, `required_django_permissions`).
+
+### 2.8. `help_text` e `db_comment`
 
 Todo field **deve** declarar sempre `help_text` **e** `db_comment`, com o **mesmo
 valor** nos dois argumentos. O `help_text` documenta o campo na API/admin; o
@@ -148,6 +231,10 @@ quantidade = models.IntegerField(
 
 - Todo serializer **deve** herdar da classe base apropriada do projeto.
 
+Serializers de comandos, envelopes e credenciais que não representam um
+`Base` persistente podem herdar de `serializers.Serializer`; devem declarar os
+campos explicitamente e nunca expor digest, prefixo ou segredo de token.
+
 ### 3.2. Serializer Externo Padrão
 
 - Cada recurso **deve** expor um serializer externo padrão, contendo apenas
@@ -170,6 +257,11 @@ quantidade = models.IntegerField(
 
 - Toda view de modelo **deve** herdar da classe `BaseModelViewSet` do projeto.
 
+**Exceção:** endpoints de infraestrutura/credenciais e ViewSets do control
+plane pré-RLS podem usar as bases do DRF quando as actions genéricas herdadas
+de `BaseModelViewSet` ampliariam indevidamente a superfície pública. Nesses
+casos, queryset, permissions, scopes e métodos HTTP devem ser explícitos.
+
 ### 4.2. Serializer por Ação
 
 - Quando uma única classe atende todas as ações, defina `serializer_class`.
@@ -181,6 +273,9 @@ quantidade = models.IntegerField(
 ### 4.3. Filtros
 
 - Toda view **deve** definir explicitamente um `filterset_class`.
+
+A regra não se aplica a endpoints de comando sem filtros nem aos ViewSets
+excepcionais acima quando não existe uma interface pública de filtragem.
 
 ### 4.4. Actions Herdadas do `BaseModelViewSet`
 
@@ -261,6 +356,7 @@ Todo ViewSet herda, de graça:
 |---|---|
 | Estrutura | Todos os apps sempre dentro da pasta `apps/` |
 | Estrutura | Módulos como **arquivos** `.py`; `tests/` como **pacote** |
+| Estrutura | `common/` = implementações próprias (serialização, cache de permissões, encrypt de fields); domínio fica em `apps/`, helpers em `utils/` |
 | QuerySets | `select_related`/`prefetch_related` obrigatórios; `only()`/`values()` para limitar campos |
 | Models | Choices no topo do `models.py`, `IntegerChoices`, docstring referenciando modelo/coluna |
 | Models | Ordem fixa de argumentos por tipo de Field |

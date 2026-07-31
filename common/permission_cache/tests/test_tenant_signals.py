@@ -128,16 +128,16 @@ def test_membership_active_change_invalidates_positive_and_negative_snapshots():
 
     with patch("common.permission_cache.invalidation.bump_epoch_scopes", wraps=bump_epoch_scopes) as bump:
         with transaction.atomic():
-            membership.ativo = False
-            membership.save(update_fields=["ativo"])
+            membership.is_active = False
+            membership.save(update_fields=["is_active"])
             bump.assert_not_called()
         assert_user_bump(bump, user)
     assert resolver.by_organization_id(user.pk, organization.pk) is None
 
     with patch("common.permission_cache.invalidation.bump_epoch_scopes", wraps=bump_epoch_scopes) as bump:
         with transaction.atomic():
-            membership.ativo = True
-            membership.save(update_fields=["ativo"])
+            membership.is_active = True
+            membership.save(update_fields=["is_active"])
             bump.assert_not_called()
         assert_user_bump(bump, user)
     assert resolver.by_organization_id(user.pk, organization.pk) == TenantAccess(organization.pk, "acme", membership.pk, Papel.GESTOR)
@@ -154,8 +154,8 @@ def test_organization_slug_active_and_delete_bump_tenant_global():
 
     with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with transaction.atomic():
-            organization.ativo = False
-            organization.save(update_fields=["ativo"])
+            organization.is_active = False
+            organization.save(update_fields=["is_active"])
             bump.assert_not_called()
         bump.assert_called_once_with(("tenant:global",), database_alias="default", layer="tenant")
 

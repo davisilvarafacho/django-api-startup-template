@@ -26,7 +26,7 @@ Atalhos no `Makefile` — rode `make help` para ver todos.
 ## Testes
 
 ```bash
-make test          # pytest com cobertura
+make test          # pytest com cobertura, sem migrations até o reset pré-lançamento
 ```
 
 Os testes rodam contra PostgreSQL e Redis (via `docker compose up -d db redis`).
@@ -36,5 +36,6 @@ Cobertura de código **novo** é exigida em 80% no PR (Codecov, gate não-retroa
 
 - `make lint` e `make test` verdes.
 - `make docs` verde.
-- `uv run python manage.py makemigrations --check --dry-run` sem migrações pendentes.
+- Respeite a política temporária de não alterar migrations; o gate
+  `makemigrations --check --dry-run` volta após o reset pré-lançamento.
 - Preencha o template de PR.

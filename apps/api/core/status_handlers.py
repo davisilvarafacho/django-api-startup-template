@@ -1,23 +1,25 @@
-from django.http import JsonResponse
-
 from rest_framework import status
+
+from apps.api.autenticacao.errors import AuthErrorCode
+
+from .errors import CoreErrorCode, error_response
 
 
 def custom_400_handler(request, exception):
-    return JsonResponse({"mensagem": "Acesso inválido"}, status=status.HTTP_400_BAD_REQUEST)
+    return error_response(CoreErrorCode.BAD_REQUEST, status_code=status.HTTP_400_BAD_REQUEST)
 
 
 def custom_401_handler(request, exception=None):
-    return JsonResponse({"mensagem": "Não autorizado"}, status=status.HTTP_401_UNAUTHORIZED)
+    return error_response(AuthErrorCode.NOT_AUTHENTICATED, status_code=status.HTTP_401_UNAUTHORIZED)
 
 
 def custom_404_handler(request, exception):
-    return JsonResponse({"mensagem": "Endpoint não encontrado"}, status=status.HTTP_400_BAD_REQUEST)
+    return error_response(CoreErrorCode.NOT_FOUND, status_code=status.HTTP_404_NOT_FOUND)
 
 
 def custom_403_handler(request, exception):
-    return JsonResponse({"mensagem": "Acesso negado"}, status=status.HTTP_403_FORBIDDEN)
+    return error_response(AuthErrorCode.PERMISSION_DENIED, status_code=status.HTTP_403_FORBIDDEN)
 
 
 def custom_500_handler(request):
-    return JsonResponse({"mensagem": "Erro interno"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    return error_response(CoreErrorCode.INTERNAL_ERROR, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)

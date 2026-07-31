@@ -5,6 +5,8 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 import pytest
 
+from apps.api.core.errors import APIError
+from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.middleware import OrganizacaoMiddleware
 from apps.organizacoes.models import Organizacao, Papel, Time, Vinculo
 from apps.organizacoes.permissions import PapelMinimoPermission, TenantPermission
@@ -76,8 +78,8 @@ def test_time_view_filters_and_creates_by_tenant_organization_id():
     acme = Organizacao.objects.create(nome="Acme", slug="acme")
     other = Organizacao.objects.create(nome="Other", slug="other")
     Vinculo.objects.create(usuario=user, organizacao=acme, papel=Papel.GESTOR)
-    Time.objects.create(organizacao=acme, nome="Acme team", owner=user)
-    Time.objects.create(organizacao=other, nome="Other team", owner=user)
+    Time.objects.create(organizacao=acme, nome="Acme team", created_by=user)
+    Time.objects.create(organizacao=other, nome="Other team", created_by=user)
     client = client_autenticado(user)
 
     response = client.get("/times/", HTTP_X_ORGANIZATION="acme")
@@ -92,16 +94,22 @@ def test_vinculo_serializer_compares_tenant_role():
     request = Mock(tenant=TenantAccess(1, "acme", 2, Papel.GESTOR))
     serializer = VinculoSerializer(data={"papel": Papel.PROPRIETARIO}, context={"request": request})
 
-    assert not serializer.is_valid()
-    assert "papel acima do seu" in str(serializer.errors["papel"][0])
+    with pytest.raises(APIError) as excinfo:
+        serializer.is_valid()
+
+    assert excinfo.value.code == OrganizationErrorCode.ROLE_INSUFFICIENT.value
+    assert "papel acima do seu" in excinfo.value.message
 
 
 def test_convite_serializer_compares_tenant_role():
     request = Mock(tenant=TenantAccess(1, "acme", 2, Papel.GESTOR))
     serializer = ConviteCreateSerializer(data={"email": "new@example.com", "papel": Papel.PROPRIETARIO}, context={"request": request})
 
-    assert not serializer.is_valid()
-    assert "papel acima do seu" in str(serializer.errors["papel"][0])
+    with pytest.raises(APIError) as excinfo:
+        serializer.is_valid()
+
+    assert excinfo.value.code == OrganizationErrorCode.ROLE_INSUFFICIENT.value
+    assert "papel acima do seu" in excinfo.value.message
 
 
 @pytest.mark.django_db

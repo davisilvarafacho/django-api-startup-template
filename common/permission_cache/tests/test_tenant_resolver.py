@@ -66,7 +66,7 @@ def test_loader_disables_cachalot_for_all_queries(monkeypatch):
     assert calls == [True]
 
 
-@pytest.mark.parametrize(("target", "attribute"), [("membership", "ativo"), ("organization", "ativo")])
+@pytest.mark.parametrize(("target", "attribute"), [("membership", "is_active"), ("organization", "is_active")])
 def test_inactive_membership_or_organization_is_not_accessible(target, attribute):
     user = UsuarioFactory()
     organization = Organizacao.objects.create(nome="Acme", slug="acme")

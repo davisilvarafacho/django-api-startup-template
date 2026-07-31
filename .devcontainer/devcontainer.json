@@ -1,0 +1,32 @@
+{
+  "name": "DRF Base API",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+  "remoteUser": "vscode",
+  "runServices": ["app", "db", "redis", "worker", "nginx"],
+  "forwardPorts": ["nginx:80", 8000],
+  "portsAttributes": {
+    "nginx:80": {
+      "label": "API (via nginx)",
+      "onAutoForward": "notify"
+    },
+    "8000": {
+      "label": "runserver (direto, sem proxy)",
+      "onAutoForward": "silent"
+    }
+  },
+  "postCreateCommand": "uv sync --frozen --group dev && npm ci",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "charliermarsh.ruff",
+        "ms-python.python"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/opt/venv/bin/python"
+      }
+    }
+  }
+}

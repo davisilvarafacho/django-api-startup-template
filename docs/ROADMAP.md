@@ -23,7 +23,7 @@ _Atualizado em 2026-07-31._
 | Batch 5 | Autenticação & permissões | 🚧 |
 | Batch 6 | Multi-tenancy | ✅ |
 | Batch 7 | Observabilidade | ✅ |
-| Batch 8 | Domínio & segurança | ⏳ |
+| Batch 8 | Domínio & segurança | 🚧 |
 | Batch 9 | API avançada | ⏳ |
 | Batch 10 | Escala de banco | ⏳ |
 | Batch 11 | DevEx & operação (restante) | ⏳ |
@@ -43,7 +43,8 @@ _Atualizado em 2026-07-31._
 ### Batch 2 — Fila de tarefas, cache e throttling
 - **Celery + Redis** + `django-celery-beat` (agendador via banco); tasks eager em teste.
 - **Cache Redis** (`django-redis`); correção do **cachalot** (cache compartilhado → invalidação entre workers).
-- **Throttling** do DRF (anon 100/h, user 1000/h, escopo `auth`).
+- **Throttling** do DRF (anon 100/h, user 1000/h) + limites próprios de
+  autenticação (`auth_login` 10/min e `auth_reauthenticate` 5/min).
 - **`docker-compose`** (Postgres, Redis, web, worker, beat).
 - Postura de cache definida (**opção A**): cachalot opt-in + primitivos explícitos + HTTP/TTL como espinha dorsal.
 
@@ -59,7 +60,7 @@ _Atualizado em 2026-07-31._
 
 ### Batch 3 — DevEx / CI
 - **pre-commit** (ruff + hooks básicos).
-- **GitHub Actions** por cadência: `ci.yml` (lint + `makemigrations --check` + pytest com Postgres/Redis) e `security.yml` (pip-audit + bandit + trivy) + `dependabot.yml`.
+- **GitHub Actions** por cadência: `ci.yml` (lint + pytest com Postgres/Redis) e `security.yml` (pip-audit + bandit + trivy) + `dependabot.yml`; `makemigrations --check` está suspenso até o reset integral pré-lançamento.
 - **Codecov** + cobertura (`pytest-cov`), gate de patch 80% em código novo.
 - **Makefile** e arquivos padrão do GitHub (CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, templates).
 - **factory_boy** (`UsuarioFactory`) + testes DB-less (lookup, env).
@@ -96,25 +97,41 @@ _Atualizado em 2026-07-31._
 
 ---
 
-## ⏳ Planejado
+## 🚧 Em andamento
 
 ### Batch 5 — Autenticação & permissões 🚧
 - ✅ **`django-guardian` + `django-rules`** (setup extensível, object-level).
 - ✅ Papéis estilo **Saleor** (ordem crescente) somados às permissions do Django.
-- ✅ Tipagem operacional de `knox.AuthToken` via `TokenMetaData.type` (1=token, 2=reset_password, 999=api_key); reset password não autentica API.
-- ✅ **Scoped API tokens**: `TokenMetaData.scopes` + `TokenScopePermission` global via `required_token_scopes` na view.
-- ✅ **Cache de permissão**.
-- ⏳ **MFA/2FA** + checagem de senha vazada (HaveIBeenPwned).
-- ⏳ **Field-level permissions** (serializers dinâmicos por papel).
-- ⏳ Ciclo de vida de conta: verificação de e-mail, social auth, desativação/exclusão, gestão de sessões e dispositivos.
+- ✅ Modelo de token **swappable** (`settings.KNOX_TOKEN_MODEL = "autenticacao.AuthToken"`), não mais proxy: `AuthToken.type` (1=token, 2=reset_password, 999=api_key); reset password não autentica API.
+- ✅ **Scoped API tokens**: `AuthToken.scopes` + `TokenScopePermission` global; scopes falam `resource:action` (`apps.api.core.scope_registry`), traduzido para `app_label.codename` do Django.
+- ✅ **Delegação de scope**: uma API key nunca recebe mais poder do que o ator que
+  a cria ou altera possui (`validate_scope_delegation`); actions customizadas
+  também são mapeadas para permissions Django.
+- ✅ **Envelope de erros unificado** (`{"errors": [...], "request_id": ...}`) para DRF, middlewares e handlers de status HTTP do Django.
+- ✅ **Gestão de sessões** (`/auth/sessions/`, `/auth/logout*`) e **autenticação recente/step-up** (`@require_recent_auth`, `/auth/reauthenticate/`).
+- ✅ **API keys por organização** (`/auth/api_keys/`): CRUD, rotação atômica, suspensão manual/automática (fail-closed quando o responsável perde o vínculo) e retomada; UUID como identificador público; plain token exibido só na criação/rotação.
+- ✅ **Cache de permissions** com invalidação ao alterar papéis, vínculos, grupos
+  ou permissões (ver `docs/adr/0005-cache-semantico-de-autorizacao.md`).
+- ⏳ Para fechar o batch:
+  - **MFA/2FA** + checagem de senha vazada (HaveIBeenPwned); os pontos de
+    integração já existem como stubs seguros
+    (`user_has_mfa_enabled()`/`verify_mfa_code()`).
+  - **Field-level permissions** com serializers dinâmicos por papel.
+  - **Ciclo de vida de conta**: verificação de e-mail, social auth,
+    desativação e exclusão.
+- ⚠️ Pendência operacional: migrations permanecem congeladas nesta fase; CI e
+  testes usam `--nomigrations`. O histórico será recriado integralmente antes
+  do lançamento e o gate `makemigrations --check --dry-run` será restaurado.
 
-### Batch 8 — Domínio & segurança
-- Base de código de **notificações** (providers plugáveis, templates, preferências).
-- Lib para **dados sensíveis** (field-level encryption).
-- **Validação de upload** genérica e plugável.
-- **Money handling** + **metadata framework** (JSON key-value por modelo).
-- **Idempotency keys** em POST (evita duplicidade em retry de rede/pagamento).
-- **`django-anymail`**: abstração de e-mail multi-provider (hoje a base está acoplada ao Resend).
+### Batch 8 — Domínio & segurança 🚧
+- ⏳ Base de código de **notificações** (providers plugáveis, templates, preferências).
+- ✅ Lib para **dados sensíveis** (field-level encryption): wrapper `encrypt(...)`, keyring/rotação Fernet, write-only no DRF e exclusão automática do auditlog.
+- ⏳ **Validação de upload** genérica e plugável.
+- ⏳ **Money handling** + **metadata framework** (JSON key-value por modelo).
+- ⏳ **Idempotency keys** em POST (evita duplicidade em retry de rede/pagamento).
+- ✅ **`django-anymail`**: abstração de e-mail multi-provider; envio padrão pelo Resend, sem acoplamento ao SDK do provider.
+
+## ⏳ Planejado
 
 ### Batch 9 — API avançada
 - `select_related` / `prefetch_related` sistematizados no `BaseViewSet`.
@@ -131,7 +148,7 @@ _Atualizado em 2026-07-31._
 ### Batch 11 — DevEx & operação (restante)
 - **Fixtures / seeds / demo data** via management command.
 - **Devcontainer** para onboarding.
-- **Runbooks** operacionais.
+- ⏸️ **Runbooks** operacionais (adiado).
 - Política de **deprecação de API** (changelog de API + header `Sunset`).
 
 ---
@@ -152,9 +169,11 @@ _Atualizado em 2026-07-31._
 ## ⏸️ Adiado
 - **LGPD** (bloco próprio): PII, retenção/expurgo, exportação, direito ao esquecimento, consentimento, scrub de PII.
 - Arquitetura de **plugins / integrações**.
+- **Runbooks operacionais** (item do Batch 11).
 
 ## Brainstorm do dev
 
 - Permissões/rules via plano
 - Checkout por seat e plano, default stripe - classe de abstração backend plugavel na frente - lib para conectar 5 ou mais providers de cara - stripe, assas, etc
 - Após o modelo de checkout/planos estar pronto, cache de entitlements para decidir se o plano do usuário libera cada endpoint/feature.
+- .memory/
