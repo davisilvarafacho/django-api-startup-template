@@ -4,6 +4,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 from unittest.mock import Mock, patch
+from urllib.parse import urlsplit
+from uuid import uuid4
 
 from django.conf import settings
 from django.core.cache import caches
@@ -12,6 +14,7 @@ from django.test import override_settings
 import pytest
 import redis
 from django_redis import get_redis_connection
+from django_redis.cache import RedisCache
 from redis.exceptions import ResponseError
 
 from common.permission_cache.epochs import EpochStore
@@ -248,19 +251,50 @@ def test_cache_outage_falls_back_to_database(redis_permission_cache):
 
 
 def test_permissions_and_cachalot_aliases_are_isolated(redis_permission_cache):
-    assert settings.AUTHORIZATION_REDIS_URL.endswith("/4")
-    assert f"{settings.REDIS_URL}/3".endswith("/3")
+    production_permissions_location = settings.AUTHORIZATION_REDIS_URL
+    production_cachalot_location = f"{settings.REDIS_URL}/3"
+    cachalot_location = urlsplit(redis_permission_cache)._replace(path="/3").geturl()
+    cachalot_prefix = f"cachalot:test:{uuid4().hex}"
+    cachalot_client = redis.Redis.from_url(cachalot_location)
+    cachalot_configuration = {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": cachalot_location,
+        "KEY_PREFIX": cachalot_prefix,
+        "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
+    }
 
-    permissions = caches["permissions"]
-    cachalot = caches["cachalot"]
-    logical_key = "shared-logical-key"
-    permissions.set(logical_key, "permissions", timeout=1800)
-    cachalot.set(logical_key, "cachalot", timeout=1800)
+    assert urlsplit(production_permissions_location).path == "/4"
+    assert urlsplit(production_cachalot_location).path == "/3"
 
-    assert permissions.get(logical_key) == "permissions"
-    assert cachalot.get(logical_key) == "cachalot"
-    EpochStore().bump(global_scope(), "default")
-    assert cachalot.get(logical_key) == "cachalot"
+    caches.close_all()
+    try:
+        with override_settings(CACHES={**settings.CACHES, "cachalot": cachalot_configuration}):
+            caches.close_all()
+            permissions_configuration = settings.CACHES["permissions"]
+            actual_cachalot_configuration = settings.CACHES["cachalot"]
+            permissions = caches["permissions"]
+            cachalot = caches["cachalot"]
+
+            assert permissions_configuration["LOCATION"] == redis_permission_cache
+            assert actual_cachalot_configuration["LOCATION"] == cachalot_location
+            assert urlsplit(actual_cachalot_configuration["LOCATION"]).path == "/3"
+            assert isinstance(permissions, RedisCache)
+            assert isinstance(cachalot, RedisCache)
+
+            logical_key = "shared-logical-key"
+            permissions.set(logical_key, "permissions", timeout=1800)
+            cachalot.set(logical_key, "cachalot", timeout=1800)
+
+            assert permissions.get(logical_key) == "permissions"
+            assert cachalot.get(logical_key) == "cachalot"
+            EpochStore().bump(global_scope(), "default")
+            assert cachalot.get(logical_key) == "cachalot"
+    finally:
+        caches.close_all()
+        keys = list(cachalot_client.scan_iter(match=f"{cachalot_prefix}:*"))
+        if keys:
+            cachalot_client.delete(*keys)
+        cachalot_client.close()
 
 
 def test_permissions_alias_has_one_primary_location(redis_permission_cache):

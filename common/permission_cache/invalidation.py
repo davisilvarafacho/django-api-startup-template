@@ -22,9 +22,9 @@ def bump_epoch_scopes(
             changed[scope] = store.bump(scope, database_alias)
     except Exception:
         record_invalidation(layer, "error")
-        logger.exception("Falha ao invalidar cache de autorização.", extra={"authorization_layer": layer})
         if raise_errors:
             raise
+        logger.exception("Falha ao invalidar cache de autorização.", extra={"authorization_layer": layer})
         return {}
     record_invalidation(layer, "success")
     return changed
