@@ -28,7 +28,7 @@
 - Produces: `schedule_otp_delivery(challenge: MFAChallenge) -> None`.
 - Produces: `deliver_mfa_otp(challenge_pk: int) -> None`.
 
-- [ ] **Step 1: Escrever testes falhando para task e estado de entrega**
+- [x] **Step 1: Escrever testes falhando para task e estado de entrega**
 
 ```python
 @pytest.mark.django_db
@@ -48,12 +48,12 @@ def test_task_entrega_otp_e_persiste_apenas_hmac(usuario, monkeypatch):
     assert challenge.delivered_at is not None
 ```
 
-- [ ] **Step 2: Confirmar RED**
+- [x] **Step 2: Confirmar RED**
 
 Run: `uv run pytest apps/api/autenticacao/tests/test_mfa_enrollment.py -q`
 Expected: FAIL porque o desafio não exige estado `sent` na confirmação nem a task trata falha de entrega como indisponível.
 
-- [ ] **Step 3: Implementar task e agendamento mínimo**
+- [x] **Step 3: Implementar task e agendamento mínimo**
 
 ```python
 def schedule_otp_delivery(challenge):
@@ -66,7 +66,7 @@ def deliver_mfa_otp(challenge_pk):
     # gera OTP, armazena HMAC e muda pending para sent/failed
 ```
 
-- [ ] **Step 4: Confirmar GREEN**
+- [x] **Step 4: Confirmar GREEN**
 
 Run: `uv run pytest apps/api/autenticacao/tests/test_mfa_enrollment.py -q`
 Expected: PASS.
@@ -80,7 +80,7 @@ Expected: PASS.
 **Interfaces:**
 - Produces: `start_enrollment(user, factor_type) -> EnrollmentResult` que recusa reenvio dentro de 60 segundos.
 
-- [ ] **Step 1: Escrever testes falhando para cooldown e entrega falha**
+- [x] **Step 1: Escrever testes falhando para cooldown e entrega falha**
 
 ```python
 @pytest.mark.django_db
@@ -101,12 +101,12 @@ def test_confirmacao_recusa_desafio_com_entrega_falha(usuario):
         confirm_enrollment(usuario, MFAFactorType.EMAIL, "123456")
 ```
 
-- [ ] **Step 2: Confirmar RED**
+- [x] **Step 2: Confirmar RED**
 
 Run: `uv run pytest apps/api/autenticacao/tests/test_mfa_enrollment.py -q`
 Expected: FAIL porque ainda permite reenvio imediato e não restringe por estado de entrega.
 
-- [ ] **Step 3: Implementar bloqueio transacional**
+- [x] **Step 3: Implementar bloqueio transacional**
 
 ```python
 previous = MFAChallenge.objects.select_for_update().filter(
@@ -122,12 +122,12 @@ if previous:
 
 Exigir `delivery_status == MFAChallengeDeliveryStatus.SENT` ao confirmar fatores de e-mail/SMS.
 
-- [ ] **Step 4: Confirmar GREEN e regressão**
+- [x] **Step 4: Confirmar GREEN e regressão**
 
 Run: `uv run pytest apps/api/autenticacao/tests/test_mfa_enrollment.py apps/api/autenticacao/tests/test_mfa_login.py apps/api/autenticacao/tests/test_mfa_reauthentication.py -q`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/autenticacao/mfa.py apps/api/autenticacao/tasks.py apps/api/autenticacao/tests/test_mfa_enrollment.py

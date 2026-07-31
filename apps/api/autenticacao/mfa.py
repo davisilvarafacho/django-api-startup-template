@@ -17,6 +17,7 @@ from .models import AuthToken, MFAChallenge, MFAChallengePurpose, MFAFactor, MFA
 from .services import issue_token, revoke_tokens
 
 OTP_LIFETIME = timedelta(minutes=5)
+OTP_COOLDOWN = timedelta(seconds=60)
 RECOVERY_CODE_COUNT = 10
 PRE_AUTH_LIFETIME = timedelta(minutes=5)
 TRUSTED_DEVICE_LIFETIME = timedelta(days=30)
@@ -61,6 +62,13 @@ def _trusted_digest(token: str) -> str:
     return salted_hmac("trusted-device", token, secret=settings.SECRET_KEY).hexdigest()
 
 
+def schedule_otp_delivery(challenge: MFAChallenge) -> None:
+    """Agenda a entrega somente depois que o desafio for persistido."""
+    from .tasks import deliver_mfa_otp
+
+    transaction.on_commit(lambda: deliver_mfa_otp.delay(challenge.pk))
+
+
 def active_factors(user):
     return MFAFactor.objects.filter(user=user, confirmed_at__isnull=False, enabled_at__isnull=False, disabled_at__isnull=True)
 
@@ -94,18 +102,24 @@ def start_enrollment(user, factor_type: MFAFactorType) -> EnrollmentResult:
     if factor_type == MFAFactorType.SMS and (not user.phone_number or not user.phone_verified_at):
         raise ValueError("Um telefone verificado é necessário para habilitar SMS.")
 
-    MFAChallenge.objects.filter(user=user, factor=factor, purpose=MFAChallengePurpose.ENROLLMENT, consumed_at__isnull=True).update(
-        consumed_at=timezone.now()
+    previous = (
+        MFAChallenge.objects.select_for_update()
+        .filter(user=user, factor=factor, purpose=MFAChallengePurpose.ENROLLMENT, consumed_at__isnull=True)
+        .order_by("-created_at")
+        .first()
     )
+    if previous and previous.created_at > timezone.now() - OTP_COOLDOWN:
+        raise ValueError("OTP em cooldown.")
+    if previous:
+        previous.consumed_at = timezone.now()
+        previous.save(update_fields=["consumed_at"])
     challenge = MFAChallenge.objects.create(
         user=user,
         factor=factor,
         purpose=MFAChallengePurpose.ENROLLMENT,
         expires_at=timezone.now() + OTP_LIFETIME,
     )
-    from .tasks import deliver_mfa_otp
-
-    transaction.on_commit(lambda: deliver_mfa_otp.delay(challenge.pk))
+    schedule_otp_delivery(challenge)
     return EnrollmentResult(factor=factor)
 
 
@@ -122,7 +136,12 @@ def confirm_enrollment(user, factor_type: MFAFactorType, code: str) -> ConfirmRe
             .order_by("-created_at")
             .first()
         )
-        valid = bool(challenge) and not challenge.is_expired and hmac.compare_digest(challenge.otp_digest, _otp_digest(code))
+        valid = (
+            bool(challenge)
+            and not challenge.is_expired
+            and challenge.delivery_status == "sent"
+            and hmac.compare_digest(challenge.otp_digest, _otp_digest(code))
+        )
         if valid:
             challenge.consumed_at = timezone.now()
             challenge.save(update_fields=["consumed_at"])
