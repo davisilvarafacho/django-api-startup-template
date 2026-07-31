@@ -108,12 +108,15 @@ def test_bloqueio_responde_json_no_formato_do_projeto():
     assert resposta.json() == {"mensagem": "Muitas tentativas de login."}
 
 
-def test_bloqueio_nao_revela_o_prazo_no_corpo():
-    usuario = UsuarioFactory()
+def test_bloqueio_nao_revela_o_prazo_no_corpo(settings):
+    settings.AXES_COOLOFF_TIME = timedelta(minutes=30)
+    resposta_30_minutos = bloquear(UsuarioFactory().email)
 
-    resposta = bloquear(usuario.email)
+    settings.AXES_COOLOFF_TIME = timedelta(minutes=45)
+    resposta_45_minutos = bloquear(UsuarioFactory().email)
 
-    assert "minuto" not in resposta.json()["mensagem"]
+    assert resposta_30_minutos["Retry-After"] != resposta_45_minutos["Retry-After"]
+    assert resposta_30_minutos.json() == resposta_45_minutos.json() == {"mensagem": "Muitas tentativas de login."}
 
 
 def test_bloqueio_informa_o_prazo_no_header_retry_after(settings):
