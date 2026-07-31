@@ -1,8 +1,13 @@
+from django.contrib.auth import authenticate
 from django.utils import timezone
+
+from rest_framework import serializers
 
 import serpy
 
+from apps.api.autenticacao.errors import AuthErrorCode
 from apps.api.base.serializers import BaseModelSerpySerializer
+from apps.api.core.errors import APIError
 
 
 class AuthTokenSerializer(BaseModelSerpySerializer):
@@ -34,3 +39,61 @@ class AuthTokenSerializer(BaseModelSerpySerializer):
         # Por padrão, Knox não guarda isso
         # Veja implementação alternativa abaixo
         return
+
+
+class LoginSerializer(serializers.Serializer):
+    """Valida credenciais de login aceitando o identificador de e-mail atual."""
+
+    email = serializers.EmailField(required=False)
+    username = serializers.CharField(required=False, write_only=True)
+    password = serializers.CharField(trim_whitespace=False, write_only=True)
+
+    def validate(self, attrs):
+        identifier = attrs.get("email") or attrs.get("username")
+        if not identifier:
+            raise APIError(
+                AuthErrorCode.INVALID_CREDENTIALS,
+                status_code=401,
+                message="E-mail ou senha inválidos.",
+            )
+
+        user = authenticate(
+            request=self.context.get("request"),
+            username=identifier,
+            password=attrs["password"],
+        )
+        if user is None:
+            raise APIError(
+                AuthErrorCode.INVALID_CREDENTIALS,
+                status_code=401,
+                message="E-mail ou senha inválidos.",
+            )
+
+        attrs["user"] = user
+        return attrs
+
+
+class LoginResponseSerializer(serializers.Serializer):
+    """Serializa a sessão recém-emitida sem reutilizar o segredo do token."""
+
+    token = serializers.CharField()
+    expiry = serializers.DateTimeField(allow_null=True)
+    session = serializers.DictField()
+    device = serializers.DictField()
+
+
+class ReauthenticateSerializer(serializers.Serializer):
+    """Confirma a senha da identidade já autenticada na sessão atual."""
+
+    password = serializers.CharField(trim_whitespace=False, write_only=True)
+
+    def validate(self, attrs):
+        user = self.context["user"]
+        if not user.check_password(attrs["password"]):
+            raise APIError(
+                AuthErrorCode.INVALID_CREDENTIALS,
+                status_code=401,
+                message="E-mail ou senha inválidos.",
+            )
+
+        return attrs

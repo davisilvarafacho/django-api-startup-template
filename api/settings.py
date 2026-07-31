@@ -340,6 +340,7 @@ B2_PUBLIC_BASE_URL = get_env_var("BACKBLAZE_PUBLIC_BASE_URL")
 REST_FRAMEWORK = {
     "PAGE_SIZE": 30,
     "DEFAULT_PAGINATION_CLASS": "apps.api.core.pagination.CustomPagination",
+    "EXCEPTION_HANDLER": "apps.api.core.status_handlers.custom_exception_handler",
     # A autenticação real acontece no AuthenticationMiddleware; aqui o DRF apenas
     # reaproveita o usuário já resolvido.
     "DEFAULT_AUTHENTICATION_CLASSES": [
@@ -367,6 +368,8 @@ REST_FRAMEWORK = {
         "anon": "100/hour",
         "user": "1000/hour",
         "auth": "10/min",
+        "auth_login": "10/min",
+        "auth_reauthenticate": "5/min",
     },
     "DEFAULT_VERSIONING_CLASS": "rest_framework.versioning.NamespaceVersioning",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",

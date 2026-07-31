@@ -1,4 +1,7 @@
+from datetime import timedelta
+
 from django.core.exceptions import ImproperlyConfigured
+from django.utils import timezone
 
 from rest_framework import exceptions
 from rest_framework.permissions import BasePermission, DjangoModelPermissions, IsAdminUser
@@ -52,6 +55,41 @@ class TokenScopePermission(BasePermission):
         if isinstance(scopes, str):
             return [scopes]
         return list(scopes)
+
+
+class RecentAuthenticationPermission(BasePermission):
+    """Exige uma sessão Knox com confirmação de senha ainda válida."""
+
+    message = "Reautenticação recente obrigatória."
+
+    def has_permission(self, request, view):
+        requirement = self.get_requirement(view)
+        if requirement is None:
+            return True
+
+        auth_token = getattr(request, "auth", None)
+        if auth_token is None or auth_token.type != TokenType.TOKEN:
+            return False
+
+        metadata = getattr(auth_token, "metadata", None)
+        reauthenticated_at = getattr(metadata, "reauthenticated_at", None)
+        if reauthenticated_at is None:
+            return False
+
+        max_age = requirement["max_age"]
+        return reauthenticated_at >= timezone.now() - timedelta(seconds=max_age)
+
+    @staticmethod
+    def get_requirement(view):
+        action_name = getattr(view, "action", None)
+        action = getattr(view, action_name, None) if action_name else None
+
+        for target in (action, getattr(view, "handler", None), view):
+            requirement = getattr(target, "_recent_auth_required", None)
+            if requirement is not None:
+                return requirement
+
+        return None
 
 
 class CustomDjangoModelPermissions(DjangoModelPermissions):

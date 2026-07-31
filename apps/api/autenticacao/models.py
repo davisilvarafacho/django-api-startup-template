@@ -207,6 +207,14 @@ class TokenMetaData(models.Model):
     last_used = models.DateTimeField(verbose_name=_("Último uso"), auto_now=True, help_text=_("Última vez que o token foi usado"))
     usage_count = models.PositiveIntegerField(verbose_name=_("Contador de uso"), default=0, help_text=_("Número de vezes que o token foi usado"))
 
+    reauthenticated_at = models.DateTimeField(
+        _("Reautenticado em"),
+        blank=True,
+        null=True,
+        help_text=_("Data e hora da última confirmação recente de senha da sessão."),
+        db_comment=_("Data e hora da última confirmação recente de senha da sessão."),
+    )
+
     # segurança e risco
     is_suspicious = models.BooleanField(
         verbose_name=_("É suspeito"), default=False, help_text=_("Marcado como suspeito por mudança de IP/localização")

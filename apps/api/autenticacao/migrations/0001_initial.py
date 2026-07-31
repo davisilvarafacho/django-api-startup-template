@@ -138,6 +138,16 @@ class Migration(migrations.Migration):
                 ("first_used", models.DateTimeField(auto_now_add=True, help_text="Primeira vez que o token foi usado", verbose_name="Primeiro uso")),
                 ("last_used", models.DateTimeField(auto_now=True, help_text="Última vez que o token foi usado", verbose_name="Último uso")),
                 ("usage_count", models.PositiveIntegerField(default=0, help_text="Número de vezes que o token foi usado", verbose_name="Contador de uso")),
+                (
+                    "reauthenticated_at",
+                    models.DateTimeField(
+                        blank=True,
+                        db_comment="Data e hora da última confirmação recente de senha da sessão.",
+                        help_text="Data e hora da última confirmação recente de senha da sessão.",
+                        null=True,
+                        verbose_name="Reautenticado em",
+                    ),
+                ),
                 ("is_suspicious", models.BooleanField(default=False, help_text="Marcado como suspeito por mudança de IP/localização", verbose_name="É suspeito")),
                 ("suspicious_reason", models.TextField(blank=True, help_text="Motivo da suspeita", verbose_name="Motivo da suspeita")),
                 ("risk_score", models.PositiveSmallIntegerField(default=0, help_text="Score de risco (0-100)", verbose_name="Pontuação de risco")),
