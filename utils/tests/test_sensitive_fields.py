@@ -1,7 +1,9 @@
 """Tests for the sensitive-fields utility."""
 
+from django.apps import apps
 from django.core.exceptions import ImproperlyConfigured
 from django.db import models
+from django.db.migrations.state import ProjectState
 
 import pytest
 from cryptography.fernet import Fernet
@@ -66,3 +68,16 @@ def test_campo_identifica_token_da_chave_ativa(monkeypatch):
 
     assert field.is_encrypted_with_active_key(Fernet(active_key).encrypt(b"ativo").decode()) is True
     assert field.is_encrypted_with_active_key(Fernet(old_key).encrypt(b"antigo").decode()) is False
+
+
+def test_campo_cifrado_no_estado_do_django_pode_ser_desconstruido_para_migrations():
+    field = ProjectState.from_apps(apps).models[("usuarios", "usuario")].fields["phone_number"]
+
+    name, path, args, kwargs = field.deconstruct()
+
+    assert name is None
+    assert path == "utils.sensitive_fields.encrypt"
+    assert isinstance(args[0], models.CharField)
+    assert args[0].null is True
+    assert args[0].blank is True
+    assert kwargs == {}

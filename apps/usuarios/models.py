@@ -5,6 +5,7 @@ from django.utils.translation import gettext_lazy as _
 
 from apps.api.base.models import BaseGlobal
 from utils.logs import register
+from utils.sensitive_fields import encrypt
 
 
 class UsuarioManager(UserManager):
@@ -41,6 +42,24 @@ class Usuario(BaseGlobal, AbstractUser):
     first_name = models.CharField(_("nome"), max_length=30)
     last_name = models.CharField(_("sobrenome"), max_length=40)
     email = models.EmailField(_("email"), unique=True)
+    phone_number = encrypt(
+        models.CharField(
+            _("telefone"),
+            max_length=16,
+            blank=True,
+            null=True,
+            default=None,
+            help_text=_("Número de telefone E.164 cifrado."),
+            db_comment=_("Número de telefone E.164 cifrado."),
+        )
+    )
+    phone_verified_at = models.DateTimeField(
+        _("telefone verificado em"),
+        blank=True,
+        null=True,
+        help_text=_("Data e hora da confirmação do telefone para MFA."),
+        db_comment=_("Data e hora da confirmação do telefone para MFA."),
+    )
 
     EMAIL_FIELD = "email"
     USERNAME_FIELD = "email"

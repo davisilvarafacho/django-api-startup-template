@@ -10,6 +10,7 @@ from knox import crypto
 from knox.settings import CONSTANTS, knox_settings
 
 from utils.logs import register
+from utils.sensitive_fields import encrypt
 
 
 class TokenType(models.IntegerChoices):
@@ -19,6 +20,30 @@ class TokenType(models.IntegerChoices):
     RESET_PASSWORD = 2, _("Reset de senha")
     PRE_AUTH = 3, _("Pré-autenticação")
     API_KEY = 999, _("API key")
+
+
+class MFAFactorType(models.TextChoices):
+    """Tipos de segundo fator suportados pela API."""
+
+    EMAIL = "email", _("E-mail")
+    SMS = "sms", _("SMS")
+    TOTP = "totp", _("TOTP")
+
+
+class MFAChallengePurpose(models.TextChoices):
+    """Fluxos que podem consumir um desafio MFA."""
+
+    LOGIN = "login", _("Login")
+    ENROLLMENT = "enrollment", _("Cadastro de fator")
+    REAUTHENTICATION = "reauthentication", _("Reautenticação")
+
+
+class MFAChallengeDeliveryStatus(models.TextChoices):
+    """Estado da entrega de um OTP que depende de transporte externo."""
+
+    PENDING = "pending", _("Pendente")
+    SENT = "sent", _("Enviado")
+    FAILED = "failed", _("Falhou")
 
 
 class AuthTokenManager(models.Manager):
@@ -481,4 +506,115 @@ class TokenMetaData(models.Model):
 #         )
 
 
+class MFAFactor(models.Model):
+    """Segundo fator configurado pelo usuário, com no máximo um de cada tipo."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="mfa_factors", verbose_name=_("usuário"))
+    type = models.CharField(_("tipo"), max_length=16, choices=MFAFactorType.choices)
+    secret = encrypt(
+        models.CharField(
+            _("segredo"),
+            max_length=64,
+            blank=True,
+            null=True,
+            default=None,
+            help_text=_("Segredo TOTP cifrado."),
+            db_comment=_("Segredo TOTP cifrado."),
+        )
+    )
+    confirmed_at = models.DateTimeField(_("confirmado em"), blank=True, null=True)
+    enabled_at = models.DateTimeField(_("ativado em"), blank=True, null=True)
+    disabled_at = models.DateTimeField(_("desativado em"), blank=True, null=True)
+    last_used_at = models.DateTimeField(_("usado por último em"), blank=True, null=True)
+    totp_last_counter = models.PositiveBigIntegerField(_("último contador TOTP"), blank=True, null=True)
+    totp_algorithm = models.CharField(_("algoritmo TOTP"), max_length=16, default="SHA1")
+    totp_digits = models.PositiveSmallIntegerField(_("dígitos TOTP"), default=6)
+    totp_period = models.PositiveSmallIntegerField(_("período TOTP"), default=30)
+
+    class Meta:
+        db_table = "mfa_factor"
+        constraints = [
+            models.UniqueConstraint(fields=("user", "type"), name="mfa_factor_unique_user_type"),
+            models.CheckConstraint(
+                condition=(models.Q(type=MFAFactorType.TOTP) & models.Q(secret__isnull=False))
+                | (~models.Q(type=MFAFactorType.TOTP) & models.Q(secret__isnull=True)),
+                name="mfa_factor_totp_secret_only",
+            ),
+        ]
+
+
+class MFAChallenge(models.Model):
+    """Desafio de uso único para login, enrollment ou reautenticação."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="mfa_challenges", verbose_name=_("usuário"))
+    factor = models.ForeignKey(MFAFactor, on_delete=models.CASCADE, related_name="challenges", verbose_name=_("fator"))
+    token = models.ForeignKey(
+        AuthToken,
+        on_delete=models.CASCADE,
+        related_name="mfa_challenges",
+        blank=True,
+        null=True,
+        verbose_name=_("token de autenticação"),
+    )
+    purpose = models.CharField(_("finalidade"), max_length=24, choices=MFAChallengePurpose.choices)
+    otp_digest = models.CharField(_("digest do OTP"), max_length=128, blank=True)
+    expires_at = models.DateTimeField(_("expira em"), db_index=True)
+    cooldown_until = models.DateTimeField(_("cooldown até"), blank=True, null=True)
+    attempts = models.PositiveSmallIntegerField(_("tentativas"), default=0)
+    delivery_status = models.CharField(
+        _("estado de entrega"), max_length=16, choices=MFAChallengeDeliveryStatus.choices, default=MFAChallengeDeliveryStatus.PENDING
+    )
+    delivered_at = models.DateTimeField(_("entregue em"), blank=True, null=True)
+    consumed_at = models.DateTimeField(_("consumido em"), blank=True, null=True)
+    created_at = models.DateTimeField(_("criado em"), auto_now_add=True)
+
+    class Meta:
+        db_table = "mfa_challenge"
+        indexes = [models.Index(fields=("user", "expires_at"), name="mfa_challenge_user_expiry")]
+
+    @property
+    def is_expired(self):
+        return self.expires_at <= timezone.now()
+
+    @property
+    def is_consumed(self):
+        return self.consumed_at is not None
+
+
+class MFARecoveryCode(models.Model):
+    """Código de recuperação armazenado somente como hash lento e salgado."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="mfa_recovery_codes", verbose_name=_("usuário"))
+    digest = models.CharField(_("digest"), max_length=128)
+    created_at = models.DateTimeField(_("criado em"), auto_now_add=True)
+    consumed_at = models.DateTimeField(_("consumido em"), blank=True, null=True)
+
+    class Meta:
+        db_table = "mfa_recovery_code"
+        constraints = [models.CheckConstraint(condition=~models.Q(digest=""), name="mfa_recovery_code_requires_digest")]
+
+
+class TrustedDevice(models.Model):
+    """Dispositivo confiável identificado por uma credencial rotacionável."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="trusted_devices", verbose_name=_("usuário"))
+    digest = models.CharField(_("digest"), max_length=128, unique=True)
+    name = models.CharField(_("nome"), max_length=255, blank=True)
+    user_agent = models.TextField(_("user agent"), blank=True)
+    ip_address = models.GenericIPAddressField(_("IP"), blank=True, null=True)
+    created_at = models.DateTimeField(_("criado em"), auto_now_add=True)
+    expires_at = models.DateTimeField(_("expira em"), db_index=True)
+    last_used_at = models.DateTimeField(_("usado por último em"), blank=True, null=True)
+    revoked_at = models.DateTimeField(_("revogado em"), blank=True, null=True)
+
+    class Meta:
+        db_table = "trusted_device"
+        constraints = [models.CheckConstraint(condition=~models.Q(digest=""), name="trusted_device_requires_digest")]
+        indexes = [models.Index(fields=("user", "expires_at"), name="trusted_device_user_expiry")]
+
+
 register(TokenMetaData)
+register(MFAFactor)
+register(MFAChallenge, exclude_fields=["otp_digest"])
+register(MFARecoveryCode, exclude_fields=["digest"])
+register(TrustedDevice, exclude_fields=["digest"])

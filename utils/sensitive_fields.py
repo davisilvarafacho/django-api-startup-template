@@ -53,9 +53,15 @@ class EncryptedFieldMixin:
         return self._deserialize(plaintext)
 
     def deconstruct(self):
-        name, _, args, kwargs = self._sensitive_base_class.deconstruct(self)
-        field = self._sensitive_base_class(*args, **kwargs)
+        base_class = getattr(self, "_sensitive_base_class", self.__class__.__mro__[2])
+        name, _, args, kwargs = base_class.deconstruct(self)
+        field = base_class(*args, **kwargs)
         return name, "utils.sensitive_fields.encrypt", [field], {}
+
+    def clone(self):
+        """Clone through the public wrapper instead of the dynamic field class."""
+        _, _, args, _ = self.deconstruct()
+        return encrypt(args[0])
 
     def _get_fernet(self):
         return MultiFernet([Fernet(key) for key in get_sensitive_field_keys(require_configured=True)])
