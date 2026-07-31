@@ -9,8 +9,11 @@ from django.test import override_settings
 from django.test.utils import CaptureQueriesContext
 
 import pytest
+import rules
 from asgiref.sync import async_to_sync
+from guardian.shortcuts import assign_perm
 
+from apps.organizacoes.models import Organizacao
 from apps.usuarios.factories import UsuarioFactory
 from common.permission_cache.backends import CachedModelBackend
 from common.permission_cache.epochs import EpochStore
@@ -245,3 +248,22 @@ def test_database_alias_is_part_of_snapshot_identity():
 
     assert resolver.resolve(default_user).all_permissions == {"organizacoes.default"}
     assert resolver.resolve(replica_user).all_permissions == {"organizacoes.replica"}
+
+
+def test_user_has_perm_keeps_backend_or_semantics():
+    rules.add_perm("organizacoes.rule_only", rules.always_allow)
+    rules_user = UsuarioFactory()
+    django_user = UsuarioFactory()
+    guardian_user = UsuarioFactory()
+    organization = Organizacao.objects.create(nome="Acme", slug="acme")
+    django_user.user_permissions.add(permission("view_organizacao"))
+    assign_perm("change_organizacao", guardian_user, organization)
+
+    try:
+        assert rules_user.has_perm("organizacoes.rule_only") is True
+        assert django_user.has_perm("organizacoes.view_organizacao") is True
+        assert django_user.has_perm("organizacoes.change_organizacao") is False
+        assert guardian_user.has_perm("change_organizacao", organization) is True
+        assert guardian_user.has_perm("view_organizacao", organization) is False
+    finally:
+        rules.remove_perm("organizacoes.rule_only")

@@ -228,8 +228,11 @@ AUTH_USER_MODEL = "usuarios.Usuario"
 AUTHENTICATION_BACKENDS = [
     "rules.permissions.ObjectPermissionBackend",
     "common.permission_cache.backends.CachedModelBackend",
-    "guardian.backends.ObjectPermissionBackend",
+    "common.permission_cache.backends.CachedObjectPermissionBackend",
 ]
+
+# CachedObjectPermissionBackend subclasses and compatibility-tests Guardian's backend.
+SILENCED_SYSTEM_CHECKS = ["guardian.W001"]
 
 # Não criar o usuário anônimo do guardian (o modelo de usuário usa e-mail como
 # username e o isolamento por organização torna esse registro desnecessário).
