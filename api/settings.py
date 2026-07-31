@@ -227,7 +227,7 @@ AUTH_USER_MODEL = "usuarios.Usuario"
 # (permissões por objeto persistidas no banco).
 AUTHENTICATION_BACKENDS = [
     "rules.permissions.ObjectPermissionBackend",
-    "django.contrib.auth.backends.ModelBackend",
+    "common.permission_cache.backends.CachedModelBackend",
     "guardian.backends.ObjectPermissionBackend",
 ]
 
