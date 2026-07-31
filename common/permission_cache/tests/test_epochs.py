@@ -1,11 +1,18 @@
+import os
 from unittest.mock import Mock, call
+from uuid import uuid4
 
+from django.conf import settings
 from django.core.cache.backends.locmem import LocMemCache
 
 import pytest
+from django_redis.cache import RedisCache
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import ResponseError
 
 from common.permission_cache import invalidation
 from common.permission_cache.epochs import EpochStore
+from common.permission_cache.keys import epoch_key
 
 
 def make_cache():
@@ -57,6 +64,41 @@ def test_epoch_increment_error_never_resets_to_zero():
 
     cache.add.assert_not_called()
     cache.set.assert_not_called()
+
+
+def test_django_redis_overflow_propagates_and_preserves_epoch():
+    redis_url = os.environ.get("PERMISSION_CACHE_TEST_REDIS_URL", settings.AUTHORIZATION_REDIS_URL)
+
+    cache = RedisCache(
+        redis_url,
+        {
+            "KEY_PREFIX": f"permission-epoch-integration-{uuid4()}",
+            "OPTIONS": {"SERIALIZER": "django_redis.serializers.json.JSONSerializer"},
+        },
+    )
+    client = cache.client.get_client(write=True)
+    try:
+        client.ping()
+    except RedisConnectionError:
+        pytest.skip("Redis não está acessível para a integração de epochs.")
+
+    store = EpochStore(cache_backend=cache)
+    scope = "overflow"
+    key = epoch_key("default", scope)
+    cache.delete(key)
+
+    try:
+        before = store.read((scope,), "default")[0]
+        assert before >= 2**52
+        assert store.bump(scope, "default") == before + 1
+
+        cache.set(key, 2**63 - 1, timeout=None)
+        with pytest.raises(ResponseError):
+            store.bump(scope, "default")
+
+        assert cache.get(key) == 2**63 - 1
+    finally:
+        cache.delete(key)
 
 
 def test_existing_epochs_are_read_with_one_get_many_call():

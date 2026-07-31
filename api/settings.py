@@ -470,6 +470,7 @@ else:
             "KEY_PREFIX": AUTHORIZATION_CACHE["KEY_PREFIX"],
             "OPTIONS": {
                 "CLIENT_CLASS": "django_redis.client.DefaultClient",
+                "SERIALIZER": "django_redis.serializers.json.JSONSerializer",
                 "REDIS_CLIENT_KWARGS": {
                     "socket_connect_timeout": 1,
                     "socket_timeout": 1,
