@@ -13,7 +13,7 @@ from django.utils.crypto import salted_hmac
 
 import pyotp
 
-from .models import AuthToken, MFAChallenge, MFAChallengePurpose, MFAFactor, MFAFactorType, MFARecoveryCode, TokenType, TrustedDevice
+from .models import AuthToken, MFAChallenge, MFAChallengePurpose, MFAFactor, MFAFactorType, MFARecoveryCode, MFAResetAudit, TokenType, TrustedDevice
 from .services import issue_token, revoke_tokens
 
 OTP_LIFETIME = timedelta(minutes=5)
@@ -235,17 +235,7 @@ def start_login_challenge(pre_auth: AuthToken, factor_type: str) -> MFAChallenge
         return MFAChallenge.objects.create(
             user=pre_auth.responsavel, factor=factor, token=pre_auth, purpose=MFAChallengePurpose.LOGIN, expires_at=timezone.now() + OTP_LIFETIME
         )
-    code = _new_otp()
-    return MFAChallenge.objects.create(
-        user=pre_auth.responsavel,
-        factor=factor,
-        token=pre_auth,
-        purpose=MFAChallengePurpose.LOGIN,
-        otp_digest=_otp_digest(code),
-        expires_at=timezone.now() + OTP_LIFETIME,
-        delivery_status="sent",
-        delivered_at=timezone.now(),
-    )
+    return create_otp_challenge(pre_auth.responsavel, factor, pre_auth, MFAChallengePurpose.LOGIN)
 
 
 def _consume_recovery_code(user, code: str) -> bool:
@@ -280,6 +270,8 @@ def verify_login_challenge(pre_auth: AuthToken, code: str, factor_type: str, *, 
                 challenge.consumed_at = timezone.now()
                 factor.last_used_at = timezone.now()
                 factor.save(update_fields=["last_used_at"])
+            elif challenge.attempts >= 5:
+                challenge.consumed_at = timezone.now()
             challenge.save(update_fields=["attempts", "consumed_at"])
     if not valid:
         raise ValueError("Código MFA inválido ou expirado.")
@@ -299,17 +291,21 @@ def start_reauthentication(session: AuthToken, factor_type: str) -> MFAChallenge
 def start_login_challenge_for(token: AuthToken, factor_type: str, purpose: str) -> MFAChallenge:
     factor_type = MFAFactorType(factor_type)
     factor = active_factors(token.responsavel).select_for_update().get(type=factor_type)
-    code = "" if factor_type == MFAFactorType.TOTP else _new_otp()
+    if factor_type != MFAFactorType.TOTP:
+        return create_otp_challenge(token.responsavel, factor, token, purpose)
     return MFAChallenge.objects.create(
         user=token.responsavel,
         factor=factor,
         token=token,
         purpose=purpose,
-        otp_digest=_otp_digest(code) if code else "",
         expires_at=timezone.now() + OTP_LIFETIME,
-        delivery_status="sent" if code else "pending",
-        delivered_at=timezone.now() if code else None,
     )
+
+
+def create_otp_challenge(user, factor: MFAFactor, token: AuthToken, purpose: str) -> MFAChallenge:
+    challenge = MFAChallenge.objects.create(user=user, factor=factor, token=token, purpose=purpose, expires_at=timezone.now() + OTP_LIFETIME)
+    schedule_otp_delivery(challenge)
+    return challenge
 
 
 @transaction.atomic
@@ -329,11 +325,12 @@ def verify_reauthentication(session: AuthToken, code: str, factor_type: str) -> 
             bool(challenge)
             and not challenge.is_expired
             and challenge.attempts < 5
+            and (factor.type == MFAFactorType.TOTP or challenge.delivery_status == "sent")
             and (consume_totp(factor, code) if factor.type == MFAFactorType.TOTP else hmac.compare_digest(challenge.otp_digest, _otp_digest(code)))
         )
         if challenge:
             challenge.attempts += 1
-            challenge.consumed_at = timezone.now() if valid else None
+            challenge.consumed_at = timezone.now() if valid or challenge.attempts >= 5 else None
             challenge.save(update_fields=["attempts", "consumed_at"])
     if not valid:
         raise ValueError("Código MFA inválido ou expirado.")
@@ -349,3 +346,4 @@ def reset_user_mfa(*, target, actor, reason: str) -> None:
     MFARecoveryCode.objects.filter(user=target).delete()
     TrustedDevice.objects.filter(user=target).update(revoked_at=timezone.now())
     revoke_tokens(target, types=(TokenType.TOKEN, TokenType.PRE_AUTH))
+    MFAResetAudit.objects.create(actor=actor, target=target, reason=reason.strip())

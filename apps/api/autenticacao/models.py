@@ -613,8 +613,21 @@ class TrustedDevice(models.Model):
         indexes = [models.Index(fields=("user", "expires_at"), name="trusted_device_user_expiry")]
 
 
+class MFAResetAudit(models.Model):
+    """Registro não sensível de um reset administrativo de MFA."""
+
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="mfa_resets_performed")
+    target = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="mfa_resets_received")
+    reason = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "mfa_reset_audit"
+
+
 register(TokenMetaData)
 register(MFAFactor)
 register(MFAChallenge, exclude_fields=["otp_digest"])
 register(MFARecoveryCode, exclude_fields=["digest"])
 register(TrustedDevice, exclude_fields=["digest"])
+register(MFAResetAudit)

@@ -4,7 +4,7 @@ from django.utils import timezone
 import pytest
 
 from apps.api.autenticacao.mfa import start_enrollment
-from apps.api.autenticacao.models import MFAFactorType, TokenType
+from apps.api.autenticacao.models import MFAFactorType, MFAResetAudit, TokenType
 from apps.api.autenticacao.services import issue_token
 from apps.usuarios.factories import UsuarioFactory
 
@@ -23,3 +23,4 @@ def test_admin_reset_exige_permissao_reauth_e_justificativa(api_client, usuario)
     assert api_client.post("/auth/mfa/admin-reset/", {"user_id": target.pk, "reason": ""}).status_code == 400
     assert api_client.post("/auth/mfa/admin-reset/", {"user_id": target.pk, "reason": "Suporte verificado"}).status_code == 204
     assert not target.mfa_factors.exists()
+    assert MFAResetAudit.objects.filter(actor=usuario, target=target, reason="Suporte verificado").exists()
