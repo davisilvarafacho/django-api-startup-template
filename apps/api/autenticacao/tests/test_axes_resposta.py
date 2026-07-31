@@ -5,11 +5,9 @@ from django.test import RequestFactory
 from django.utils import timezone
 
 from rest_framework import status
-from rest_framework.test import APIClient
 
 import pytest
 from axes.models import AccessAttempt
-from threadlocals.threadlocals import set_current_user, set_thread_variable
 
 from apps.api.autenticacao.handlers import segundos_ate_o_desbloqueio
 from apps.usuarios.factories import UsuarioFactory
@@ -19,35 +17,7 @@ pytestmark = pytest.mark.django_db
 URL_LOGIN = "/auth/login/"
 
 
-@pytest.fixture(autouse=True)
-def ambiente_axes(settings):
-    settings.ALLOWED_HOSTS = ["testserver"]
-    settings.AXES_ENABLED = True
-    settings.BEHIND_PROXY = True
-    set_current_user(None)
-    set_thread_variable("request", None)
-    yield
-    set_current_user(None)
-    set_thread_variable("request", None)
-
-
-def bloquear(email, ip="203.0.113.10"):
-    """Erra a senha até o bloqueio disparar e devolve a última resposta."""
-    from django.conf import settings
-
-    client = APIClient()
-    resposta = None
-    for _ in range(settings.AXES_FAILURE_LIMIT):
-        resposta = client.post(
-            URL_LOGIN,
-            {"username": email, "password": "senha-errada"},
-            format="json",
-            HTTP_X_FORWARDED_FOR=ip,
-        )
-    return resposta
-
-
-def test_resolve_cooloff_callable_com_a_request(settings):
+def test_resolve_cooloff_callable_com_a_request(settings, ambiente_axes):
     request = RequestFactory().post(URL_LOGIN)
 
     def cooloff(request_recebida):
@@ -59,7 +29,7 @@ def test_resolve_cooloff_callable_com_a_request(settings):
     assert segundos_ate_o_desbloqueio(request, None) == 123
 
 
-def test_prazo_usa_o_combo_que_atingiu_o_limite(settings):
+def test_prazo_usa_o_combo_que_atingiu_o_limite(settings, ambiente_axes):
     agora = timezone.now()
     settings.AXES_LOCKOUT_PARAMETERS = [["username", "ip_address"], ["user_agent"]]
     request = RequestFactory().post(
@@ -98,7 +68,7 @@ def test_prazo_usa_o_combo_que_atingiu_o_limite(settings):
     assert 1600 <= segundos <= 1690
 
 
-def test_bloqueio_responde_json_no_formato_do_projeto():
+def test_bloqueio_responde_json_no_formato_do_projeto(bloquear):
     usuario = UsuarioFactory()
 
     resposta = bloquear(usuario.email)
@@ -108,7 +78,7 @@ def test_bloqueio_responde_json_no_formato_do_projeto():
     assert resposta.json() == {"mensagem": "Muitas tentativas de login."}
 
 
-def test_bloqueio_nao_revela_o_prazo_no_corpo(settings):
+def test_bloqueio_nao_revela_o_prazo_no_corpo(settings, bloquear):
     settings.AXES_COOLOFF_TIME = timedelta(minutes=30)
     resposta_30_minutos = bloquear(UsuarioFactory().email)
 
@@ -119,7 +89,7 @@ def test_bloqueio_nao_revela_o_prazo_no_corpo(settings):
     assert resposta_30_minutos.json() == resposta_45_minutos.json() == {"mensagem": "Muitas tentativas de login."}
 
 
-def test_bloqueio_informa_o_prazo_no_header_retry_after(settings):
+def test_bloqueio_informa_o_prazo_no_header_retry_after(settings, bloquear):
     usuario = UsuarioFactory()
 
     resposta = bloquear(usuario.email)

@@ -80,9 +80,8 @@ outras 18 migrações do app; passou a depender de `0019_alter_periodictasks_opt
   considera o maior prazo entre os combos que efetivamente atingiram o limite.
 - **Task 3** — resolvido nesta retomada: o teste compara bloqueios com cooloffs
   diferentes e confirma que só o header muda, não o corpo JSON.
-- **Tasks 2-4** — a fixture `ambiente_axes` e os helpers de POST em `/auth/login/` estão
-  duplicados nos três arquivos de teste do axes. Cabe um `conftest.py` em
-  `apps/api/autenticacao/tests/`.
+- **Tasks 2-4** — resolvido nesta retomada: `ambiente_axes`, POST de login e helpers
+  de repetição foram centralizados em `apps/api/autenticacao/tests/conftest.py`.
 - **Task 5** — `desagendar()` remove o `PeriodicTask` mas deixa o `CrontabSchedule` órfão
   no rollback.
 - **Task 5** — `update_or_create` usa `task` como chave, que não é `unique` no schema do
