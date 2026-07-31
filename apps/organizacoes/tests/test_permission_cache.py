@@ -8,6 +8,7 @@ import pytest
 from apps.organizacoes.middleware import OrganizacaoMiddleware
 from apps.organizacoes.models import Organizacao, Papel, Time, Vinculo
 from apps.organizacoes.permissions import PapelMinimoPermission, TenantPermission
+from apps.organizacoes.rules import e_gestor
 from apps.organizacoes.serializers import ConviteCreateSerializer, VinculoSerializer
 from apps.organizacoes.tests.test_api import client_autenticado
 from apps.organizacoes.views import TimeViewSet
@@ -38,6 +39,22 @@ def test_papel_minimo_permission_reads_tenant_dataclass():
     view = Mock(action="create", papeis_por_action={"create": Papel.GESTOR})
 
     assert PapelMinimoPermission().has_permission(request, view) is True
+
+
+@pytest.mark.django_db
+def test_papel_minimo_rule_reuses_tenant_resolver(monkeypatch):
+    usuario = UsuarioFactory()
+    objeto = Mock(organizacao_id=1)
+    resolver = Mock(return_value=TenantAccess(1, "acme", 2, Papel.GESTOR))
+    monkeypatch.setattr(TenantAccessResolver, "by_organization_id", resolver)
+
+    assert e_gestor.test(usuario, objeto) is True
+    resolver.assert_called_once_with(
+        usuario.pk,
+        objeto.organizacao_id,
+        database_alias=usuario._state.db or "default",
+        metric_layer="rules",
+    )
 
 
 @pytest.mark.django_db

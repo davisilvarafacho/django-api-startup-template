@@ -10,9 +10,13 @@ O papel precisa ser uma camada própria porque as permissions do Django são
 globais — não há como expressar "administrador na Org A, membro na Org B" com
 Groups nativos.
 """
+
+from django.db import DEFAULT_DB_ALIAS
+
 import rules
 
-from apps.organizacoes.models import Papel, Vinculo
+from apps.organizacoes.models import Papel
+from common.permission_cache.resolvers.tenant import TenantAccessResolver
 
 
 def papel_minimo(papel):
@@ -31,12 +35,13 @@ def papel_minimo(papel):
         if organizacao_id is None:
             return False
 
-        return Vinculo.objects.filter(
-            usuario=usuario,
-            organizacao_id=organizacao_id,
-            ativo=True,
-            papel__gte=papel,
-        ).exists()
+        access = TenantAccessResolver().by_organization_id(
+            usuario.pk,
+            organizacao_id,
+            database_alias=usuario._state.db or DEFAULT_DB_ALIAS,
+            metric_layer="rules",
+        )
+        return access is not None and access.has_minimum_role(papel)
 
     return _predicado
 
