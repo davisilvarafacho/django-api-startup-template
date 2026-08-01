@@ -246,7 +246,18 @@ AUTH_PASSWORD_VALIDATORS = [
     {
         "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
     },
+    {
+        "NAME": "apps.usuarios.password_validation.PwnedPasswordValidator",
+    },
 ]
+
+# Checagem de senha vazada (HaveIBeenPwned). Desligada em teste para que a suíte
+# nunca dependa de rede. A consulta é k-anonymous — só o prefixo de cinco
+# caracteres do SHA-1 sai da aplicação — e falha aberta: indisponibilidade da API
+# não pode impedir alguém de trocar a própria senha.
+HIBP_PASSWORD_CHECK_ENABLED = get_bool_from_env("HIBP_PASSWORD_CHECK_ENABLED", CONFIG_ENVIRONMENT != "test")
+HIBP_PASSWORDS_URL = get_env_var("HIBP_PASSWORDS_URL", "https://api.pwnedpasswords.com/range")
+HIBP_TIMEOUT_SECONDS = float(get_env_var("HIBP_TIMEOUT_SECONDS", 2))
 
 AUTH_USER_MODEL = "usuarios.Usuario"
 

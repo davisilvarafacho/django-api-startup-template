@@ -27,6 +27,10 @@ ENVS = (
     "AXES_ENABLED",
     "AXES_FAILURE_LIMIT",
     "AXES_COOLOFF_MINUTES",
+    # senha / haveibeenpwned
+    "HIBP_PASSWORD_CHECK_ENABLED",
+    "HIBP_PASSWORDS_URL",
+    "HIBP_TIMEOUT_SECONDS",
     # back blaze
     "BACKBLAZE_APPLICATION_ID",
     "BACKBLAZE_APPLICATION_KEY",
@@ -73,6 +77,10 @@ EnviromentVar = Literal[
     "AXES_ENABLED",
     "AXES_FAILURE_LIMIT",
     "AXES_COOLOFF_MINUTES",
+    # senha / haveibeenpwned
+    "HIBP_PASSWORD_CHECK_ENABLED",
+    "HIBP_PASSWORDS_URL",
+    "HIBP_TIMEOUT_SECONDS",
     # back blaze
     "BACKBLAZE_APPLICATION_ID",
     "BACKBLAZE_APPLICATION_KEY",
