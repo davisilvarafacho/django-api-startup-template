@@ -66,3 +66,39 @@ document_api_key_resume = extend_schema(
         409: document_error_codes(AuthErrorCode.REVOKED_TOKEN, AuthErrorCode.RESPONSIBLE_INACTIVE),
     },
 )
+
+
+document_password_reset_request = extend_schema(
+    responses={202: None},
+    description=(
+        "Responde 202 com o mesmo corpo exista ou não a conta. Isso é "
+        "deliberado: qualquer diferença tornaria o endpoint um verificador de "
+        "quem tem cadastro."
+    ),
+)
+
+document_password_reset_confirm = extend_schema(
+    responses={204: None},
+    description=(
+        "Consome o token do e-mail, grava a nova senha e revoga sessões, "
+        "tokens efêmeros e dispositivos confiáveis. Token inválido, expirado, "
+        "revogado ou já usado devolvem o mesmo 400 — a distinção seria "
+        "informação de graça para quem testa tokens. Não exige MFA: quem perdeu "
+        "a senha pode ter perdido o segundo fator junto."
+    ),
+)
+
+document_password_change = extend_schema(
+    responses={
+        204: None,
+        401: document_error_codes(
+            AuthErrorCode.NOT_AUTHENTICATED,
+            AuthErrorCode.REAUTHENTICATION_REQUIRED,
+        ),
+    },
+    description=(
+        "Exige reautenticação recente. Encerra **todas** as sessões, inclusive "
+        "a que fez a troca; API keys são preservadas, porque pertencem à "
+        "integração e não à sessão humana."
+    ),
+)

@@ -8,11 +8,11 @@ from rest_framework.test import APIClient
 from rest_framework.throttling import AnonRateThrottle, ScopedRateThrottle
 
 import pytest
-from threadlocals.threadlocals import set_current_user, set_thread_variable
 
 from apps.api.autenticacao.models import AuthToken, TokenMetaData, TokenType
 from apps.api.autenticacao.views import LoginView
 from apps.usuarios.factories import UsuarioFactory
+from threadlocals.threadlocals import set_current_user, set_thread_variable
 
 pytestmark = pytest.mark.django_db
 

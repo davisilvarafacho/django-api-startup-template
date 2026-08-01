@@ -93,9 +93,9 @@ class AuthenticationMiddleware:
                 message="Pré-autenticação não permite acesso a esta rota.",
             )
 
-        # Não usamos `set_current_user`: ele grava num global da thread que nunca é
-        # limpo, e `get_current_user()` já resolve `request.user` a partir da request
-        # que o ThreadLocalMiddleware guarda por requisição.
+        # Não precisamos gravar o usuário num contexto paralelo: `get_current_user()`
+        # já resolve `request.user` a partir da request corrente guardada pelo
+        # ThreadLocalMiddleware.
         request.user = user
         request.auth = auth_token
         setattr(request, REQUEST_ATTR_RESOLVED, RESOLVED_PRIVATE)

@@ -44,6 +44,64 @@ def cleanup_expired_tokens():
     )
 
 
+@shared_task(name="autenticacao.send_password_reset", ignore_result=True)
+def send_password_reset(user_pk: int):
+    """Emite o token de redefinição e envia o link por e-mail.
+
+    A emissão acontece aqui, e não na view, para que o token puro exista apenas
+    dentro desta task: o payload que trafega pelo broker é só o ID do usuário.
+    """
+    from apps.usuarios.models import Usuario
+
+    from .passwords import issue_password_reset
+
+    user = Usuario.objects.filter(pk=user_pk, is_active=True).first()
+    if user is None:
+        return
+
+    issued = issue_password_reset(user)
+    link = f"{settings.PASSWORD_RESET_FRONTEND_URL}?token={issued.plain_token}"
+    minutos = settings.PASSWORD_RESET_TIMEOUT_MINUTES
+
+    corpo = (
+        f"Para escolher uma nova senha, acesse: {link}\n\n"
+        f"O link vale {minutos} minutos e só pode ser usado uma vez.\n"
+        "Se você não pediu isso, ignore este e-mail."
+    )
+
+    try:
+        send_mail("Redefinição de senha", corpo, settings.DEFAULT_FROM_EMAIL, [user.email])
+    except Exception:
+        # O token fica revogado: um link que não chegou ao dono não pode
+        # continuar valendo à espera de quem intercepte o e-mail depois.
+        logger.exception("Falha ao enviar e-mail de redefinição de senha", extra={"user_id": user_pk})
+        issued.instance.revoked_at = timezone.now()
+        issued.instance.save(update_fields=["revoked_at"])
+
+
+@shared_task(name="autenticacao.notify_password_changed", ignore_result=True)
+def notify_password_changed(user_pk: int):
+    """Avisa o dono da conta que a senha mudou.
+
+    É o único sinal que chega a quem teve a conta invadida e não fez a troca.
+    """
+    from apps.usuarios.models import Usuario
+
+    user = Usuario.objects.filter(pk=user_pk).first()
+    if user is None:
+        return
+
+    try:
+        send_mail(
+            "Sua senha foi alterada",
+            "A senha da sua conta acabou de ser alterada e todas as sessões foram encerradas.\n\nSe não foi você, redefina a senha imediatamente.",
+            settings.DEFAULT_FROM_EMAIL,
+            [user.email],
+        )
+    except Exception:
+        logger.exception("Falha ao avisar sobre troca de senha", extra={"user_id": user_pk})
+
+
 @shared_task(name="autenticacao.deliver_mfa_otp", ignore_result=True)
 def deliver_mfa_otp(challenge_pk: int):
     """Gera e entrega OTP a partir do ID, sem código no payload Celery."""

@@ -74,6 +74,46 @@ class ReauthenticateSerializer(serializers.Serializer):
         return attrs
 
 
+class PasswordResetRequestSerializer(serializers.Serializer):
+    """Pedido de redefinição. Aceita qualquer e-mail bem formado, de propósito.
+
+    Não valida a existência da conta: a resposta precisa ser idêntica para
+    e-mail cadastrado e não cadastrado, senão o endpoint vira um oráculo que
+    diz quem tem conta aqui.
+    """
+
+    email = serializers.EmailField()
+
+
+class PasswordConfirmationMixin:
+    """Exige que as duas senhas digitadas sejam iguais."""
+
+    def validate(self, attrs):
+        if attrs["new_password"] != attrs["new_password_confirmation"]:
+            raise serializers.ValidationError({"new_password_confirmation": "As senhas não conferem."})
+        return attrs
+
+
+class PasswordResetConfirmSerializer(PasswordConfirmationMixin, serializers.Serializer):
+    """Consome o token do e-mail e define a nova senha."""
+
+    token = serializers.CharField(write_only=True, trim_whitespace=False)
+    new_password = serializers.CharField(write_only=True, trim_whitespace=False)
+    new_password_confirmation = serializers.CharField(write_only=True, trim_whitespace=False)
+
+
+class PasswordChangeSerializer(PasswordConfirmationMixin, serializers.Serializer):
+    """Troca de senha por quem já está autenticado e reautenticado.
+
+    A senha atual não é pedida aqui: `@require_recent_auth` já garante que a
+    identidade foi confirmada há pouco, e pedir de novo só treinaria o usuário
+    a digitar a senha em mais um formulário.
+    """
+
+    new_password = serializers.CharField(write_only=True, trim_whitespace=False)
+    new_password_confirmation = serializers.CharField(write_only=True, trim_whitespace=False)
+
+
 class SessionSerializer(serializers.Serializer):
     """Sessão de login. Nunca inclui `digest`, `token_key` ou o plain token."""
 

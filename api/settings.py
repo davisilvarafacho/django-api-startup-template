@@ -259,6 +259,12 @@ HIBP_PASSWORD_CHECK_ENABLED = get_bool_from_env("HIBP_PASSWORD_CHECK_ENABLED", C
 HIBP_PASSWORDS_URL = get_env_var("HIBP_PASSWORDS_URL", "https://api.pwnedpasswords.com/range")
 HIBP_TIMEOUT_SECONDS = float(get_env_var("HIBP_TIMEOUT_SECONDS", 2))
 
+# Redefinição de senha. O TTL é curto de propósito: o link chega por e-mail, um
+# canal que a aplicação não controla, então a janela em que uma caixa de entrada
+# comprometida ainda serve precisa ser pequena.
+PASSWORD_RESET_TIMEOUT_MINUTES = int(get_env_var("PASSWORD_RESET_TIMEOUT_MINUTES", 30))
+PASSWORD_RESET_FRONTEND_URL = get_env_var("PASSWORD_RESET_FRONTEND_URL", "http://localhost:3000/redefinir-senha")
+
 AUTH_USER_MODEL = "usuarios.Usuario"
 
 
@@ -447,6 +453,9 @@ REST_FRAMEWORK = {
         "user": "1000/hour",
         "auth_login": "10/min",
         "auth_reauthenticate": "5/min",
+        # Mais apertado que o login: cada tentativa dispara um e-mail, então o
+        # abuso aqui não é só força bruta, é usar a API como canhão de spam.
+        "auth_password_reset": "5/min",
     },
     "DEFAULT_VERSIONING_CLASS": "rest_framework.versioning.NamespaceVersioning",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",

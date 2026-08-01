@@ -1,7 +1,9 @@
 from django.contrib.auth.signals import user_logged_in, user_logged_out
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import transaction
 from django.utils import timezone
 
-from rest_framework import mixins, status, viewsets
+from rest_framework import mixins, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -14,8 +16,9 @@ from knox.settings import knox_settings
 from posthog import capture, identify_context, new_context
 
 from apps.api.core.errors import APIError
-from apps.api.core.route_markers import no_tenancy
+from apps.api.core.route_markers import no_tenancy, public
 from apps.organizacoes.permissions import TenantPermission
+from apps.usuarios.passwords import set_validated_password
 
 from .errors import AuthErrorCode
 from .mfa import (
@@ -34,6 +37,7 @@ from .mfa import (
     verify_reauthentication,
 )
 from .models import MFAFactor, MFAFactorType, TokenType, TrustedDevice
+from .passwords import consume_password_reset, revoke_credentials_after_password_change
 from .permissions import APIKeyPermissions, TokenScopePermission
 from .recent_auth import RecentAuthenticationPermission, require_recent_auth
 from .risk import evaluate_login_risk
@@ -43,6 +47,9 @@ from .schema import (
     document_api_key_rotate,
     document_api_key_suspend,
     document_login,
+    document_password_change,
+    document_password_reset_confirm,
+    document_password_reset_request,
     document_reauthenticate,
 )
 from .serializers import (
@@ -50,6 +57,9 @@ from .serializers import (
     APIKeyWriteSerializer,
     LoginResponseSerializer,
     LoginSerializer,
+    PasswordChangeSerializer,
+    PasswordResetConfirmSerializer,
+    PasswordResetRequestSerializer,
     ReauthenticateSerializer,
     SessionSerializer,
 )
@@ -62,6 +72,7 @@ from .services import (
     rotate_api_key,
     suspend_api_key,
 )
+from .tasks import notify_password_changed, send_password_reset
 from .utils import build_token_metadata
 
 # Nunca importar `knox.models.AuthToken` diretamente: o modelo ativo é o
@@ -543,4 +554,100 @@ class MFAAdminResetView(APIView):
             return Response({"detail": "Usuário não encontrado."}, status=status.HTTP_404_NOT_FOUND)
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+def _erro_de_politica_de_senha(exc):
+    """Converte o erro dos validators do Django num 400 apontando o campo.
+
+    O handler global mapeia `DjangoValidationError` para 422, que é o certo para
+    invariante de modelo violada. Aqui a causa é o valor que o cliente digitou —
+    mesmo caso de qualquer outro campo inválido, e o cliente precisa saber
+    **qual** campo corrigir.
+    """
+    return serializers.ValidationError({"new_password": list(exc.messages)})
+
+
+@public
+class PasswordResetRequestView(APIView):
+    """Dispara o e-mail de redefinição.
+
+    Responde sempre 202 com o mesmo corpo, exista ou não a conta: qualquer
+    diferença — status, corpo ou tempo de resposta — transformaria o endpoint
+    num verificador de quem tem cadastro.
+    """
+
+    permission_classes = (AllowAny,)
+    throttle_classes = [AnonRateThrottle, ScopedRateThrottle]
+    throttle_scope = "auth_password_reset"
+
+    @document_password_reset_request
+    def post(self, request):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        from apps.usuarios.models import Usuario
+
+        user = Usuario.objects.filter(email__iexact=serializer.validated_data["email"], is_active=True).first()
+        if user is not None:
+            send_password_reset.delay(user.pk)
+
+        return Response({"detail": "Se houver uma conta com esse e-mail, o link de redefinição foi enviado."}, status=status.HTTP_202_ACCEPTED)
+
+
+@public
+class PasswordResetConfirmView(APIView):
+    """Consome o token do e-mail e grava a nova senha."""
+
+    permission_classes = (AllowAny,)
+    throttle_classes = [AnonRateThrottle, ScopedRateThrottle]
+    throttle_scope = "auth_password_reset"
+
+    @document_password_reset_confirm
+    def post(self, request):
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            user = consume_password_reset(
+                serializer.validated_data["token"],
+                serializer.validated_data["new_password"],
+            )
+        except DjangoValidationError as exc:
+            raise _erro_de_politica_de_senha(exc) from exc
+
+        if user is None:
+            # Não distingue inexistente, expirado, revogado e já usado: cada
+            # distinção seria informação de graça para quem testa tokens.
+            raise serializers.ValidationError({"token": "Token de redefinição inválido ou expirado."})
+
+        notify_password_changed.delay(user.pk)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@no_tenancy
+class PasswordChangeView(APIView):
+    """Troca de senha por quem já está autenticado.
+
+    Não preserva a sessão atual: se a troca aconteceu porque a conta pode estar
+    comprometida, manter viva a credencial que fez a troca anularia o motivo
+    dela. O cliente refaz o login.
+    """
+
+    permission_classes = (IsAuthenticated, RecentAuthenticationPermission)
+
+    @document_password_change
+    @require_recent_auth()
+    def post(self, request):
+        serializer = PasswordChangeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            with transaction.atomic():
+                set_validated_password(request.user, serializer.validated_data["new_password"])
+                revoke_credentials_after_password_change(request.user)
+        except DjangoValidationError as exc:
+            raise _erro_de_politica_de_senha(exc) from exc
+
+        transaction.on_commit(lambda: notify_password_changed.delay(request.user.pk))
         return Response(status=status.HTTP_204_NO_CONTENT)
