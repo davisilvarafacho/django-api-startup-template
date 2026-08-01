@@ -9,7 +9,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('autenticacao', '0001_initial'),
+        ('autenticacao', '0004_alter_authtoken_fields'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 

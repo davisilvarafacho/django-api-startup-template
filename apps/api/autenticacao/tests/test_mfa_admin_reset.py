@@ -13,7 +13,7 @@ from apps.usuarios.factories import UsuarioFactory
 def test_admin_reset_exige_permissao_reauth_e_justificativa(api_client, usuario):
     target = UsuarioFactory()
     start_enrollment(target, MFAFactorType.TOTP)
-    issued = issue_token(responsavel=usuario, token_type=TokenType.TOKEN, expiry=None, metadata_input={})
+    issued = issue_token(responsavel=usuario, token_type=TokenType.TOKEN, created_by=usuario, expiry=None, metadata_input={})
     issued.instance.metadata.reauthenticated_at = timezone.now()
     issued.instance.metadata.save(update_fields=["reauthenticated_at"])
     api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {issued.plain_token}")

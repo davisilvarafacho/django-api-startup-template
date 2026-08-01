@@ -1,8 +1,9 @@
 from django.db import transaction
-from django.utils.translation import gettext_lazy as _
 
 from rest_framework import serializers
 
+from apps.api.core.errors import APIError
+from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.models import Convite, Organizacao, Papel, Time, Vinculo
 
 
@@ -21,6 +22,9 @@ class OrganizacaoSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "papel"]
 
     def get_papel(self, obj):
+        if self.context.get("include_personal_role") is False:
+            return None
+
         vinculos_por_organizacao = self.context.get("vinculos_por_organizacao", {})
         vinculo = vinculos_por_organizacao.get(obj.id)
         if vinculo:
@@ -30,7 +34,7 @@ class OrganizacaoSerializer(serializers.ModelSerializer):
         if not request or not request.user.is_authenticated:
             return None
 
-        vinculo = Vinculo.objects.filter(organizacao=obj, usuario=request.user, ativo=True).first()
+        vinculo = Vinculo.objects.filter(organizacao=obj, usuario=request.user, is_active=True).first()
         return vinculo.papel if vinculo else None
 
     def create(self, validated_data):
@@ -59,20 +63,25 @@ class VinculoSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Vinculo
-        fields = ["id", "usuario", "papel", "times", "times_detalhe", "ativo"]
-        read_only_fields = ["id", "usuario", "ativo"]
+        fields = ["id", "usuario", "papel", "times", "times_detalhe", "is_active"]
+        read_only_fields = ["id", "usuario", "is_active"]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         request = self.context.get("request")
         organizacao = getattr(request, "organizacao", None)
         if organizacao is not None:
-            self.fields["times"].queryset = Time.objects.filter(organizacao=organizacao, ativo=True)
+            self.fields["times"].queryset = Time.objects.filter(organizacao=organizacao, is_active=True)
 
     def validate_papel(self, papel):
         request = self.context["request"]
         if papel > request.vinculo.papel:
-            raise serializers.ValidationError(_("Você não pode conceder um papel acima do seu."))
+            raise APIError(
+                OrganizationErrorCode.ROLE_INSUFFICIENT,
+                status_code=422,
+                field="papel",
+                message="Você não pode conceder um papel acima do seu.",
+            )
         return papel
 
 
@@ -105,7 +114,12 @@ class ConviteCreateSerializer(ConviteSerializer):
     def validate_papel(self, papel):
         request = self.context["request"]
         if papel > request.vinculo.papel:
-            raise serializers.ValidationError(_("Você não pode convidar alguém para um papel acima do seu."))
+            raise APIError(
+                OrganizationErrorCode.ROLE_INSUFFICIENT,
+                status_code=422,
+                field="papel",
+                message="Você não pode convidar alguém para um papel acima do seu.",
+            )
         return papel
 
 
@@ -116,14 +130,26 @@ class AceitarConviteSerializer(serializers.Serializer):
         try:
             convite = Convite.objects.select_related("organizacao").get(token=token)
         except Convite.DoesNotExist as exc:
-            raise serializers.ValidationError(_("Convite inválido.")) from exc
+            raise APIError(
+                OrganizationErrorCode.INVITATION_INVALID, status_code=422, field="token"
+            ) from exc
 
         if not convite.pendente:
-            raise serializers.ValidationError(_("Convite expirado ou já utilizado."))
+            raise APIError(OrganizationErrorCode.INVITATION_EXPIRED, status_code=422, field="token")
 
         usuario = self.context["request"].user
         if convite.email.lower() != usuario.email.lower():
-            raise serializers.ValidationError(_("Este convite pertence a outro e-mail."))
+            raise APIError(
+                OrganizationErrorCode.INVITATION_EMAIL_MISMATCH, status_code=422, field="token"
+            )
+
+        request_organization = getattr(self.context["request"], "organizacao", None)
+        if request_organization is not None and convite.organizacao_id != request_organization.id:
+            raise APIError(
+                OrganizationErrorCode.TENANT_MISMATCH,
+                status_code=409,
+                field="token",
+            )
 
         return convite
 

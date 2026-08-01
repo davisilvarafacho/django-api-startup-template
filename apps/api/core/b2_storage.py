@@ -185,7 +185,8 @@ class BackblazeB2Storage(Storage):
             raise FileNotFoundError(f"File not found: {name}") from exc
         except B2Error as exc:
             raise OSError(f"Could not get the creation time of B2 file '{name}'.") from exc
-        return datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc)
+        # `datetime.UTC` só existe no Python 3.11; o projeto suporta 3.10.
+        return datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc)  # noqa: UP017
 
     def get_modified_time(self, name):
         return self.get_created_time(name)

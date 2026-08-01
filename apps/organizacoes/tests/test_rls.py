@@ -40,8 +40,16 @@ TABELA = RegistroRLS._meta.db_table
 
 @pytest.fixture
 def ambiente_rls(django_db_setup, django_db_blocker):
-    """Cria a tabela do modelo de teste, liga o RLS e provisiona o papel comum."""
+    """Cria a tabela do modelo de teste, liga o RLS e provisiona o papel comum.
+
+    A criação é idempotente porque, rodando com `--nomigrations`, o syncdb já
+    cria a tabela deste model (é um model Django comum, só declarado aqui no
+    teste) antes mesmo deste fixture rodar.
+    """
     with django_db_blocker.unblock():
+        with connection.cursor() as cursor:
+            cursor.execute(f'DROP TABLE IF EXISTS "{TABELA}" CASCADE')
+
         with connection.schema_editor() as editor:
             editor.create_model(RegistroRLS)
 

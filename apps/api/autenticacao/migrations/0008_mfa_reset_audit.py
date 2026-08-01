@@ -8,7 +8,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('autenticacao', '0004_drop_knox_authtoken_after_knox'),
+        ('autenticacao', '0007_drop_knox_authtoken_after_knox'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 

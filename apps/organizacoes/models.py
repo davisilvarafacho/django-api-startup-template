@@ -42,10 +42,10 @@ class Papel(models.IntegerChoices):
 
 
 class Organizacao(BaseGlobal):
-    owner = None
+    api_scope_resource = "organizations"
 
     nome = models.CharField(_("nome"), max_length=150)
-    slug = models.SlugField(_("slug"), max_length=60, unique=True)
+    slug = models.SlugField(_("slug"), max_length=60)
 
     def __str__(self):
         return self.nome
@@ -53,11 +53,20 @@ class Organizacao(BaseGlobal):
     class Meta:
         db_table = "organizacao"
         ordering = ["nome"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["slug"],
+                condition=models.Q(is_deleted=False),
+                name="organizacao_slug_unico_nao_excluido",
+            )
+        ]
         verbose_name = _("Organização")
         verbose_name_plural = _("Organizações")
 
 
 class Time(BaseGlobal):
+    api_scope_resource = "teams"
+
     organizacao = models.ForeignKey(
         Organizacao,
         verbose_name=_("organização"),
@@ -73,7 +82,11 @@ class Time(BaseGlobal):
         db_table = "time"
         ordering = ["nome"]
         constraints = [
-            models.UniqueConstraint(fields=["organizacao", "nome"], name="time_unico_por_organizacao"),
+            models.UniqueConstraint(
+                fields=["organizacao", "nome"],
+                condition=models.Q(is_deleted=False),
+                name="time_unico_por_organizacao_nao_excluido",
+            ),
         ]
         verbose_name = _("Time")
         verbose_name_plural = _("Times")
@@ -87,7 +100,7 @@ class Vinculo(BaseGlobal):
     ele próprio define).
     """
 
-    owner = None
+    api_scope_resource = "memberships"
 
     organizacao = models.ForeignKey(
         Organizacao,
@@ -115,7 +128,11 @@ class Vinculo(BaseGlobal):
         db_table = "vinculo"
         ordering = ["-papel"]
         constraints = [
-            models.UniqueConstraint(fields=["organizacao", "usuario"], name="vinculo_unico_por_organizacao"),
+            models.UniqueConstraint(
+                fields=["organizacao", "usuario"],
+                condition=models.Q(is_deleted=False),
+                name="vinculo_unico_por_organizacao_nao_excluido",
+            ),
         ]
         verbose_name = _("Vínculo")
         verbose_name_plural = _("Vínculos")
@@ -124,7 +141,8 @@ class Vinculo(BaseGlobal):
 class Convite(BaseGlobal):
     """Convite para um e-mail entrar numa organização com um papel."""
 
-    owner = None
+    api_scope_resource = "invitations"
+    api_scope_custom_actions = {"accept": "can_accept_convite"}
 
     organizacao = models.ForeignKey(
         Organizacao,
@@ -134,7 +152,7 @@ class Convite(BaseGlobal):
     )
     email = models.EmailField(_("e-mail"))
     papel = models.PositiveSmallIntegerField(_("papel"), choices=Papel.choices, default=Papel.MEMBRO)
-    token = models.CharField(_("token"), max_length=100, unique=True, default=gerar_token_convite, editable=False)
+    token = models.CharField(_("token"), max_length=100, default=gerar_token_convite, editable=False)
     expira_em = models.DateTimeField(_("expira em"), default=expiracao_padrao_convite)
     convidado_por = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -195,6 +213,16 @@ class Convite(BaseGlobal):
     class Meta:
         db_table = "convite"
         ordering = ["-id"]
+        permissions = [
+            ("can_accept_convite", "Pode aceitar convite"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["token"],
+                condition=models.Q(is_deleted=False),
+                name="convite_token_unico_nao_excluido",
+            )
+        ]
         verbose_name = _("Convite")
         verbose_name_plural = _("Convites")
 

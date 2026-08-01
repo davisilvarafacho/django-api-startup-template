@@ -9,18 +9,18 @@ ADMIN_PAGE_SIZE = 50
 
 class BaseModelAdmin(admin.ModelAdmin):
     list_per_page = ADMIN_PAGE_SIZE
-    readonly_fields = ('data_criacao', 'hora_criacao', 'data_ultima_alteracao', 'hora_ultima_alteracao', 'owner')
+    readonly_fields = ('created_at', 'last_modified_at', 'created_by')
     actions = ('clone_records', 'ativar_registros', 'inativar_registros')
 
     def get_actions(self, request):
         actions = super().get_actions(request)
-        if not self._model_has_ativo_field():
+        if not self._model_has_is_active_field():
             actions.pop('ativar_registros', None)
             actions.pop('inativar_registros', None)
         return actions
 
-    def _model_has_ativo_field(self):
-        return any(field.name == 'ativo' for field in self.model._meta.concrete_fields)
+    def _model_has_is_active_field(self):
+        return any(field.name == "is_active" for field in self.model._meta.concrete_fields)
 
     @admin.action(description=_('Clonar registros selecionados'))
     def clone_records(self, request, queryset):
@@ -70,7 +70,7 @@ class BaseModelAdmin(admin.ModelAdmin):
 
     @admin.action(description=_('Ativar registros selecionados'))
     def ativar_registros(self, request, queryset):
-        updated = queryset.update(ativo=True)
+        updated = queryset.update(is_active=True)
         self.message_user(
             request,
             _('%(count)d registro(s) ativado(s) com sucesso.') % {'count': updated},
@@ -79,7 +79,7 @@ class BaseModelAdmin(admin.ModelAdmin):
 
     @admin.action(description=_('Inativar registros selecionados'))
     def inativar_registros(self, request, queryset):
-        updated = queryset.update(ativo=False)
+        updated = queryset.update(is_active=False)
         self.message_user(
             request,
             _('%(count)d registro(s) inativado(s) com sucesso.') % {'count': updated},

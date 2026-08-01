@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('usuarios', '0001_initial'),
+        ('usuarios', '0003_reconcile_audit_timestamps'),
     ]
 
     operations = [

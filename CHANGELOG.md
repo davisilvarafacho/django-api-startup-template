@@ -31,6 +31,10 @@ projeto adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 - Portal de documentação MkDocs estruturado por Diátaxis.
 - Validação de Conventional Commits em hooks e CI.
 
+### Changed
+
+- O envio de e-mails pelo Resend agora usa `django-anymail`, mantendo as variáveis `RESEND_API_KEY` e `RESEND_FROM_EMAIL`.
+
 ## [0.1.0] - 2026-07-21
 
 ### Added

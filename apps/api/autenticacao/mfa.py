@@ -12,9 +12,10 @@ from django.utils import timezone
 from django.utils.crypto import salted_hmac
 
 import pyotp
+from knox.settings import knox_settings
 
 from .models import AuthToken, MFAChallenge, MFAChallengePurpose, MFAFactor, MFAFactorType, MFARecoveryCode, MFAResetAudit, TokenType, TrustedDevice
-from .services import issue_token, revoke_tokens
+from .services import issue_token, revoke_all_sessions
 
 OTP_LIFETIME = timedelta(minutes=5)
 OTP_COOLDOWN = timedelta(seconds=60)
@@ -275,7 +276,13 @@ def verify_login_challenge(pre_auth: AuthToken, code: str, factor_type: str, *, 
             challenge.save(update_fields=["attempts", "consumed_at"])
     if not valid:
         raise ValueError("Código MFA inválido ou expirado.")
-    issued = issue_token(responsavel=user, token_type=TokenType.TOKEN, expiry=None, metadata_input={**metadata, "reauthenticated_at": timezone.now()})
+    issued = issue_token(
+        responsavel=user,
+        token_type=TokenType.TOKEN,
+        created_by=user,
+        expiry=knox_settings.TOKEN_TTL,
+        metadata_input={**metadata, "reauthenticated_at": timezone.now()},
+    )
     pre_auth.delete()
     trusted = create_trusted_device(user, metadata) if trust_device else None
     return LoginResult(issued.plain_token, issued.instance, trusted.plain_token if trusted else "")
@@ -345,5 +352,9 @@ def reset_user_mfa(*, target, actor, reason: str) -> None:
     MFAFactor.objects.select_for_update().filter(user=target).delete()
     MFARecoveryCode.objects.filter(user=target).delete()
     TrustedDevice.objects.filter(user=target).update(revoked_at=timezone.now())
-    revoke_tokens(target, types=(TokenType.TOKEN, TokenType.PRE_AUTH))
+    # Revogação lógica: o registro fica para auditoria. Os `PRE_AUTH` pendentes
+    # são efêmeros e morrem com a expiração, mas não podem sobreviver ao reset —
+    # por isso são apagados, e não só revogados.
+    revoke_all_sessions(target, actor=actor)
+    AuthToken.objects.filter(responsavel=target, type=TokenType.PRE_AUTH).delete()
     MFAResetAudit.objects.create(actor=actor, target=target, reason=reason.strip())

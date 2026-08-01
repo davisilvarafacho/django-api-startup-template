@@ -36,13 +36,40 @@ services:
     environment:
       DATABASE_HOST: db
       REDIS_HOST: redis
-    ports:
-      - "8000:80"
+    # Sem `ports`: quem publica a API é o nginx. Expor o gunicorn direto
+    # contornaria o proxy — e com ele os headers X-Forwarded-*, a ACL do
+    # /metrics e o limite de upload.
+    expose:
+      - "80"
+    volumes:
+      # Compartilhados com o nginx, que serve estáticos e mídia do disco.
+      - static_files:/app/staticfiles
+      - media_files:/app/mediafiles
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  nginx:
+    image: nginx:1.29-alpine
+    ports:
+      - "${NGINX_PORT:-8000}:80"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx/snippets:/etc/nginx/snippets:ro
+      - ./docker/nginx/sites/production:/etc/nginx/conf.d:ro
+      - static_files:/app/staticfiles:ro
+      - media_files:/app/mediafiles:ro
+    depends_on:
+      - web
+    healthcheck:
+      # /nginx-health responde no próprio nginx: o proxy não fica unhealthy
+      # quando o problema está na API.
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/nginx-health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   celery_worker:
     build: .
@@ -73,3 +100,5 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  static_files:
+  media_files:

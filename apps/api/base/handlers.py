@@ -1,8 +1,8 @@
 def ativar_registro(registro):
-    registro.ativo = True
-    registro.save()
+    registro.is_active = True
+    registro.save(update_fields=["is_active"])
 
 
 def inativar_registro(registro):
-    registro.ativo = False
-    registro.save()
+    registro.is_active = False
+    registro.save(update_fields=["is_active"])

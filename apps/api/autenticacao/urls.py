@@ -2,11 +2,11 @@ from django.urls import include, path
 
 from rest_framework.routers import DefaultRouter
 
-from knox import views as knox_views
-
 from .views import (
-    AuthTokenViewSet,
+    APIKeyViewSet,
     LoginView,
+    LogoutAllView,
+    LogoutView,
     MFAAdminResetView,
     MFAChallengeStartView,
     MFAChallengeVerifyView,
@@ -17,16 +17,18 @@ from .views import (
     ReauthenticateChallengeStartView,
     ReauthenticateChallengeVerifyView,
     ReauthenticateView,
+    SessionViewSet,
     TrustedDeviceDetailView,
     TrustedDeviceListView,
 )
 
 router = DefaultRouter()
-router.register("tokens", AuthTokenViewSet, "auth_tokens")
+router.register("sessions", SessionViewSet, "auth_sessions")
+router.register("api_keys", APIKeyViewSet, "auth_api_keys")
 
 
 urlpatterns = [
-    path("auth/login/", LoginView.as_view(), name="knox_login"),
+    path("auth/login/", LoginView.as_view(), name="login"),
     path("auth/reauthenticate/", ReauthenticateView.as_view(), name="reauthenticate"),
     path("auth/reauthenticate/challenge/start/", ReauthenticateChallengeStartView.as_view(), name="reauthenticate-challenge-start"),
     path("auth/reauthenticate/challenge/verify/", ReauthenticateChallengeVerifyView.as_view(), name="reauthenticate-challenge-verify"),
@@ -39,7 +41,7 @@ urlpatterns = [
     path("auth/mfa/admin-reset/", MFAAdminResetView.as_view(), name="mfa-admin-reset"),
     path("auth/trusted-devices/", TrustedDeviceListView.as_view(), name="trusted-device-list"),
     path("auth/trusted-devices/<int:pk>/", TrustedDeviceDetailView.as_view(), name="trusted-device-detail"),
-    path("auth/logout/", knox_views.LogoutView.as_view(), name="knox_logout"),
-    path("auth/logoutall/", knox_views.LogoutAllView.as_view(), name="knox_logoutall"),
+    path("auth/logout/", LogoutView.as_view(), name="logout"),
+    path("auth/logout_all/", LogoutAllView.as_view(), name="logout_all"),
     path("auth/", include(router.urls)),
 ]
