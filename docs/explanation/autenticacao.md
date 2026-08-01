@@ -257,10 +257,9 @@ pública inclusive `/auth/logout/`, que exige token.
   e **antes** de auditlog, PostHog e `OrganizacaoMiddleware`.
 - Uma view com `permission_classes = [AllowAny]` cujo caminho **não** esteja em
   `PUBLIC_ROUTES` ainda recebe 401 do middleware. O `AllowAny` não salva.
-- O marcador vive como atributo da `HttpRequest`, e não em threadlocal:
-  `threadlocals.set_request_variable` cai num fallback global da thread quando
-  não há request corrente, o que vazaria a decisão de uma request para a
-  seguinte no mesmo worker.
+- O marcador vive como atributo da `HttpRequest`, e não no contexto compatível
+  de `threadlocals`: ele faz parte do estado da própria requisição e não deve
+  ser desacoplado do objeto HTTP.
 
 ## Sessões (`/auth/sessions/`)
 
@@ -421,3 +420,103 @@ total de fatores, um operador com `usuarios.can_reset_mfa_usuario` usa
 `POST /auth/mfa/admin-reset/`, reautenticado e com justificativa; a operação
 revoga fatores, recovery codes, sessões e dispositivos confiáveis, preservando
 a senha.
+
+
+## Política de senha
+
+Toda senha que entra no sistema passa por `apps/usuarios/passwords.py`. Isso é
+uma decisão de projeto, não uma conveniência: com a validação espalhada pelos
+chamadores, basta um caminho novo esquecer de chamá-la para abrir um buraco
+silencioso na política.
+
+- `build_password()` é usado na criação, quando o usuário ainda não existe no
+  banco e não pode ser salvo campo a campo.
+- `set_validated_password()` é usado em quem já existe, e persiste **apenas** a
+  coluna `password`.
+
+`create_superuser()` é a única exceção deliberada: pula os validadores para que
+o bootstrap de um ambiente não dependa de uma API externa estar no ar. O
+`manage.py createsuperuser` já valida a senha no próprio fluxo interativo.
+
+### Senha vazada (HaveIBeenPwned)
+
+`PwnedPasswordValidator` entra em `AUTH_PASSWORD_VALIDATORS` e recusa qualquer
+senha com contagem maior que zero — uma senha vazada uma única vez já está em
+listas de ataque por dicionário.
+
+A consulta usa **k-anonymity**: o SHA-1 é calculado localmente e só os cinco
+primeiros caracteres do digest saem da aplicação. A API devolve todos os sufixos
+daquele prefixo e a comparação acontece aqui, então a senha, o digest completo e
+o sufixo nunca trafegam. O header `Add-Padding: true` faz a resposta vir com
+sufixos falsos de contagem zero, para que o tamanho dela não denuncie o prefixo
+consultado.
+
+O cliente é **fail-open**: timeout, erro HTTP ou payload inesperado resultam em
+senha aceita, com log de classe do erro e latência (nunca do prefixo — junto com
+a latência ele estreitaria o espaço de busca para quem tiver acesso aos logs).
+Indisponibilidade de um serviço externo não pode impedir alguém de trocar a
+própria senha; o risco de aceitar uma senha vazada nessa janela é menor que o de
+travar a recuperação de conta.
+
+Controle por `HIBP_PASSWORD_CHECK_ENABLED`, `HIBP_PASSWORDS_URL` e
+`HIBP_TIMEOUT_SECONDS`. Em teste a checagem vem desligada, para que a suíte
+nunca dependa de rede.
+
+## Ciclo de senha
+
+### Redefinição para usuário deslogado
+
+`POST /auth/password/reset/request/` responde sempre `202` com o mesmo corpo,
+exista ou não a conta, e o mesmo vale para conta inativa. Qualquer diferença —
+status, corpo ou presença de e-mail — transformaria o endpoint num verificador
+de quem tem cadastro.
+
+A emissão do token acontece **dentro da task Celery**, não na view: assim o
+payload que trafega pelo broker é só o `user_id`, e o token puro existe apenas
+na memória de quem monta o e-mail. Se o envio falhar, o token nasce já revogado
+— um link que não chegou ao dono não pode continuar valendo à espera de quem
+intercepte o e-mail depois.
+
+Só um reset fica válido por vez: emitir um novo revoga os anteriores, porque
+dois links ativos dobram a janela de exposição. O TTL padrão é de 30 minutos
+(`PASSWORD_RESET_TIMEOUT_MINUTES`) e o link aponta para
+`PASSWORD_RESET_FRONTEND_URL?token=<plain>`.
+
+O `confirm` **não exige MFA**. Quem perdeu a senha frequentemente perdeu o
+segundo fator junto, e exigir os dois transformaria o reset num beco sem saída
+que só o suporte resolve. A recuperação de fatores tem caminho próprio
+(`/auth/mfa/admin-reset/`).
+
+### Alteração autenticada
+
+`POST /auth/password/change/` exige reautenticação recente e não pede a senha
+atual: o step-up já confirmou a identidade há pouco, e pedir de novo só treinaria
+o usuário a digitar a senha em mais um formulário.
+
+Não preserva a sessão atual. Se a troca aconteceu porque a conta pode estar
+comprometida, manter viva justamente a credencial que fez a troca anularia o
+motivo dela.
+
+### O que a troca de senha derruba
+
+`revoke_credentials_after_password_change()` roda na mesma transação da
+gravação, nos dois fluxos — uma senha nova convivendo com sessões antigas, ainda
+que por um instante, é exatamente o que o reset existe para evitar.
+
+| Credencial | Depois da troca |
+| --- | --- |
+| Sessões (`TOKEN`) | Revogadas, inclusive a atual |
+| Pré-autenticação (`PRE_AUTH`) | Revogados |
+| Resets pendentes (`RESET_PASSWORD`) | Revogados |
+| Dispositivos confiáveis | Revogados |
+| Desafios MFA em aberto | Marcados como consumidos |
+| Fatores MFA e recovery codes | **Preservados** |
+| API keys | **Preservadas** |
+
+API keys ficam de fora porque pertencem à integração, não à sessão humana:
+derrubá-las numa troca de senha de rotina quebraria produção sem ganho de
+segurança. Se a suspeita for de comprometimento da própria key, o caminho é
+`/auth/api_keys/` (`suspend`/`rotate`).
+
+Os dois fluxos avisam o dono da conta por e-mail depois do commit. É o único
+sinal que chega a quem teve a conta invadida e não fez a troca.

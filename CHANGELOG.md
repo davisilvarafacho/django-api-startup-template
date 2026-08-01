@@ -30,6 +30,14 @@ projeto adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 - Portal de documentação MkDocs estruturado por Diátaxis.
 - Validação de Conventional Commits em hooks e CI.
+- Checagem de senha vazada contra o HaveIBeenPwned, com consulta k-anonymous e comportamento fail-open (`HIBP_PASSWORD_CHECK_ENABLED`).
+- Redefinição de senha para usuário deslogado em `POST /auth/password/reset/{request,confirm}/`, sem enumeração de contas e com token de uso único válido por 30 minutos.
+- Alteração de senha autenticada em `POST /auth/password/change/`, exigindo reautenticação recente.
+
+### Changed
+
+- Toda definição de senha passa a convergir para `apps/usuarios/passwords.py`; `create_superuser()` segue como a única exceção que não executa os validadores.
+- Trocar a senha (por reset ou alteração) revoga sessões, tokens efêmeros, resets pendentes e dispositivos confiáveis, preservando fatores MFA, recovery codes e API keys.
 
 ### Changed
 

@@ -55,6 +55,28 @@ mecanismo estão em `docs/explanation/autenticacao.md`.
 | `/auth/sessions/` | CRUD read-mostly das sessões do usuário autenticado |
 | `/auth/api_keys/` | CRUD e ciclo de vida (`rotate`/`suspend`/`resume`) de API keys da organização do header `X-Organization` |
 
+## Senha
+
+| Rota | Contrato |
+| --- | --- |
+| `POST /auth/password/reset/request/` | Anônima. Recebe `email` e responde sempre `202` com o mesmo corpo, exista ou não a conta. |
+| `POST /auth/password/reset/confirm/` | Anônima. Recebe `token`, `new_password` e `new_password_confirmation`; responde `204`. |
+| `POST /auth/password/change/` | `Bearer` reautenticado nos últimos cinco minutos. Recebe `new_password` e `new_password_confirmation`; responde `204`. |
+
+As duas rotas de reset compartilham o throttle `auth_password_reset`
+(5/min por padrão): cada tentativa de `request` dispara um e-mail, e o token de
+`confirm` vale 30 minutos, então ambas seriam alvo fácil sem limite próprio.
+
+O `confirm` devolve o mesmo `422` para token inexistente, expirado, revogado ou
+já usado — distinguir os casos entregaria informação a quem testa tokens.
+Violação da política de senha também é `422`, com o erro no campo
+`new_password` (inclusive `auth.pwned_password`).
+
+Tanto `confirm` quanto `change` revogam sessões, tokens efêmeros, resets
+pendentes e dispositivos confiáveis do usuário. **API keys são preservadas** —
+pertencem à integração, não à sessão humana. `change` derruba também a sessão
+que fez a chamada, então o cliente precisa refazer o login.
+
 Erros comuns desses endpoints: `auth.invalid_credentials`,
 `auth.reauthentication_required`, `auth.expired_token`, `auth.revoked_token`,
 `auth.api_key_suspended`, `auth.responsible_inactive`,

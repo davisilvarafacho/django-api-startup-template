@@ -6,7 +6,7 @@ com o que **já foi implementado** e o que está **planejado**, em ondas (batche
 **Legenda:** ✅ feito · 🚧 em andamento · ⏳ planejado · 🧠 brainstorm próprio antes de
 codar · 🔎 estudar antes · ⏸️ adiado
 
-_Atualizado em 2026-07-31._
+_Atualizado em 2026-08-01._
 
 ---
 
@@ -110,12 +110,16 @@ _Atualizado em 2026-07-31._
 - ✅ **Envelope de erros unificado** (`{"errors": [...], "request_id": ...}`) para DRF, middlewares e handlers de status HTTP do Django.
 - ✅ **Gestão de sessões** (`/auth/sessions/`, `/auth/logout*`) e **autenticação recente/step-up** (`@require_recent_auth`, `/auth/reauthenticate/`).
 - ✅ **API keys por organização** (`/auth/api_keys/`): CRUD, rotação atômica, suspensão manual/automática (fail-closed quando o responsável perde o vínculo) e retomada; UUID como identificador público; plain token exibido só na criação/rotação.
-- 🚧 **MFA/2FA** entregue (TOTP, e-mail, SMS, recovery codes, token `PRE_AUTH` e
-  trusted devices); a checagem de senha vazada (HaveIBeenPwned) segue pendente.
+- ✅ **MFA/2FA** (TOTP, e-mail, SMS, recovery codes, token `PRE_AUTH` e trusted
+  devices).
+- ✅ **Política de senha centralizada** (`apps/usuarios/passwords.py`) com
+  checagem de **senha vazada** (HaveIBeenPwned, k-anonymous e fail-open),
+  redefinição deslogada sem enumeração de contas e alteração autenticada com
+  step-up. Ambos revogam sessões, tokens efêmeros e dispositivos confiáveis,
+  preservando API keys.
 - ✅ **Cache de permissions** com invalidação ao alterar papéis, vínculos, grupos
   ou permissões (ver `docs/adr/0005-cache-semantico-de-autorizacao.md`).
 - ⏳ Para fechar o batch:
-  - Checagem de **senha vazada** (HaveIBeenPwned).
   - **Field-level permissions** com serializers dinâmicos por papel.
   - **Ciclo de vida de conta**: verificação de e-mail, social auth,
     desativação e exclusão.
