@@ -1,9 +1,9 @@
-from django.contrib.auth.hashers import make_password
 from django.contrib.auth.models import AbstractUser, UserManager
 from django.db import models, transaction
 from django.utils.translation import gettext_lazy as _
 
 from apps.api.base.models import BaseGlobal, BaseQuerySet
+from apps.usuarios import passwords
 from utils.logs import register
 from utils.sensitive_fields import encrypt
 
@@ -12,10 +12,10 @@ class UsuarioManager(UserManager.from_queryset(BaseQuerySet)):
     def get_queryset(self):
         return super().get_queryset().filter(is_deleted=False)
 
-    def _create_user(self, email, password, **extra_fields):
+    def _create_user(self, email, password, *, validate=True, **extra_fields):
         email = self.normalize_email(email)
         user = self.model(email=email, **extra_fields)
-        user.password = make_password(password)
+        user.password = passwords.build_password(user, password, validate=validate)
         user.save(using=self._db)
         return user
 
@@ -33,7 +33,9 @@ class UsuarioManager(UserManager.from_queryset(BaseQuerySet)):
         if extra_fields.get("is_superuser") is not True:
             raise ValueError("Superuser must have is_superuser=True.")
 
-        return self._create_user(email, password, **extra_fields)
+        # O superusuário é o único caminho que pula a política de senha: o
+        # bootstrap de um ambiente não pode depender do HaveIBeenPwned estar no ar.
+        return self._create_user(email, password, validate=False, **extra_fields)
 
 
 class Usuario(BaseGlobal, AbstractUser):

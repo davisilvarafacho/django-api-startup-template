@@ -16,6 +16,9 @@ class UsuarioFactory(DjangoModelFactory):
 
     @classmethod
     def _create(cls, model_class, *args, **kwargs):
-        # Usa o manager para garantir o hash da senha.
+        # Usa o caminho privado do manager para gerar o hash sem submeter a senha
+        # à política de produção. Um teste de outro assunto não deve quebrar
+        # porque a política mudou; a política em si é coberta por
+        # `apps/usuarios/tests/test_password_service.py`.
         password = kwargs.pop("password", "senha-de-teste")
-        return model_class.objects.create_user(*args, password=password, **kwargs)
+        return model_class.objects._create_user(*args, password=password, validate=False, **kwargs)
