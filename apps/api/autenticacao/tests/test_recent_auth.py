@@ -9,6 +9,7 @@ from rest_framework.throttling import ScopedRateThrottle, UserRateThrottle
 
 import pytest
 from knox.models import get_token_model
+from threadlocals.threadlocals import set_current_user, set_thread_variable
 
 from apps.api.autenticacao.errors import AuthErrorCode
 from apps.api.autenticacao.models import TokenMetaData, TokenType
@@ -16,7 +17,6 @@ from apps.api.autenticacao.recent_auth import RecentAuthenticationPermission, re
 from apps.api.autenticacao.views import ReauthenticateView
 from apps.api.core.errors import APIError
 from apps.usuarios.factories import UsuarioFactory
-from threadlocals.threadlocals import set_current_user, set_thread_variable
 
 AuthToken = get_token_model()
 

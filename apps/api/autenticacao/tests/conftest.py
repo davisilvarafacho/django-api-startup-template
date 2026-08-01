@@ -5,9 +5,9 @@ from django.core.cache import cache
 from rest_framework.test import APIClient
 
 import pytest
+from threadlocals.threadlocals import set_current_user, set_thread_variable
 
 from apps.api.autenticacao.views import LoginView
-from threadlocals.threadlocals import set_current_user, set_thread_variable
 
 
 @pytest.fixture(autouse=True)

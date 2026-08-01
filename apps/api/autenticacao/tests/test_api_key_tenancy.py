@@ -8,12 +8,12 @@ from rest_framework.test import APIClient
 
 import pytest
 from knox.models import get_token_model
+from threadlocals.threadlocals import set_current_user, set_thread_variable
 
 from apps.api.autenticacao.models import TokenMetaData, TokenType
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
 from apps.organizacoes.models import Convite, Organizacao, Papel, Vinculo
 from apps.usuarios.factories import UsuarioFactory
-from threadlocals.threadlocals import set_current_user, set_thread_variable
 
 pytestmark = pytest.mark.django_db
 
