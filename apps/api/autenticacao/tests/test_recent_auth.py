@@ -1,4 +1,5 @@
 """Decorator + permission de step-up authentication."""
+
 from datetime import timedelta
 
 from django.utils import timezone
@@ -212,10 +213,7 @@ def test_reauthenticate_tem_throttle_especifico(settings):
         UserRateThrottle,
         ScopedRateThrottle,
     ]
-    assert (
-        settings.REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]["auth_reauthenticate"]
-        == "5/min"
-    )
+    assert settings.REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]["auth_reauthenticate"] == "5/min"
 
 
 @pytest.mark.django_db

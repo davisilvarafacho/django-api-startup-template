@@ -9,6 +9,7 @@ token, `request.user` só é resolvido no dispatch da view, então validar o
 vínculo neste ponto encontraria sempre um usuário anônimo. A transação aberta
 aqui é o que permite usar `SET LOCAL` mais adiante.
 """
+
 from django.db import transaction
 
 from django_rls.context import clear_rls_context
@@ -57,8 +58,7 @@ class OrganizacaoMiddleware:
         except APIError as exc:
             return error_response_for_api_error(exc)
 
-        request.organizacao = None
-        request.vinculo = None
+        request.tenant = None
 
         with transaction.atomic():
             try:

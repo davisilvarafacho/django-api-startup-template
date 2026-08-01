@@ -1,4 +1,5 @@
 """Testes do registry de lookup (não tocam o banco)."""
+
 from django.core.exceptions import ImproperlyConfigured
 
 import pytest

@@ -1,4 +1,5 @@
 """Contrato do modelo de token próprio, compatível com o Knox."""
+
 from datetime import timedelta
 
 from django.core.exceptions import ValidationError

@@ -1,4 +1,5 @@
 """Tasks assíncronas de uso geral."""
+
 from axes.handlers.proxy import AxesProxyHandler
 from celery import shared_task
 

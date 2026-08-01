@@ -3,6 +3,7 @@
 Não duplica o registry: os códigos documentados por operação são validados
 contra `error_codes`, a mesma fonte usada em runtime pelo exception handler.
 """
+
 from django.core.exceptions import ImproperlyConfigured
 
 from rest_framework import serializers
@@ -30,9 +31,7 @@ def document_error_codes(*codes):
     descriptions = []
     for code in codes:
         if error_codes.lookup(code.value) is not code:
-            raise ImproperlyConfigured(
-                f"{code!r} precisa estar registrado em apps.api.core.errors.error_codes."
-            )
+            raise ImproperlyConfigured(f"{code!r} precisa estar registrado em apps.api.core.errors.error_codes.")
         descriptions.append(f"`{code.value}`: {code.label}")
 
     return OpenApiResponse(response=APIErrorResponseSchema, description="\n".join(descriptions))
@@ -47,7 +46,5 @@ def document_error_responses(mapping, **extend_schema_kwargs):
         def get(self, request):
             ...
     """
-    responses = {
-        status_code: document_error_codes(*codes) for status_code, codes in mapping.items()
-    }
+    responses = {status_code: document_error_codes(*codes) for status_code, codes in mapping.items()}
     return extend_schema(responses=responses, **extend_schema_kwargs)

@@ -1,4 +1,5 @@
 """Atomicidade da emissão de token + metadata."""
+
 from unittest.mock import patch
 
 from django.db import IntegrityError

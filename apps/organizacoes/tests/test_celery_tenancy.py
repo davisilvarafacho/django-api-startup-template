@@ -3,6 +3,7 @@
 Exercitam os handlers diretamente, sem broker: o que importa é o contrato entre
 quem enfileira (carimba o header) e quem executa (aplica e depois limpa).
 """
+
 from types import SimpleNamespace
 
 import pytest

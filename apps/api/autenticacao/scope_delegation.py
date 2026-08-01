@@ -4,6 +4,7 @@ Cada scope delegado precisa corresponder a uma permission Django que o
 usuário responsável já possui; o wildcard global (`*`) exige superuser ou a
 permission especial `autenticacao.grant_unrestricted_apikey`.
 """
+
 from django.core.exceptions import ImproperlyConfigured
 
 from apps.api.core.errors import APIError

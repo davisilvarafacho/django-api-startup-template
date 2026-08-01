@@ -69,13 +69,13 @@ class VinculoSerializer(serializers.ModelSerializer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         request = self.context.get("request")
-        organizacao = getattr(request, "organizacao", None)
-        if organizacao is not None:
-            self.fields["times"].queryset = Time.objects.filter(organizacao=organizacao, is_active=True)
+        tenant = getattr(request, "tenant", None)
+        if tenant is not None:
+            self.fields["times"].queryset = Time.objects.filter(organizacao_id=tenant.organization_id, is_active=True)
 
     def validate_papel(self, papel):
         request = self.context["request"]
-        if papel > request.vinculo.papel:
+        if papel > request.tenant.role:
             raise APIError(
                 OrganizationErrorCode.ROLE_INSUFFICIENT,
                 status_code=422,
@@ -113,7 +113,7 @@ class ConviteCreateSerializer(ConviteSerializer):
 
     def validate_papel(self, papel):
         request = self.context["request"]
-        if papel > request.vinculo.papel:
+        if papel > request.tenant.role:
             raise APIError(
                 OrganizationErrorCode.ROLE_INSUFFICIENT,
                 status_code=422,
@@ -130,18 +130,14 @@ class AceitarConviteSerializer(serializers.Serializer):
         try:
             convite = Convite.objects.select_related("organizacao").get(token=token)
         except Convite.DoesNotExist as exc:
-            raise APIError(
-                OrganizationErrorCode.INVITATION_INVALID, status_code=422, field="token"
-            ) from exc
+            raise APIError(OrganizationErrorCode.INVITATION_INVALID, status_code=422, field="token") from exc
 
         if not convite.pendente:
             raise APIError(OrganizationErrorCode.INVITATION_EXPIRED, status_code=422, field="token")
 
         usuario = self.context["request"].user
         if convite.email.lower() != usuario.email.lower():
-            raise APIError(
-                OrganizationErrorCode.INVITATION_EMAIL_MISMATCH, status_code=422, field="token"
-            )
+            raise APIError(OrganizationErrorCode.INVITATION_EMAIL_MISMATCH, status_code=422, field="token")
 
         request_organization = getattr(self.context["request"], "organizacao", None)
         if request_organization is not None and convite.organizacao_id != request_organization.id:

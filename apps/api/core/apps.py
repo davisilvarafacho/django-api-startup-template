@@ -4,8 +4,8 @@ from django.apps import AppConfig
 
 
 class CoreConfig(AppConfig):
-    default_auto_field = 'django.db.models.BigAutoField'
-    name = 'apps.api.core'
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.api.core"
 
     def ready(self):
         from .errors import discover_error_codes
@@ -40,9 +40,7 @@ class CoreConfig(AppConfig):
 
         posthog.api_key = settings.POSTHOG_PROJECT_TOKEN
         posthog.host = settings.POSTHOG_HOST
-        posthog.disabled = (
-            settings.POSTHOG_DISABLED or settings.TESTING or not settings.POSTHOG_PROJECT_TOKEN
-        )
+        posthog.disabled = settings.POSTHOG_DISABLED or settings.TESTING or not settings.POSTHOG_PROJECT_TOKEN
 
         if posthog.disabled:
             return

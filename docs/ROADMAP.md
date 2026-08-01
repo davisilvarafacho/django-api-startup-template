@@ -6,7 +6,7 @@ com o que **já foi implementado** e o que está **planejado**, em ondas (batche
 **Legenda:** ✅ feito · 🚧 em andamento · ⏳ planejado · 🧠 brainstorm próprio antes de
 codar · 🔎 estudar antes · ⏸️ adiado
 
-_Atualizado em 2026-07-30._
+_Atualizado em 2026-07-31._
 
 ---
 
@@ -112,9 +112,9 @@ _Atualizado em 2026-07-30._
 - ✅ **API keys por organização** (`/auth/api_keys/`): CRUD, rotação atômica, suspensão manual/automática (fail-closed quando o responsável perde o vínculo) e retomada; UUID como identificador público; plain token exibido só na criação/rotação.
 - 🚧 **MFA/2FA** entregue (TOTP, e-mail, SMS, recovery codes, token `PRE_AUTH` e
   trusted devices); a checagem de senha vazada (HaveIBeenPwned) segue pendente.
+- ✅ **Cache de permissions** com invalidação ao alterar papéis, vínculos, grupos
+  ou permissões (ver `docs/adr/0005-cache-semantico-de-autorizacao.md`).
 - ⏳ Para fechar o batch:
-  - **Cache de permissions** com invalidação ao alterar papéis, vínculos, grupos
-    ou permissões.
   - Checagem de **senha vazada** (HaveIBeenPwned).
   - **Field-level permissions** com serializers dinâmicos por papel.
   - **Ciclo de vida de conta**: verificação de e-mail, social auth,
@@ -175,4 +175,5 @@ _Atualizado em 2026-07-30._
 
 - Permissões/rules via plano
 - Checkout por seat e plano, default stripe - classe de abstração backend plugavel na frente - lib para conectar 5 ou mais providers de cara - stripe, assas, etc
+- Após o modelo de checkout/planos estar pronto, cache de entitlements para decidir se o plano do usuário libera cada endpoint/feature.
 - .memory/

@@ -4,6 +4,7 @@ Fica fora de `apps.api.base` porque nem todo ViewSet do projeto herda de
 `BaseModelViewSet`/`UtilsViewSetMixin` (ex.: os de `apps.organizacoes`), mas
 todos precisam da mesma tradução `resource:action`.
 """
+
 from .scope_registry import ScopeAction
 
 # Mapeamento imutável: action padrão do ViewSet -> action CRUD do scope registry.

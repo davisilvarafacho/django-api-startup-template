@@ -1,4 +1,3 @@
-
 import uuid as uuid_lib
 
 from django.conf import settings
@@ -74,7 +73,7 @@ class AuthTokenManager(models.Manager):
 
         instance = super().create(
             digest=digest,
-            token_key=plain_token[:CONSTANTS.TOKEN_KEY_LENGTH],
+            token_key=plain_token[: CONSTANTS.TOKEN_KEY_LENGTH],
             responsavel=responsavel,
             expiry=expires_at,
             **kwargs,
@@ -94,9 +93,7 @@ def validate_token_configuration(
     """Valida os campos que diferenciam uma API key dos demais tokens."""
     if token_type != TokenType.API_KEY:
         if organization is not None or name or scopes:
-            raise ValidationError(
-                "Tokens de sessão/reset não aceitam organization, name ou scopes."
-            )
+            raise ValidationError("Tokens de sessão/reset não aceitam organization, name ou scopes.")
         return
 
     errors = {}
@@ -128,9 +125,7 @@ def validate_token_configuration(
             usuario=responsavel,
             is_active=True,
         ).exists():
-            errors["responsavel"] = (
-                "O responsável precisa ter vínculo ativo com a organização."
-            )
+            errors["responsavel"] = "O responsável precisa ter vínculo ativo com a organização."
 
     if errors:
         raise ValidationError(errors)
@@ -153,9 +148,7 @@ class AuthToken(CreationAuditMixin):
 
     objects = AuthTokenManager()
 
-    uuid = models.UUIDField(
-        verbose_name=_("UUID"), default=uuid_lib.uuid4, unique=True, editable=False, db_index=True
-    )
+    uuid = models.UUIDField(verbose_name=_("UUID"), default=uuid_lib.uuid4, unique=True, editable=False, db_index=True)
 
     digest = models.CharField(verbose_name=_("digest"), max_length=CONSTANTS.DIGEST_LENGTH, primary_key=True)
     token_key = models.CharField(
@@ -240,20 +233,11 @@ class AuthToken(CreationAuditMixin):
                 name="auth_token_api_key_exige_organizacao",
             ),
             models.CheckConstraint(
-                condition=(
-                    ~models.Q(type=TokenType.API_KEY)
-                    | (
-                        models.Q(created_by__isnull=False)
-                        & ~models.Q(name="")
-                    )
-                ),
+                condition=(~models.Q(type=TokenType.API_KEY) | (models.Q(created_by__isnull=False) & ~models.Q(name=""))),
                 name="auth_token_api_key_exige_nome_e_criador",
             ),
             models.CheckConstraint(
-                condition=(
-                    models.Q(type=TokenType.API_KEY)
-                    | (models.Q(name="") & models.Q(scopes=[]))
-                ),
+                condition=(models.Q(type=TokenType.API_KEY) | (models.Q(name="") & models.Q(scopes=[]))),
                 name="auth_token_sessao_sem_campos_de_api_key",
             ),
         ]
@@ -295,11 +279,7 @@ class TokenMetaData(models.Model):
 
     # token relacionado
     token = models.OneToOneField(
-        verbose_name=_('Token'),
-        to=settings.KNOX_TOKEN_MODEL,
-        on_delete=models.CASCADE,
-        related_name='metadata',
-        primary_key=True
+        verbose_name=_("Token"), to=settings.KNOX_TOKEN_MODEL, on_delete=models.CASCADE, related_name="metadata", primary_key=True
     )
 
     # informações do dispositivo
@@ -376,12 +356,7 @@ class TokenMetaData(models.Model):
     fcm_token = models.TextField(verbose_name=_("Token FCM"), blank=True, help_text=_("Token para push notifications (Firebase Cloud Messaging)"))
 
     # metadados customizados
-    extra_data = models.JSONField(
-        verbose_name=_('Dados extras'),
-        default=dict,
-        blank=True,
-        help_text=_("Dados adicionais em formato JSON")
-    )
+    extra_data = models.JSONField(verbose_name=_("Dados extras"), default=dict, blank=True, help_text=_("Dados adicionais em formato JSON"))
 
     def mark_as_suspicious(self, reason):
         """Marca o token como suspeito"""
@@ -403,10 +378,10 @@ class TokenMetaData(models.Model):
         return ", ".join(parts) if parts else _("Localização desconhecida")
 
     class Meta:
-        db_table = 'token_metadata'
-        ordering = ['-last_used']
-        verbose_name = _('Metadado de token')
-        verbose_name_plural = _('Metadados de tokens')
+        db_table = "token_metadata"
+        ordering = ["-last_used"]
+        verbose_name = _("Metadado de token")
+        verbose_name_plural = _("Metadados de tokens")
         permissions = [
             ("grant_unrestricted_apikey", _("Pode conceder API keys com scope irrestrito (*)")),
         ]

@@ -135,11 +135,7 @@ class LoginView(APIView):
                 "uuid": issued.instance.uuid,
                 "device": {
                     "type": metadata.device_type,
-                    "name": (
-                        metadata.device_name
-                        or f"{metadata.device_brand} {metadata.device_model}".strip()
-                        or "Dispositivo desconhecido"
-                    ),
+                    "name": (metadata.device_name or f"{metadata.device_brand} {metadata.device_model}".strip() or "Dispositivo desconhecido"),
                     "location": metadata.get_location_string(),
                 },
             },
@@ -156,9 +152,7 @@ class LoginView(APIView):
         if limite is None:
             return
 
-        sessoes_ativas = AuthToken.objects.filter(
-            responsavel=user, type=TokenType.TOKEN, expiry__gt=timezone.now()
-        ).count()
+        sessoes_ativas = AuthToken.objects.filter(responsavel=user, type=TokenType.TOKEN, expiry__gt=timezone.now()).count()
 
         if sessoes_ativas >= limite:
             raise APIError(AuthErrorCode.TOKEN_LIMIT_EXCEEDED, status_code=403)
@@ -182,11 +176,14 @@ class LoginView(APIView):
             )
 
             if risco.is_suspicious:
-                capture('suspicious_login_detected', properties={
-                    'risk_score': risco.risk_score,
-                    'device_type': metadata.device_type,
-                    'country_code': metadata.country_code,
-                })
+                capture(
+                    "suspicious_login_detected",
+                    properties={
+                        "risk_score": risco.risk_score,
+                        "device_type": metadata.device_type,
+                        "country_code": metadata.country_code,
+                    },
+                )
 
 
 class ReauthenticateView(APIView):
@@ -261,7 +258,7 @@ class SessionViewSet(
 
         with new_context():
             identify_context(str(request.user.pk))
-            capture('session_revoked')
+            capture("session_revoked")
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -271,7 +268,7 @@ class SessionViewSet(
 
         with new_context():
             identify_context(str(request.user.pk))
-            capture('all_sessions_revoked_except_current', properties={'revoked_count': revoked_count})
+            capture("all_sessions_revoked_except_current", properties={"revoked_count": revoked_count})
 
         return Response({"revoked_count": revoked_count})
 
@@ -291,7 +288,7 @@ class LogoutView(APIView):
 
         with new_context():
             identify_context(str(request.user.pk))
-            capture('user_logged_out')
+            capture("user_logged_out")
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -309,7 +306,7 @@ class LogoutAllView(APIView):
 
         with new_context():
             identify_context(str(request.user.pk))
-            capture('all_sessions_revoked', properties={'revoked_count': revoked_count})
+            capture("all_sessions_revoked", properties={"revoked_count": revoked_count})
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -335,7 +332,7 @@ class APIKeyViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return (
-            AuthToken.objects.filter(type=TokenType.API_KEY, organization=self.request.organizacao)
+            AuthToken.objects.filter(type=TokenType.API_KEY, organization_id=self.request.organizacao_id)
             .select_related("metadata", "responsavel")
             .order_by("-created_at")
         )
@@ -382,7 +379,6 @@ class APIKeyViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         resume_api_key(instance, actor=request.user)
         return Response(self.get_serializer(instance).data)
-
 
 
 @no_tenancy
@@ -548,6 +544,3 @@ class MFAAdminResetView(APIView):
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(status=status.HTTP_204_NO_CONTENT)
-
-
-

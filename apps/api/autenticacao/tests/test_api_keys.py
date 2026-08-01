@@ -1,4 +1,5 @@
 """Contrato HTTP e de serviço do CRUD/ciclo de vida de API keys."""
+
 from datetime import timedelta
 
 from django.contrib.auth.models import Permission
@@ -115,9 +116,7 @@ def test_cria_api_key_e_devolve_o_plain_token_uma_vez(ator, organizacao, respons
 def test_criacao_exige_autenticacao_recente(ator, organizacao, responsavel):
     client = _com_header(_client_com_sessao(ator, reauthenticated=False), organizacao)
 
-    response = client.post(
-        "/auth/api_keys/", {"name": "Integração", "responsavel": responsavel.pk}, format="json"
-    )
+    response = client.post("/auth/api_keys/", {"name": "Integração", "responsavel": responsavel.pk}, format="json")
 
     assert response.status_code == 401
     assert response.data["errors"][0]["code"] == "auth.reauthentication_required"
@@ -127,9 +126,7 @@ def test_criacao_exige_responsavel_vinculado_a_organizacao(ator, organizacao):
     usuario_sem_vinculo = UsuarioFactory()
     client = _com_header(_client_com_sessao(ator), organizacao)
 
-    response = client.post(
-        "/auth/api_keys/", {"name": "Integração", "responsavel": usuario_sem_vinculo.pk}, format="json"
-    )
+    response = client.post("/auth/api_keys/", {"name": "Integração", "responsavel": usuario_sem_vinculo.pk}, format="json")
 
     assert response.status_code == 422
     assert response.data["errors"][0]["code"] == "organizations.membership_required"
@@ -167,9 +164,7 @@ def test_usuario_sem_permission_nao_cria_api_key(organizacao, responsavel):
     Vinculo.objects.create(usuario=usuario_sem_permissao, organizacao=organizacao, papel=Papel.ADMINISTRADOR)
     client = _com_header(_client_com_sessao(usuario_sem_permissao), organizacao)
 
-    response = client.post(
-        "/auth/api_keys/", {"name": "Integração", "responsavel": responsavel.pk}, format="json"
-    )
+    response = client.post("/auth/api_keys/", {"name": "Integração", "responsavel": responsavel.pk}, format="json")
 
     assert response.status_code == 403
 
@@ -179,9 +174,7 @@ def test_lista_e_detalhe_sao_fixos_na_organizacao_do_header(ator, organizacao, r
     Vinculo.objects.create(usuario=ator, organizacao=outra_organizacao, papel=Papel.ADMINISTRADOR)
     client = _com_header(_client_com_sessao(ator), organizacao)
 
-    criada = client.post(
-        "/auth/api_keys/", {"name": "Integração", "responsavel": responsavel.pk}, format="json"
-    ).data
+    criada = client.post("/auth/api_keys/", {"name": "Integração", "responsavel": responsavel.pk}, format="json").data
 
     resposta_org_certa = client.get(f"/auth/api_keys/{criada['uuid']}/")
     assert resposta_org_certa.status_code == 200
@@ -193,9 +186,7 @@ def test_lista_e_detalhe_sao_fixos_na_organizacao_do_header(ator, organizacao, r
 
 def test_patch_altera_nome_sem_expor_segredo(ator, organizacao, responsavel):
     client = _com_header(_client_com_sessao(ator), organizacao)
-    criada = client.post(
-        "/auth/api_keys/", {"name": "Nome antigo", "responsavel": responsavel.pk}, format="json"
-    ).data
+    criada = client.post("/auth/api_keys/", {"name": "Nome antigo", "responsavel": responsavel.pk}, format="json").data
 
     response = client.patch(f"/auth/api_keys/{criada['uuid']}/", {"name": "Nome novo"}, format="json")
 
@@ -206,9 +197,7 @@ def test_patch_altera_nome_sem_expor_segredo(ator, organizacao, responsavel):
 
 def test_delete_revoga_sem_apagar(ator, organizacao, responsavel):
     client = _com_header(_client_com_sessao(ator), organizacao)
-    criada = client.post(
-        "/auth/api_keys/", {"name": "Integração", "responsavel": responsavel.pk}, format="json"
-    ).data
+    criada = client.post("/auth/api_keys/", {"name": "Integração", "responsavel": responsavel.pk}, format="json").data
 
     response = client.delete(f"/auth/api_keys/{criada['uuid']}/")
 
@@ -219,9 +208,7 @@ def test_delete_revoga_sem_apagar(ator, organizacao, responsavel):
 
 def test_rotate_invalida_o_segredo_anterior_e_devolve_um_novo(ator, organizacao, responsavel):
     client = _com_header(_client_com_sessao(ator), organizacao)
-    criada = client.post(
-        "/auth/api_keys/", {"name": "Integração", "responsavel": responsavel.pk}, format="json"
-    ).data
+    criada = client.post("/auth/api_keys/", {"name": "Integração", "responsavel": responsavel.pk}, format="json").data
 
     response = client.post(f"/auth/api_keys/{criada['uuid']}/rotate/")
 
@@ -242,9 +229,7 @@ def test_rotate_invalida_o_segredo_anterior_e_devolve_um_novo(ator, organizacao,
 
 def test_suspend_e_resume(ator, organizacao, responsavel):
     client = _com_header(_client_com_sessao(ator), organizacao)
-    criada = client.post(
-        "/auth/api_keys/", {"name": "Integração", "responsavel": responsavel.pk, "scopes": ["teams:read"]}, format="json"
-    ).data
+    criada = client.post("/auth/api_keys/", {"name": "Integração", "responsavel": responsavel.pk, "scopes": ["teams:read"]}, format="json").data
     api_key_client = _client_api_key_do_token(criada["token"])
 
     suspensa = client.post(f"/auth/api_keys/{criada['uuid']}/suspend/", {"reason": "Investigação"}, format="json")

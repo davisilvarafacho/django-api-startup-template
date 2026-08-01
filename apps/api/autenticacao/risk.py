@@ -1,4 +1,5 @@
 """Avaliação de risco de login: compara com sessões recentes do mesmo responsável."""
+
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -30,11 +31,7 @@ def evaluate_login_risk(token_metadata):
     )
 
     for anterior in recentes:
-        if (
-            anterior.country_code
-            and token_metadata.country_code
-            and anterior.country_code != token_metadata.country_code
-        ):
+        if anterior.country_code and token_metadata.country_code and anterior.country_code != token_metadata.country_code:
             return RiskAssessment(
                 is_suspicious=True,
                 risk_score=50,

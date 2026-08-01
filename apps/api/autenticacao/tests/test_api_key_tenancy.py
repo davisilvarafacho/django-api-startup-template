@@ -1,4 +1,5 @@
 """Matriz de autenticação/tenancy de API keys: estado, tipo e organização."""
+
 from datetime import timedelta
 
 from django.utils import timezone
@@ -68,9 +69,7 @@ def test_api_key_com_header_coincidente_autentica():
     organizacao = _organizacao("org-tenancy-coincidente")
     _vincular(usuario, organizacao)
 
-    response = _client_com_api_key(responsavel=usuario, organizacao=organizacao).get(
-        "/times/", **{META_HEADER_ORGANIZACAO: organizacao.slug}
-    )
+    response = _client_com_api_key(responsavel=usuario, organizacao=organizacao).get("/times/", **{META_HEADER_ORGANIZACAO: organizacao.slug})
 
     assert response.status_code == 200
 
@@ -81,9 +80,7 @@ def test_api_key_com_header_conflitante_e_recusada():
     outra_organizacao = _organizacao("org-tenancy-b")
     _vincular(usuario, organizacao)
 
-    response = _client_com_api_key(responsavel=usuario, organizacao=organizacao).get(
-        "/times/", **{META_HEADER_ORGANIZACAO: outra_organizacao.slug}
-    )
+    response = _client_com_api_key(responsavel=usuario, organizacao=organizacao).get("/times/", **{META_HEADER_ORGANIZACAO: outra_organizacao.slug})
 
     assert response.status_code == 409
     assert response.json()["errors"][0]["code"] == "organizations.tenant_mismatch"
@@ -94,9 +91,7 @@ def test_api_key_expirada_e_recusada():
     organizacao = _organizacao("org-tenancy-expirada")
     _vincular(usuario, organizacao)
 
-    client = _client_com_api_key(
-        responsavel=usuario, organizacao=organizacao, expiry=timedelta(days=-1)
-    )
+    client = _client_com_api_key(responsavel=usuario, organizacao=organizacao, expiry=timedelta(days=-1))
 
     response = client.get("/times/")
 
@@ -109,9 +104,7 @@ def test_api_key_revogada_e_recusada_mas_permanece_no_banco():
     organizacao = _organizacao("org-tenancy-revogada")
     _vincular(usuario, organizacao)
 
-    client = _client_com_api_key(
-        responsavel=usuario, organizacao=organizacao, revoked_at=timezone.now()
-    )
+    client = _client_com_api_key(responsavel=usuario, organizacao=organizacao, revoked_at=timezone.now())
     digest_antes = AuthToken.objects.filter(responsavel=usuario, organization=organizacao).count()
 
     response = client.get("/times/")
@@ -126,9 +119,7 @@ def test_api_key_suspensa_e_recusada():
     organizacao = _organizacao("org-tenancy-suspensa")
     _vincular(usuario, organizacao)
 
-    client = _client_com_api_key(
-        responsavel=usuario, organizacao=organizacao, suspended_at=timezone.now()
-    )
+    client = _client_com_api_key(responsavel=usuario, organizacao=organizacao, suspended_at=timezone.now())
 
     response = client.get("/times/")
 

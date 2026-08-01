@@ -5,6 +5,7 @@ serializer da view; só os endpoints com efeito colateral ou plain token na
 resposta (login, criação/rotação de API key) precisam do detalhe manual
 abaixo.
 """
+
 from drf_spectacular.utils import extend_schema
 
 from apps.api.core.schema import document_error_codes

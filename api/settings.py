@@ -138,40 +138,44 @@ BUSINESS_APPS = [
 INSTALLED_APPS = LIBS_APPS + DJANGO_APPS + BUSINESS_APPS + ENV_APPS
 
 
-MIDDLEWARE = [
-    # Primeiro de todos: mede a request inteira, inclusive o tempo gasto pelos
-    # demais middlewares.
-    "django_prometheus.middleware.PrometheusBeforeMiddleware",
-    "django.middleware.security.SecurityMiddleware",
-    # Logo após o SecurityMiddleware para que todo log emitido daqui em diante
-    # já carregue o correlation id.
-    "apps.api.core.request_id.RequestIDMiddleware",
-    "django.middleware.gzip.GZipMiddleware",
-    "django.contrib.sessions.middleware.SessionMiddleware",
-    "django.middleware.common.CommonMiddleware",
-    "django.middleware.csrf.CsrfViewMiddleware",
-    "django.contrib.auth.middleware.AuthenticationMiddleware",
-    "django.contrib.messages.middleware.MessageMiddleware",
-    "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "django.middleware.locale.LocaleMiddleware",
-    "threadlocals.middleware.ThreadLocalMiddleware",
-    "corsheaders.middleware.CorsMiddleware",
-    # Resolve o token antes dos middlewares que dependem de `request.user`
-    # (auditlog, PostHog, tenancy). Precisa vir depois do ThreadLocalMiddleware.
-    "apps.api.autenticacao.middleware.AuthenticationMiddleware",
-    "auditlog.middleware.AuditlogMiddleware",
-    "posthog.integrations.django.PosthogContextMiddleware",
-    # Deve ser o mais interno possível: abre a transação que envolve a request
-    # (necessária para o `SET LOCAL` do RLS).
-    "apps.organizacoes.middleware.OrganizacaoMiddleware",
-    "waffle.middleware.WaffleMiddleware",
-    # Par do PrometheusBeforeMiddleware; fecha a medição da request.
-    "django_prometheus.middleware.PrometheusAfterMiddleware",
-] + ENV_MIDDLEWARES + [
-    # Troca a resposta por 429 na volta da request quando o bloqueio dispara.
-    # Fica por último para que todos os demais middlewares vejam a resposta final.
-    "axes.middleware.AxesMiddleware",
-]
+MIDDLEWARE = (
+    [
+        # Primeiro de todos: mede a request inteira, inclusive o tempo gasto pelos
+        # demais middlewares.
+        "django_prometheus.middleware.PrometheusBeforeMiddleware",
+        "django.middleware.security.SecurityMiddleware",
+        # Logo após o SecurityMiddleware para que todo log emitido daqui em diante
+        # já carregue o correlation id.
+        "apps.api.core.request_id.RequestIDMiddleware",
+        "django.middleware.gzip.GZipMiddleware",
+        "django.contrib.sessions.middleware.SessionMiddleware",
+        "django.middleware.common.CommonMiddleware",
+        "django.middleware.csrf.CsrfViewMiddleware",
+        "django.contrib.auth.middleware.AuthenticationMiddleware",
+        "django.contrib.messages.middleware.MessageMiddleware",
+        "django.middleware.clickjacking.XFrameOptionsMiddleware",
+        "django.middleware.locale.LocaleMiddleware",
+        "threadlocals.middleware.ThreadLocalMiddleware",
+        "corsheaders.middleware.CorsMiddleware",
+        # Resolve o token antes dos middlewares que dependem de `request.user`
+        # (auditlog, PostHog, tenancy). Precisa vir depois do ThreadLocalMiddleware.
+        "apps.api.autenticacao.middleware.AuthenticationMiddleware",
+        "auditlog.middleware.AuditlogMiddleware",
+        "posthog.integrations.django.PosthogContextMiddleware",
+        # Deve ser o mais interno possível: abre a transação que envolve a request
+        # (necessária para o `SET LOCAL` do RLS).
+        "apps.organizacoes.middleware.OrganizacaoMiddleware",
+        "waffle.middleware.WaffleMiddleware",
+        # Par do PrometheusBeforeMiddleware; fecha a medição da request.
+        "django_prometheus.middleware.PrometheusAfterMiddleware",
+    ]
+    + ENV_MIDDLEWARES
+    + [
+        # Troca a resposta por 429 na volta da request quando o bloqueio dispara.
+        # Fica por último para que todos os demais middlewares vejam a resposta final.
+        "axes.middleware.AxesMiddleware",
+    ]
+)
 
 
 ROOT_URLCONF = "api.urls"
@@ -208,6 +212,9 @@ DATABASES = {
         "USER": get_env_var("DATABASE_USER"),
         "PASSWORD": get_env_var("DATABASE_PASSWORD"),
         "PORT": get_env_var("DATABASE_PORT"),
+        "TEST": {
+            "NAME": get_env_var("TEST_DATABASE_NAME", "test_base_permission_cache"),
+        },
         "CONN_MAX_AGE": 60 * 60 * 3,  # 3 horas
         "CONN_HEALTH_CHECKS": True,
     },
@@ -252,9 +259,12 @@ AUTHENTICATION_BACKENDS = [
     # backends seguintes. Precisa ser o primeiro para interromper antes deles.
     "axes.backends.AxesStandaloneBackend",
     "rules.permissions.ObjectPermissionBackend",
-    "django.contrib.auth.backends.ModelBackend",
-    "guardian.backends.ObjectPermissionBackend",
+    "common.permission_cache.backends.CachedModelBackend",
+    "common.permission_cache.backends.CachedObjectPermissionBackend",
 ]
+
+# CachedObjectPermissionBackend subclasses and compatibility-tests Guardian's backend.
+SILENCED_SYSTEM_CHECKS = ["guardian.W001"]
 
 # Não criar o usuário anônimo do guardian (o modelo de usuário usa e-mail como
 # username e o isolamento por organização torna esse registro desnecessário).
@@ -489,6 +499,19 @@ REDIS_PORT = get_env_var("REDIS_PORT", "6379")
 
 REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}"
 
+AUTHORIZATION_CACHE = {
+    "ENABLED": get_bool_from_env("AUTHORIZATION_CACHE_ENABLED", True),
+    "ALIAS": "permissions",
+    "TIMEOUT": 60 * 30,
+    "KEY_PREFIX": get_env_var(
+        "AUTHORIZATION_CACHE_KEY_PREFIX",
+        f"authz:v1:{ENVIROMENT or CONFIG_ENVIRONMENT}",
+    ),
+    "MAX_RETRIES": 2,
+}
+
+AUTHORIZATION_REDIS_URL = get_env_var("AUTHORIZATION_REDIS_URL") or f"{REDIS_URL}/4"
+
 
 # cache
 # sm testes, cache em memória para não exigir Redis rodando.
@@ -496,6 +519,10 @@ if TESTING:
     CACHES = {
         "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
         "cachalot": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
+        "permissions": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "KEY_PREFIX": AUTHORIZATION_CACHE["KEY_PREFIX"],
+        },
     }
 else:
     CACHES = {
@@ -509,6 +536,19 @@ else:
             "BACKEND": "django_redis.cache.RedisCache",
             "LOCATION": f"{REDIS_URL}/3",
             "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
+        },
+        "permissions": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": AUTHORIZATION_REDIS_URL,
+            "KEY_PREFIX": AUTHORIZATION_CACHE["KEY_PREFIX"],
+            "OPTIONS": {
+                "CLIENT_CLASS": "django_redis.client.DefaultClient",
+                "SERIALIZER": "django_redis.serializers.json.JSONSerializer",
+                "REDIS_CLIENT_KWARGS": {
+                    "socket_connect_timeout": 1,
+                    "socket_timeout": 1,
+                },
+            },
         },
     }
 

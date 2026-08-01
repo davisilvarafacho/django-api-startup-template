@@ -8,6 +8,7 @@ O id é guardado em `contextvars` em vez de `threading.local` porque o `contextv
 acompanha corretamente código assíncrono e não vaza entre requests que reaproveitam
 a mesma thread do pool.
 """
+
 import logging
 import time
 import uuid

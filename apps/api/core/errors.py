@@ -7,6 +7,7 @@ para o mesmo envelope `{"errors": [...], "request_id": ...}`.
 
 Ver a spec normativa em `docs/superpowers/specs/2026-07-28-api-errors-design.md`.
 """
+
 import logging
 import re
 from collections.abc import Mapping
@@ -87,9 +88,7 @@ class ErrorCodeRegistry:
         for member in enum_cls:
             code = member.value
             if not CODE_PATTERN.match(code):
-                raise ImproperlyConfigured(
-                    f"Código de erro '{code}' inválido: use o formato 'dominio.erro'."
-                )
+                raise ImproperlyConfigured(f"Código de erro '{code}' inválido: use o formato 'dominio.erro'.")
             if code in self._codes:
                 raise ImproperlyConfigured(f"Código de erro duplicado: '{code}'.")
             self._codes[code] = (enum_cls, member)
@@ -149,10 +148,7 @@ def discover_error_codes(registry=None, *, force=False):
         for name in dir(module):
             obj = getattr(module, name)
             is_local_text_choices = (
-                isinstance(obj, type)
-                and issubclass(obj, models.TextChoices)
-                and obj is not models.TextChoices
-                and obj.__module__ == module.__name__
+                isinstance(obj, type) and issubclass(obj, models.TextChoices) and obj is not models.TextChoices and obj.__module__ == module.__name__
             )
             if is_local_text_choices:
                 registry.register(obj)
@@ -167,10 +163,7 @@ def check_error_code_registry(app_configs, **kwargs):
 
 
 def _is_registered_choice(code):
-    return (
-        isinstance(code, models.TextChoices)
-        and error_codes.lookup(code.value) is code
-    )
+    return isinstance(code, models.TextChoices) and error_codes.lookup(code.value) is code
 
 
 def _is_sensitive_context_key(key):
@@ -181,14 +174,7 @@ def _is_sensitive_context_key(key):
 def sanitize_error_context(value):
     """Remove segredos de estruturas que serão devolvidas no envelope público."""
     if isinstance(value, Mapping):
-        return {
-            key: (
-                REDACTED_CONTEXT_VALUE
-                if _is_sensitive_context_key(key)
-                else sanitize_error_context(item)
-            )
-            for key, item in value.items()
-        }
+        return {key: (REDACTED_CONTEXT_VALUE if _is_sensitive_context_key(key) else sanitize_error_context(item)) for key, item in value.items()}
 
     if isinstance(value, (list, tuple)):
         return [sanitize_error_context(item) for item in value]
@@ -206,9 +192,7 @@ class APIError(APIException):
 
     def __init__(self, code, *, status_code, message=None, field=None, path=None, context=None):
         if not _is_registered_choice(code):
-            raise ImproperlyConfigured(
-                f"{code!r} precisa ser um membro de models.TextChoices registrado em error_codes."
-            )
+            raise ImproperlyConfigured(f"{code!r} precisa ser um membro de models.TextChoices registrado em error_codes.")
 
         self.code = code.value
         self.message = message if message is not None else code.label
@@ -231,9 +215,7 @@ class APIError(APIException):
 
 def build_error_item(code, *, message=None, field=None, path=None, context=None):
     if not _is_registered_choice(code):
-        raise ImproperlyConfigured(
-            f"{code!r} precisa ser um membro de models.TextChoices registrado em error_codes."
-        )
+        raise ImproperlyConfigured(f"{code!r} precisa ser um membro de models.TextChoices registrado em error_codes.")
 
     return APIErrorItem(
         code=code.value,
@@ -293,9 +275,7 @@ def flatten_validation_errors(detail, path=()):
 
 def _validation_item(detail, path):
     drf_code = getattr(detail, "code", None)
-    validation_code = (
-        ValidationErrorCode.REQUIRED if drf_code == "required" else ValidationErrorCode.INVALID
-    )
+    validation_code = ValidationErrorCode.REQUIRED if drf_code == "required" else ValidationErrorCode.INVALID
     field_name = next((part for part in reversed(path) if isinstance(part, str)), None)
 
     return APIErrorItem(

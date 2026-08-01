@@ -34,9 +34,7 @@ class UtilsViewSetMixin(ScopeResourceMixin):
                 permission.perms_map = {**permission.perms_map, **base_permissions, **self.extra_permissions}
 
             if not permission.has_permission(request, self):
-                self.permission_denied(
-                    request, message=getattr(permission, "message", None), code=getattr(permission, "code", None)
-                )
+                self.permission_denied(request, message=getattr(permission, "message", None), code=getattr(permission, "code", None))
 
     def generic_action(self, *args, **kwargs):
         instance = None
@@ -88,9 +86,7 @@ class UtilsViewSetMixin(ScopeResourceMixin):
             return self.serializer_class
 
         if action not in self.serializer_classes:
-            raise AssertionError(
-                f"'{self.__class__.__name__}' não possui o 'serializer_classes' para a ação '{action}'."
-            )
+            raise AssertionError(f"'{self.__class__.__name__}' não possui o 'serializer_classes' para a ação '{action}'.")
 
         return self.serializer_classes[action]
 
@@ -275,6 +271,7 @@ class BaseModelViewSet(UtilsViewSetMixin, ModelViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     if has_is_active_field:
+
         @action(methods=["get"], detail=True)
         def ativar(self, request, *args, **kwargs):
             instance = self.get_object()

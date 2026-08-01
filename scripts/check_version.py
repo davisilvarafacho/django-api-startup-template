@@ -34,10 +34,7 @@ def main() -> None:
     openapi_version = get_openapi_version(ROOT_DIR / "api/settings.py")
 
     if package_version != openapi_version:
-        raise SystemExit(
-            f"Versões divergentes: pyproject.toml={package_version}; "
-            f"SPECTACULAR_SETTINGS[VERSION]={openapi_version}."
-        )
+        raise SystemExit(f"Versões divergentes: pyproject.toml={package_version}; SPECTACULAR_SETTINGS[VERSION]={openapi_version}.")
 
     print(f"Versões alinhadas: {package_version}")
 

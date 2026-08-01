@@ -1,4 +1,5 @@
 """Contrato HTTP de `POST /auth/login/`."""
+
 from unittest.mock import patch
 
 from django.contrib.auth.signals import user_logged_in
@@ -91,14 +92,10 @@ def test_login_respeita_limite_de_sessoes_ativas(client, usuario, monkeypatch):
     # no objeto em uso evita depender dessa recarga.
     monkeypatch.setattr("apps.api.autenticacao.views.knox_settings.TOKEN_LIMIT_PER_USER", 1)
 
-    primeira = client.post(
-        "/auth/login/", {"email": usuario.email, "password": "senha-forte-123"}, format="json"
-    )
+    primeira = client.post("/auth/login/", {"email": usuario.email, "password": "senha-forte-123"}, format="json")
     assert primeira.status_code == 200
 
-    segunda = client.post(
-        "/auth/login/", {"email": usuario.email, "password": "senha-forte-123"}, format="json"
-    )
+    segunda = client.post("/auth/login/", {"email": usuario.email, "password": "senha-forte-123"}, format="json")
 
     assert segunda.status_code == 403
     assert segunda.data["errors"][0]["code"] == "auth.token_limit_exceeded"
@@ -112,9 +109,7 @@ def test_login_dispara_signal_user_logged_in(client, usuario):
 
     user_logged_in.connect(_receiver)
     try:
-        client.post(
-            "/auth/login/", {"email": usuario.email, "password": "senha-forte-123"}, format="json"
-        )
+        client.post("/auth/login/", {"email": usuario.email, "password": "senha-forte-123"}, format="json")
     finally:
         user_logged_in.disconnect(_receiver)
 
@@ -129,9 +124,7 @@ def test_login_com_mudanca_de_pais_marca_risco(client, usuario):
         "apps.api.autenticacao.utils.get_geolocation_data",
         return_value={"country": "France", "country_code": "FR"},
     ):
-        response = client.post(
-            "/auth/login/", {"email": usuario.email, "password": "senha-forte-123"}, format="json"
-        )
+        response = client.post("/auth/login/", {"email": usuario.email, "password": "senha-forte-123"}, format="json")
 
     assert response.status_code == 200
     novo_token = AuthToken.objects.exclude(digest=anterior_token.digest).get(responsavel=usuario)
@@ -141,9 +134,7 @@ def test_login_com_mudanca_de_pais_marca_risco(client, usuario):
 
 def test_login_nao_vaza_segredo_em_eventos_de_analytics(client, usuario):
     with patch("apps.api.autenticacao.views.capture") as capture_mock:
-        response = client.post(
-            "/auth/login/", {"email": usuario.email, "password": "senha-forte-123"}, format="json"
-        )
+        response = client.post("/auth/login/", {"email": usuario.email, "password": "senha-forte-123"}, format="json")
 
     token_plano = response.data["token"]
 

@@ -27,9 +27,7 @@ def test_registra_todos_os_modelos_concretos_dos_apps():
         MFAResetAudit,
         TrustedDevice,
     }
-    modelos_internos_registrados = {
-        model for model in auditlog.get_models() if model.__module__.startswith("apps.")
-    }
+    modelos_internos_registrados = {model for model in auditlog.get_models() if model.__module__.startswith("apps.")}
 
     assert modelos_internos_registrados == modelos_esperados
 

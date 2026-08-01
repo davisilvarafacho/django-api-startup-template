@@ -4,6 +4,7 @@
 `RecentAuthenticationPermission`, incluída nas permissions globais, é quem
 de fato valida. Sem o decorator em lugar nenhum, a permission é um no-op.
 """
+
 from django.utils import timezone
 
 from rest_framework.permissions import BasePermission

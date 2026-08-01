@@ -108,8 +108,8 @@ def get_device_type(ua) -> str:
     if ua.is_tablet:
         return "tablet"
     if ua.is_pc:
-        return 'desktop'
-    return 'unknown'
+        return "desktop"
+    return "unknown"
 
 
 def build_token_metadata(request: HttpRequest, payload: dict) -> dict:
@@ -118,31 +118,31 @@ def build_token_metadata(request: HttpRequest, payload: dict) -> dict:
     `payload` são os campos opcionais enviados pelo cliente (`device_name`,
     `app_version`, `fcm_token`); dispositivo e localização vêm da request.
     """
-    user_agent = request.META.get('HTTP_USER_AGENT', '')
+    user_agent = request.META.get("HTTP_USER_AGENT", "")
     device_info = parse_user_agent(user_agent)
 
     ip_address = get_client_ip(request)
     geo_data = get_geolocation_data(ip_address)
 
     return {
-        'device_name': payload.get('device_name', ''),
-        'device_type': device_info.get('device_type', 'unknown'),
-        'device_brand': device_info.get('device_brand', ''),
-        'device_model': device_info.get('device_model', ''),
-        'os_name': device_info.get('os_name', ''),
-        'os_version': device_info.get('os_version', ''),
-        'browser_name': device_info.get('browser_name', ''),
-        'browser_version': device_info.get('browser_version', ''),
-        'user_agent': user_agent,
-        'ip_address': ip_address,
-        'country': geo_data.get('country', ''),
-        'country_code': geo_data.get('country_code', ''),
-        'region': geo_data.get('region', ''),
-        'city': geo_data.get('city', ''),
-        'latitude': geo_data.get('latitude'),
-        'longitude': geo_data.get('longitude'),
-        'timezone': geo_data.get('timezone', ''),
-        'isp': geo_data.get('isp', ''),
-        'app_version': payload.get('app_version', ''),
-        'fcm_token': payload.get('fcm_token', ''),
+        "device_name": payload.get("device_name", ""),
+        "device_type": device_info.get("device_type", "unknown"),
+        "device_brand": device_info.get("device_brand", ""),
+        "device_model": device_info.get("device_model", ""),
+        "os_name": device_info.get("os_name", ""),
+        "os_version": device_info.get("os_version", ""),
+        "browser_name": device_info.get("browser_name", ""),
+        "browser_version": device_info.get("browser_version", ""),
+        "user_agent": user_agent,
+        "ip_address": ip_address,
+        "country": geo_data.get("country", ""),
+        "country_code": geo_data.get("country_code", ""),
+        "region": geo_data.get("region", ""),
+        "city": geo_data.get("city", ""),
+        "latitude": geo_data.get("latitude"),
+        "longitude": geo_data.get("longitude"),
+        "timezone": geo_data.get("timezone", ""),
+        "isp": geo_data.get("isp", ""),
+        "app_version": payload.get("app_version", ""),
+        "fcm_token": payload.get("fcm_token", ""),
     }

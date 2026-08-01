@@ -1,4 +1,3 @@
-
 from django.core.exceptions import ImproperlyConfigured
 
 from rest_framework import exceptions
@@ -46,10 +45,7 @@ class TokenScopePermission(BasePermission):
             return True
 
         session_only_actions = getattr(view, "session_only_actions", ())
-        if (
-            getattr(view, "session_only", False)
-            or getattr(view, "action", None) in session_only_actions
-        ):
+        if getattr(view, "session_only", False) or getattr(view, "action", None) in session_only_actions:
             return False
 
         required_scopes = self.get_required_scopes(request, view)
@@ -59,10 +55,7 @@ class TokenScopePermission(BasePermission):
         granted_scopes = set(getattr(auth_token, "scopes", []) or [])
 
         try:
-            authorized = all(
-                any(matches_scope(granted, required) for granted in granted_scopes)
-                for required in required_scopes
-            )
+            authorized = all(any(matches_scope(granted, required) for granted in granted_scopes) for required in required_scopes)
         except (TypeError, ValueError):
             authorized = False
 

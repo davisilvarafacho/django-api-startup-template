@@ -34,6 +34,7 @@ N+1 de uma das duas formas:
 
 O registry é a fronteira de segurança: modelo não registrado responde 404.
 """
+
 from django.core.exceptions import ImproperlyConfigured
 
 from rest_framework import serializers

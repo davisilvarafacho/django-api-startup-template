@@ -10,7 +10,7 @@ from apps.usuarios.factories import UsuarioFactory
 
 
 @pytest.mark.django_db
-def test_admin_reset_exige_permissao_reauth_e_justificativa(api_client, usuario):
+def test_admin_reset_exige_permissao_reauth_e_justificativa(api_client, usuario, django_capture_on_commit_callbacks):
     target = UsuarioFactory()
     start_enrollment(target, MFAFactorType.TOTP)
     issued = issue_token(responsavel=usuario, token_type=TokenType.TOKEN, created_by=usuario, expiry=None, metadata_input={})
@@ -19,7 +19,11 @@ def test_admin_reset_exige_permissao_reauth_e_justificativa(api_client, usuario)
     api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {issued.plain_token}")
 
     assert api_client.post("/auth/mfa/admin-reset/", {"user_id": target.pk, "reason": ""}).status_code == 403
-    usuario.user_permissions.add(Permission.objects.get(codename="can_reset_mfa_usuario"))
+    # O cache de autorização só invalida no commit, que nunca acontece dentro da
+    # transação do teste. Sem executar os callbacks pendentes, o 403 anterior
+    # deixa o snapshot vazio grudado e a permission recém concedida não é vista.
+    with django_capture_on_commit_callbacks(execute=True):
+        usuario.user_permissions.add(Permission.objects.get(codename="can_reset_mfa_usuario"))
     assert api_client.post("/auth/mfa/admin-reset/", {"user_id": target.pk, "reason": ""}).status_code == 400
     assert api_client.post("/auth/mfa/admin-reset/", {"user_id": target.pk, "reason": "Suporte verificado"}).status_code == 204
     assert not target.mfa_factors.exists()

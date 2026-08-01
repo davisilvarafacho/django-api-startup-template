@@ -1,4 +1,5 @@
 """Testes da política de bloqueio configurada para o django-axes."""
+
 from rest_framework import status
 
 import pytest
