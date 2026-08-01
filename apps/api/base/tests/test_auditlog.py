@@ -6,7 +6,7 @@ import pytest
 from auditlog.registry import auditlog
 from threadlocals.threadlocals import set_current_user
 
-from apps.api.autenticacao.models import TokenMetaData
+from apps.api.autenticacao.models import MFAChallenge, MFAFactor, MFARecoveryCode, MFAResetAudit, TokenMetaData, TrustedDevice
 from apps.api.base.models import BaseGlobal
 from apps.organizacoes.models import Convite, Organizacao, Time, Vinculo
 from apps.usuarios.factories import UsuarioFactory
@@ -14,7 +14,19 @@ from apps.usuarios.models import Usuario
 
 
 def test_registra_todos_os_modelos_concretos_dos_apps():
-    modelos_esperados = {Usuario, Organizacao, Time, Vinculo, Convite, TokenMetaData}
+    modelos_esperados = {
+        Usuario,
+        Organizacao,
+        Time,
+        Vinculo,
+        Convite,
+        TokenMetaData,
+        MFAFactor,
+        MFAChallenge,
+        MFARecoveryCode,
+        MFAResetAudit,
+        TrustedDevice,
+    }
     modelos_internos_registrados = {model for model in auditlog.get_models() if model.__module__.startswith("apps.")}
 
     assert modelos_internos_registrados == modelos_esperados
@@ -29,6 +41,8 @@ def test_exclui_campos_tecnicos_e_credenciais_sem_mutar_a_configuracao_global():
         "is_deleted",
         "password",
         "last_login",
+        # Cifrado em repouso: `sensitive_fields` exclui do auditlog automaticamente.
+        "phone_number",
     }
     for model in (Organizacao, Time, Vinculo, Convite):
         assert auditlog.get_model_fields(model)["exclude_fields"] == [*campos_base, "is_deleted"]

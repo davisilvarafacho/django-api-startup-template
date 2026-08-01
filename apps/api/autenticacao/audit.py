@@ -5,6 +5,7 @@ nunca as views (evita duplicar o mesmo evento em dois lugares). Nunca inclui
 plain token, digest ou token_key — só metadados estáveis (UUID, responsável,
 criador, organização e request ID).
 """
+
 import logging
 
 import posthog

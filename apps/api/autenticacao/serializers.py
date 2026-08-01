@@ -7,7 +7,6 @@ from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.models import Organizacao, Vinculo
 
 from .errors import AuthErrorCode
-from .recent_auth import user_has_mfa_enabled, verify_mfa_code
 from .scope_delegation import validate_scope_delegation
 
 
@@ -57,19 +56,20 @@ class LoginResponseSerializer(serializers.Serializer):
 
 
 class ReauthenticateSerializer(serializers.Serializer):
-    """Confirma a identidade da sessão atual (senha e, se aplicável, MFA)."""
+    """Confirma a senha da sessão atual.
+
+    O segundo fator não é verificado aqui: com MFA ativo a view responde 202 e o
+    step-up se completa pelo par `/auth/reauthenticate/challenge/{start,verify}/`,
+    que é desafio-resposta e não aceita um código solto no corpo do POST.
+    """
 
     password = serializers.CharField(write_only=True, trim_whitespace=False)
-    mfa_code = serializers.CharField(required=False, allow_blank=True, write_only=True, default="")
 
     def validate(self, attrs):
         user = self.context["request"].user
 
         if not user.check_password(attrs["password"]):
             raise APIError(AuthErrorCode.INVALID_CREDENTIALS, status_code=401)
-
-        if user_has_mfa_enabled(user):
-            verify_mfa_code(user, attrs.get("mfa_code", ""))
 
         return attrs
 
@@ -152,9 +152,7 @@ class APIKeyWriteSerializer(APIKeySerializer):
 
     def validate_responsavel(self, responsavel):
         organizacao_id = self.context["request"].organizacao_id
-        vinculo_ativo = Vinculo.objects.filter(
-            organizacao_id=organizacao_id, usuario=responsavel, is_active=True
-        ).exists()
+        vinculo_ativo = Vinculo.objects.filter(organizacao_id=organizacao_id, usuario=responsavel, is_active=True).exists()
         if not vinculo_ativo:
             raise APIError(
                 OrganizationErrorCode.MEMBERSHIP_REQUIRED,

@@ -4,6 +4,7 @@ Views não devem chamar `AuthToken.objects.create()`/`TokenMetaData.objects.crea
 diretamente: `issue_token()` é o único ponto de entrada, garantindo que token e
 metadata nascem juntos ou não nascem.
 """
+
 from dataclasses import dataclass
 
 from django.db import transaction
@@ -71,9 +72,7 @@ def revoke_all_sessions(user, *, actor, exclude_uuid=None):
     logout_all preserva nenhuma; revoke_all_except_current preserva a atual).
     """
     auth_token_model = get_token_model()
-    queryset = auth_token_model.objects.filter(
-        responsavel=user, type=TokenType.TOKEN, revoked_at__isnull=True
-    )
+    queryset = auth_token_model.objects.filter(responsavel=user, type=TokenType.TOKEN, revoked_at__isnull=True)
     if exclude_uuid is not None:
         queryset = queryset.exclude(uuid=exclude_uuid)
 
@@ -238,9 +237,7 @@ def resume_api_key(instance, *, actor):
 
     from apps.organizacoes.models import Vinculo
 
-    vinculo_ativo = Vinculo.objects.filter(
-        organizacao=instance.organization, usuario=instance.responsavel, is_active=True
-    ).exists()
+    vinculo_ativo = Vinculo.objects.filter(organizacao=instance.organization, usuario=instance.responsavel, is_active=True).exists()
 
     if not instance.responsavel.is_active or not vinculo_ativo:
         raise APIError(AuthErrorCode.RESPONSIBLE_INACTIVE, status_code=409)
@@ -273,9 +270,7 @@ def ensure_api_key_still_valid(token):
 
     from apps.organizacoes.models import Vinculo
 
-    vinculo_ativo = Vinculo.objects.filter(
-        organizacao=token.organization, usuario=token.responsavel, is_active=True
-    ).exists()
+    vinculo_ativo = Vinculo.objects.filter(organizacao=token.organization, usuario=token.responsavel, is_active=True).exists()
 
     if not token.responsavel.is_active or not vinculo_ativo:
         token.suspended_at = timezone.now()

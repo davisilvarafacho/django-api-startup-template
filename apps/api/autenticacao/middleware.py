@@ -20,9 +20,10 @@ from apps.api.core.errors import APIError, error_response, error_response_for_ap
 from apps.api.core.route_markers import MARCADOR_PUBLICA, tem_marcador, view_do_path
 from apps.api.core.routes_registry import routes_registry
 
-from .authentications import QueryParamTokenAuthentication, TypedTokenAuthentication
+from .authentications import PreAuthTokenAuthentication, QueryParamTokenAuthentication, TypedTokenAuthentication
 from .constants import REQUEST_ATTR_RESOLVED, RESOLVED_PRIVATE, RESOLVED_PUBLIC
 from .errors import AuthErrorCode
+from .models import TokenType
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,13 @@ class AuthenticationMiddleware:
 
         user, auth_token = result
 
+        if getattr(auth_token, "type", None) == TokenType.PRE_AUTH and not request.path_info.startswith("/auth/mfa/challenge/"):
+            return error_response(
+                AuthErrorCode.INVALID_TOKEN,
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                message="Pré-autenticação não permite acesso a esta rota.",
+            )
+
         # Não usamos `set_current_user`: ele grava num global da thread que nunca é
         # limpo, e `get_current_user()` já resolve `request.user` a partir da request
         # que o ThreadLocalMiddleware guarda por requisição.
@@ -95,7 +103,10 @@ class AuthenticationMiddleware:
         return None
 
     def run_authenticators(self, request):
-        for authenticator in self.authenticators:
+        authenticators = self.authenticators
+        if request.META.get("HTTP_AUTHORIZATION", "").startswith("PreAuth "):
+            authenticators = [PreAuthTokenAuthentication()]
+        for authenticator in authenticators:
             result = authenticator.authenticate(request)
             if result is not None:
                 return result

@@ -9,5 +9,7 @@ class AutenticacaoConfig(AppConfig):
         from common.permission_cache.signals.django import connect_django_signals
         from common.permission_cache.signals.guardian import connect_guardian_signals
 
+        from . import checks  # noqa: F401
+
         connect_django_signals()
         connect_guardian_signals()

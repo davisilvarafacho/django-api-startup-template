@@ -1,4 +1,5 @@
 """Testes da ativação do django-axes no fluxo de login."""
+
 from rest_framework import status
 
 import pytest

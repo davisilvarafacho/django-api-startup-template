@@ -150,10 +150,7 @@ def test_discover_scope_resources_e_idempotente_e_sem_inconsistencias():
     discover_scope_resources(force=True)
 
     assert scope_registry.check() == []
-    assert (
-        scope_registry.lookup("invitations").action_permissions["accept"]
-        == "can_accept_convite"
-    )
+    assert scope_registry.lookup("invitations").action_permissions["accept"] == "can_accept_convite"
 
     # Chamar de novo não deve levantar por recurso duplicado.
     discover_scope_resources()

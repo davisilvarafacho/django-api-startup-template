@@ -8,6 +8,7 @@ from django.core.management.utils import get_random_secret_key
 from django.utils.translation import gettext_lazy as _
 
 import sentry_sdk
+from celery.schedules import crontab
 
 from api.configure_enviroment import configure_enviroment
 from api.logging_config import build_logging
@@ -137,40 +138,44 @@ BUSINESS_APPS = [
 INSTALLED_APPS = LIBS_APPS + DJANGO_APPS + BUSINESS_APPS + ENV_APPS
 
 
-MIDDLEWARE = [
-    # Primeiro de todos: mede a request inteira, inclusive o tempo gasto pelos
-    # demais middlewares.
-    "django_prometheus.middleware.PrometheusBeforeMiddleware",
-    "django.middleware.security.SecurityMiddleware",
-    # Logo após o SecurityMiddleware para que todo log emitido daqui em diante
-    # já carregue o correlation id.
-    "apps.api.core.request_id.RequestIDMiddleware",
-    "django.middleware.gzip.GZipMiddleware",
-    "django.contrib.sessions.middleware.SessionMiddleware",
-    "django.middleware.common.CommonMiddleware",
-    "django.middleware.csrf.CsrfViewMiddleware",
-    "django.contrib.auth.middleware.AuthenticationMiddleware",
-    "django.contrib.messages.middleware.MessageMiddleware",
-    "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "django.middleware.locale.LocaleMiddleware",
-    "threadlocals.middleware.ThreadLocalMiddleware",
-    "corsheaders.middleware.CorsMiddleware",
-    # Resolve o token antes dos middlewares que dependem de `request.user`
-    # (auditlog, PostHog, tenancy). Precisa vir depois do ThreadLocalMiddleware.
-    "apps.api.autenticacao.middleware.AuthenticationMiddleware",
-    "auditlog.middleware.AuditlogMiddleware",
-    "posthog.integrations.django.PosthogContextMiddleware",
-    # Deve ser o mais interno possível: abre a transação que envolve a request
-    # (necessária para o `SET LOCAL` do RLS).
-    "apps.organizacoes.middleware.OrganizacaoMiddleware",
-    "waffle.middleware.WaffleMiddleware",
-    # Par do PrometheusBeforeMiddleware; fecha a medição da request.
-    "django_prometheus.middleware.PrometheusAfterMiddleware",
-] + ENV_MIDDLEWARES + [
-    # Troca a resposta por 429 na volta da request quando o bloqueio dispara.
-    # Fica por último para que todos os demais middlewares vejam a resposta final.
-    "axes.middleware.AxesMiddleware",
-]
+MIDDLEWARE = (
+    [
+        # Primeiro de todos: mede a request inteira, inclusive o tempo gasto pelos
+        # demais middlewares.
+        "django_prometheus.middleware.PrometheusBeforeMiddleware",
+        "django.middleware.security.SecurityMiddleware",
+        # Logo após o SecurityMiddleware para que todo log emitido daqui em diante
+        # já carregue o correlation id.
+        "apps.api.core.request_id.RequestIDMiddleware",
+        "django.middleware.gzip.GZipMiddleware",
+        "django.contrib.sessions.middleware.SessionMiddleware",
+        "django.middleware.common.CommonMiddleware",
+        "django.middleware.csrf.CsrfViewMiddleware",
+        "django.contrib.auth.middleware.AuthenticationMiddleware",
+        "django.contrib.messages.middleware.MessageMiddleware",
+        "django.middleware.clickjacking.XFrameOptionsMiddleware",
+        "django.middleware.locale.LocaleMiddleware",
+        "threadlocals.middleware.ThreadLocalMiddleware",
+        "corsheaders.middleware.CorsMiddleware",
+        # Resolve o token antes dos middlewares que dependem de `request.user`
+        # (auditlog, PostHog, tenancy). Precisa vir depois do ThreadLocalMiddleware.
+        "apps.api.autenticacao.middleware.AuthenticationMiddleware",
+        "auditlog.middleware.AuditlogMiddleware",
+        "posthog.integrations.django.PosthogContextMiddleware",
+        # Deve ser o mais interno possível: abre a transação que envolve a request
+        # (necessária para o `SET LOCAL` do RLS).
+        "apps.organizacoes.middleware.OrganizacaoMiddleware",
+        "waffle.middleware.WaffleMiddleware",
+        # Par do PrometheusBeforeMiddleware; fecha a medição da request.
+        "django_prometheus.middleware.PrometheusAfterMiddleware",
+    ]
+    + ENV_MIDDLEWARES
+    + [
+        # Troca a resposta por 429 na volta da request quando o bloqueio dispara.
+        # Fica por último para que todos os demais middlewares vejam a resposta final.
+        "axes.middleware.AxesMiddleware",
+    ]
+)
 
 
 ROOT_URLCONF = "api.urls"
@@ -456,6 +461,10 @@ SCALAR_THEME = "purple"
 # knox
 KNOX_TOKEN_MODEL = "autenticacao.AuthToken"
 
+# MFA
+MFA_SMS_BACKEND = get_env_var("MFA_SMS_BACKEND", "apps.api.autenticacao.mfa_backends.ConsoleSMSBackend")
+MFA_SMS_ENABLED = get_bool_from_env("MFA_SMS_ENABLED", False)
+
 REST_KNOX = {
     "AUTH_HEADER_PREFIX": "Bearer",
 }
@@ -568,6 +577,17 @@ CELERY_TASK_SOFT_TIME_LIMIT = 60 * 25  # soft limit: 25 min
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+
+AUTH_TOKEN_SESSION_RETENTION_DAYS = 90
+
+AUTH_TOKEN_CLEANUP_BATCH_SIZE = 500
+
+CELERY_BEAT_SCHEDULE = {
+    "cleanup-expired-auth-tokens": {
+        "task": "autenticacao.cleanup_expired_tokens",
+        "schedule": crontab(hour=0, minute=0),
+    },
+}
 
 # sm testes, executa as tasks de forma síncrona e propaga exceções.
 CELERY_TASK_ALWAYS_EAGER = TESTING

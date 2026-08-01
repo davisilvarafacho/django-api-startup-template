@@ -1,4 +1,5 @@
 """Eventos auditáveis do ciclo de vida de API keys (`audit.emit_api_key_event`)."""
+
 from unittest.mock import patch
 
 from django.db import IntegrityError

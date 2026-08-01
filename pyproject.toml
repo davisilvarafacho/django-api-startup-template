@@ -53,6 +53,7 @@ dependencies = [
     "posthog>=7.28.0",
     "psycopg2-binary==2.9.11",
     "pygments==2.19.2",
+    "pyotp>=2.10.0",
     "python-dateutil==2.9.0.post0",
     "python-dotenv==1.2.2",
     "python-json-logger>=4.1.0",

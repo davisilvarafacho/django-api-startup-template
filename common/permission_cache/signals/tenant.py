@@ -14,10 +14,7 @@ def _remember_membership_previous(instance, using, raw, update_fields, **kwargs)
     tracked_fields = {"usuario", "usuario_id", "organizacao", "organizacao_id", "papel", "is_active", "is_deleted"}
     if not raw and not instance._state.adding and (update_fields is None or tracked_fields.intersection(update_fields)):
         previous = (
-            Vinculo.all_objects.using(using)
-            .filter(pk=instance.pk)
-            .values("usuario_id", "organizacao_id", "papel", "is_active", "is_deleted")
-            .first()
+            Vinculo.all_objects.using(using).filter(pk=instance.pk).values("usuario_id", "organizacao_id", "papel", "is_active", "is_deleted").first()
         )
     previous = previous or {}
     instance._permission_cache_previous_user_id = previous.get("usuario_id")
@@ -83,8 +80,7 @@ def _invalidate_organization(instance, using, created=False, **kwargs) -> None:
         if hasattr(instance, attribute):
             delattr(instance, attribute)
     if created or (
-        previous_slug is not None
-        and (previous_slug, previous_active, previous_deleted) != (instance.slug, instance.is_active, instance.is_deleted)
+        previous_slug is not None and (previous_slug, previous_active, previous_deleted) != (instance.slug, instance.is_active, instance.is_deleted)
     ):
         schedule_epoch_bumps((layer_scope("tenant"),), database_alias=using, layer="tenant")
 

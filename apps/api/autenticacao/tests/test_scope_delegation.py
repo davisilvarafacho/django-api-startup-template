@@ -62,9 +62,7 @@ def test_usuario_delega_action_customizada_que_possui(registro_isolado):
     usuario = UsuarioFactory()
     usuario = _com_permissao(usuario, "organizacoes", "can_accept_convite")
 
-    assert validate_scope_delegation(usuario, ["invitations:accept"]) == (
-        "invitations:accept",
-    )
+    assert validate_scope_delegation(usuario, ["invitations:accept"]) == ("invitations:accept",)
 
 
 @pytest.mark.django_db

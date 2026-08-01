@@ -4,6 +4,7 @@
 `RecentAuthenticationPermission`, incluída nas permissions globais, é quem
 de fato valida. Sem o decorator em lugar nenhum, a permission é um no-op.
 """
+
 from django.utils import timezone
 
 from rest_framework.permissions import BasePermission
@@ -31,13 +32,18 @@ def require_recent_auth(max_age=DEFAULT_MAX_AGE_SECONDS, require_mfa=None):
 
 
 def user_has_mfa_enabled(user):
-    """Stub: a spec de MFA ainda não foi implementada, então ninguém tem MFA ativo."""
-    return bool(getattr(user, "mfa_enabled", False))
+    """Indica se o usuário tem ao menos um fator MFA confirmado e habilitado.
 
+    Usuário sem `pk` (anônimo, ou dublê de teste) nunca tem fator: respondemos
+    sem tocar o banco, que é o que permite manter DB-less quem só depende desta
+    checagem.
+    """
+    from .mfa import active_factors
 
-def verify_mfa_code(user, code):
-    """Stub seguro: sem backend de MFA, uma exigência forçada nunca é satisfeita."""
-    raise APIError(AuthErrorCode.REAUTHENTICATION_REQUIRED, status_code=401, message="MFA ainda não implementado.")
+    if getattr(user, "pk", None) is None:
+        return False
+
+    return active_factors(user).exists()
 
 
 class RecentAuthenticationPermission(BasePermission):

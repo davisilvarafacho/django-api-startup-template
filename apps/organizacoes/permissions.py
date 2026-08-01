@@ -5,6 +5,7 @@ Está em `DEFAULT_PERMISSION_CLASSES`, então **toda** rota exige um
 app lista suas exceções em `public_routes.py` (rotas sem token) ou
 `tenant_free_routes.py` (rotas com token, sem organização).
 """
+
 from rest_framework.permissions import BasePermission
 
 from apps.api.autenticacao.errors import AuthErrorCode

@@ -1,4 +1,5 @@
 """Testes da resolução automática de scopes (`resource:action`) em ViewSets."""
+
 from rest_framework.permissions import AllowAny
 from rest_framework.viewsets import GenericViewSet
 

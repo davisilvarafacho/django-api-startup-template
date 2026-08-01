@@ -5,6 +5,7 @@ A geração de schema do projeto inteiro pula endpoints versionados sem
 `versioning_class` é zerada nas views testadas para isolar o que
 `apps.api.autenticacao.schema` realmente documenta.
 """
+
 import pytest
 from drf_spectacular.generators import SchemaGenerator
 

@@ -6,6 +6,7 @@ internos do Django (`app_label.action_model`), usados por scopes de API key e
 por `user.has_perm()`. Ver a spec normativa em
 `docs/superpowers/specs/2026-07-28-auth-tokens-api-keys-design.md`.
 """
+
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -95,15 +96,11 @@ class ScopeRegistry:
         action_permissions = {}
         if model is not None:
             model_name = model._meta.model_name
-            action_permissions = {
-                action.value: f"{prefix}_{model_name}" for action, prefix in CRUD_DJANGO_PREFIXES.items()
-            }
+            action_permissions = {action.value: f"{prefix}_{model_name}" for action, prefix in CRUD_DJANGO_PREFIXES.items()}
 
         custom_actions = custom_actions or {}
         if not isinstance(custom_actions, Mapping):
-            raise ImproperlyConfigured(
-                f"Actions customizadas de '{resource}' devem mapear action para codename Django."
-            )
+            raise ImproperlyConfigured(f"Actions customizadas de '{resource}' devem mapear action para codename Django.")
 
         for action, codename in custom_actions.items():
             if not SCOPE_TOKEN_PATTERN.match(action):
@@ -111,9 +108,7 @@ class ScopeRegistry:
             if not SCOPE_TOKEN_PATTERN.match(codename):
                 raise ImproperlyConfigured(f"Codename Django inválido: '{codename}'.")
             if action in action_permissions:
-                raise ImproperlyConfigured(
-                    f"Action de scope duplicada para '{resource}': '{action}'."
-                )
+                raise ImproperlyConfigured(f"Action de scope duplicada para '{resource}': '{action}'.")
             action_permissions[action] = codename
 
         definition = ScopeDefinition(
@@ -202,9 +197,7 @@ def required_django_permissions(scope):
     """Traduz um scope concreto (`resource:action` ou `*`) para `app_label.codename`."""
     resource, action = parse_scope(scope)
 
-    definitions = (
-        scope_registry.all_resources().values() if resource == "*" else [_get_definition(resource)]
-    )
+    definitions = scope_registry.all_resources().values() if resource == "*" else [_get_definition(resource)]
 
     permissions = []
     for definition in definitions:
@@ -241,8 +234,6 @@ def _codenames_for_action(definition, action):
 
     codename = definition.action_permissions.get(action)
     if codename is None and action not in definition.custom_actions:
-        raise ImproperlyConfigured(
-            f"Action '{action}' não é válida para o recurso '{definition.resource}'."
-        )
+        raise ImproperlyConfigured(f"Action '{action}' não é válida para o recurso '{definition.resource}'.")
 
     return [codename] if codename else []

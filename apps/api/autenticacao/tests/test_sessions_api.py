@@ -1,4 +1,5 @@
 """Contrato HTTP de gerenciamento de sessões (`/auth/sessions/`, logout*)."""
+
 from rest_framework.test import APIClient
 
 import pytest
@@ -93,9 +94,7 @@ def test_current_devolve_a_sessao_da_request(usuario):
 def test_patch_renomeia_o_dispositivo(usuario):
     instance, token = _sessao(usuario, device_name="Antigo")
 
-    response = _client_com(token).patch(
-        f"/auth/sessions/{instance.uuid}/", {"device_name": "Novo nome"}, format="json"
-    )
+    response = _client_com(token).patch(f"/auth/sessions/{instance.uuid}/", {"device_name": "Novo nome"}, format="json")
 
     assert response.status_code == 200
     instance.metadata.refresh_from_db()
@@ -105,9 +104,7 @@ def test_patch_renomeia_o_dispositivo(usuario):
 def test_patch_ignora_campos_alem_de_device_name(usuario):
     instance, token = _sessao(usuario)
 
-    response = _client_com(token).patch(
-        f"/auth/sessions/{instance.uuid}/", {"risk_score": 99}, format="json"
-    )
+    response = _client_com(token).patch(f"/auth/sessions/{instance.uuid}/", {"risk_score": 99}, format="json")
 
     assert response.status_code == 200
     instance.metadata.refresh_from_db()

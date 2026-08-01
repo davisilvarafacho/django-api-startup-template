@@ -1,4 +1,5 @@
 """Testes da resolução de IP do cliente."""
+
 from apps.api.autenticacao.utils import get_client_ip
 
 

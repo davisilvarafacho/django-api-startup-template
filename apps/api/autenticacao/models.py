@@ -11,12 +11,40 @@ from knox.settings import CONSTANTS, knox_settings
 
 from apps.api.base.models import CreationAuditMixin
 from utils.logs import register
+from utils.sensitive_fields import encrypt
 
 
 class TokenType(models.IntegerChoices):
-    TOKEN = 1, _('Token')
-    RESET_PASSWORD = 2, _('Reset de senha')
-    API_KEY = 999, _('API key')
+    """Tipos operacionais armazenados em `AuthToken.type`."""
+
+    TOKEN = 1, _("Token")
+    RESET_PASSWORD = 2, _("Reset de senha")
+    PRE_AUTH = 3, _("Pré-autenticação")
+    API_KEY = 999, _("API key")
+
+
+class MFAFactorType(models.TextChoices):
+    """Tipos de segundo fator suportados pela API."""
+
+    EMAIL = "email", _("E-mail")
+    SMS = "sms", _("SMS")
+    TOTP = "totp", _("TOTP")
+
+
+class MFAChallengePurpose(models.TextChoices):
+    """Fluxos que podem consumir um desafio MFA."""
+
+    LOGIN = "login", _("Login")
+    ENROLLMENT = "enrollment", _("Cadastro de fator")
+    REAUTHENTICATION = "reauthentication", _("Reautenticação")
+
+
+class MFAChallengeDeliveryStatus(models.TextChoices):
+    """Estado da entrega de um OTP que depende de transporte externo."""
+
+    PENDING = "pending", _("Pendente")
+    SENT = "sent", _("Enviado")
+    FAILED = "failed", _("Falhou")
 
 
 class AuthTokenManager(models.Manager):
@@ -45,7 +73,7 @@ class AuthTokenManager(models.Manager):
 
         instance = super().create(
             digest=digest,
-            token_key=plain_token[:CONSTANTS.TOKEN_KEY_LENGTH],
+            token_key=plain_token[: CONSTANTS.TOKEN_KEY_LENGTH],
             responsavel=responsavel,
             expiry=expires_at,
             **kwargs,
@@ -65,9 +93,7 @@ def validate_token_configuration(
     """Valida os campos que diferenciam uma API key dos demais tokens."""
     if token_type != TokenType.API_KEY:
         if organization is not None or name or scopes:
-            raise ValidationError(
-                "Tokens de sessão/reset não aceitam organization, name ou scopes."
-            )
+            raise ValidationError("Tokens de sessão/reset não aceitam organization, name ou scopes.")
         return
 
     errors = {}
@@ -99,9 +125,7 @@ def validate_token_configuration(
             usuario=responsavel,
             is_active=True,
         ).exists():
-            errors["responsavel"] = (
-                "O responsável precisa ter vínculo ativo com a organização."
-            )
+            errors["responsavel"] = "O responsável precisa ter vínculo ativo com a organização."
 
     if errors:
         raise ValidationError(errors)
@@ -117,11 +141,14 @@ class AuthToken(CreationAuditMixin):
     outra pessoa.
     """
 
+    # Tipos que existem só para atravessar um fluxo curto e não sobrevivem a ele:
+    # é o conjunto que a limpeza periódica pode apagar assim que expira, sem
+    # perder rastro de auditoria (sessões e API keys são revogadas, nunca apagadas).
+    EPHEMERAL_TYPES = frozenset({TokenType.PRE_AUTH, TokenType.RESET_PASSWORD})
+
     objects = AuthTokenManager()
 
-    uuid = models.UUIDField(
-        verbose_name=_("UUID"), default=uuid_lib.uuid4, unique=True, editable=False, db_index=True
-    )
+    uuid = models.UUIDField(verbose_name=_("UUID"), default=uuid_lib.uuid4, unique=True, editable=False, db_index=True)
 
     digest = models.CharField(verbose_name=_("digest"), max_length=CONSTANTS.DIGEST_LENGTH, primary_key=True)
     token_key = models.CharField(
@@ -206,20 +233,11 @@ class AuthToken(CreationAuditMixin):
                 name="auth_token_api_key_exige_organizacao",
             ),
             models.CheckConstraint(
-                condition=(
-                    ~models.Q(type=TokenType.API_KEY)
-                    | (
-                        models.Q(created_by__isnull=False)
-                        & ~models.Q(name="")
-                    )
-                ),
+                condition=(~models.Q(type=TokenType.API_KEY) | (models.Q(created_by__isnull=False) & ~models.Q(name=""))),
                 name="auth_token_api_key_exige_nome_e_criador",
             ),
             models.CheckConstraint(
-                condition=(
-                    models.Q(type=TokenType.API_KEY)
-                    | (models.Q(name="") & models.Q(scopes=[]))
-                ),
+                condition=(models.Q(type=TokenType.API_KEY) | (models.Q(name="") & models.Q(scopes=[]))),
                 name="auth_token_sessao_sem_campos_de_api_key",
             ),
         ]
@@ -250,231 +268,120 @@ class AuthToken(CreationAuditMixin):
     def created(self):
         return self.created_at
 
+    @property
+    def is_expired(self):
+        """Expirou pelo relógio. `expiry` nulo significa token sem expiração."""
+        return self.expiry is not None and self.expiry <= timezone.now()
+
 
 class TokenMetaData(models.Model):
     """Metadados operacionais do uso de uma credencial (1:1 com o token)."""
 
     # token relacionado
     token = models.OneToOneField(
-        verbose_name=_('Token'),
-        to=settings.KNOX_TOKEN_MODEL,
-        on_delete=models.CASCADE,
-        related_name='metadata',
-        primary_key=True
+        verbose_name=_("Token"), to=settings.KNOX_TOKEN_MODEL, on_delete=models.CASCADE, related_name="metadata", primary_key=True
     )
+
+    # informações do dispositivo
+    device_name = models.CharField(
+        verbose_name=_("Nome do dispositivo"), max_length=255, blank=True, help_text=_("Nome personalizado do dispositivo (ex: 'iPhone de Rafael')")
+    )
+    device_type = models.CharField(
+        verbose_name=_("Tipo de dispositivo"),
+        max_length=20,
+        choices=[
+            ("mobile", _("Celular")),
+            ("tablet", _("Tablet")),
+            ("desktop", _("Computador")),
+            ("unknown", _("Desconhecido")),
+        ],
+        default="unknown",
+    )
+    device_brand = models.CharField(
+        verbose_name=_("Marca do dispositivo"), max_length=100, blank=True, help_text=_("Marca do dispositivo (ex: Apple, Samsung, etc)")
+    )
+    device_model = models.CharField(
+        verbose_name=_("Modelo do dispositivo"), max_length=100, blank=True, help_text=_("Modelo do dispositivo (ex: iPhone 14 Pro, Galaxy S23)")
+    )
+
+    # sistema operacional
+    os_name = models.CharField(
+        verbose_name=_("Nome do sistema operacional"), max_length=50, blank=True, help_text=_("Nome do SO (iOS, Android, Windows, macOS, Linux)")
+    )
+    os_version = models.CharField(verbose_name=_("Versão do sistema operacional"), max_length=50, blank=True, help_text=_("Versão do SO"))
+
+    # client
+    browser_name = models.CharField(verbose_name=_("Nome do navegador"), max_length=50, blank=True, help_text=_("Nome do navegador ou app"))
+    browser_version = models.CharField(verbose_name=_("Versão do navegador"), max_length=50, blank=True)
+    user_agent = models.TextField(verbose_name=_("User agent"), blank=True, help_text=_("User agent completo da requisição"))
+
+    # ip da origem
+    ip_address = models.GenericIPAddressField(verbose_name=_("Endereço IP"), null=True, blank=True, help_text=_("Endereço IP da origem"))
+
+    # localização geográfica baseado no ip
+    country = models.CharField(verbose_name=_("País"), max_length=100, blank=True, help_text=_("País"))
+    country_code = models.CharField(verbose_name=_("Código do país"), max_length=2, blank=True, help_text=_("Código do país (ISO 3166-1 alpha-2)"))
+    region = models.CharField(verbose_name=_("Estado/Região"), max_length=100, blank=True, help_text=_("Estado/Região"))
+    city = models.CharField(verbose_name=_("Cidade"), max_length=100, blank=True, help_text=_("Cidade"))
+    latitude = models.DecimalField(verbose_name=_("Latitude"), max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(verbose_name=_("Longitude"), max_digits=9, decimal_places=6, null=True, blank=True)
+    timezone = models.CharField(verbose_name=_("Fuso horário"), max_length=50, blank=True, help_text=_("Fuso horário (ex: America/Sao_Paulo)"))
+    isp = models.CharField(verbose_name=_("Provedor de internet"), max_length=255, blank=True, help_text=_("Provedor de internet"))
+
+    # informações de uso
+    first_used = models.DateTimeField(verbose_name=_("Primeiro uso"), auto_now_add=True, help_text=_("Primeira vez que o token foi usado"))
+    last_used = models.DateTimeField(verbose_name=_("Último uso"), auto_now=True, help_text=_("Última vez que o token foi usado"))
+    usage_count = models.PositiveIntegerField(verbose_name=_("Contador de uso"), default=0, help_text=_("Número de vezes que o token foi usado"))
 
     # Verificação recente de identidade (step-up auth). Preenchido só quando a
     # sessão passa por `POST /auth/reauthenticate/`; usado por
     # `RecentAuthenticationPermission`/`@require_recent_auth`.
     reauthenticated_at = models.DateTimeField(
-        verbose_name=_('Reautenticado em'),
+        _("Reautenticado em"),
+        blank=True,
         null=True,
-        blank=True,
-        help_text=_('Última vez que esta sessão confirmou a identidade (senha/MFA).'),
-    )
-
-    # informações do dispositivo
-    device_name = models.CharField(
-        verbose_name=_('Nome do dispositivo'),
-        max_length=255,
-        blank=True,
-        help_text=_("Nome personalizado do dispositivo (ex: 'iPhone de Rafael')")
-    )
-    device_type = models.CharField(
-        verbose_name=_('Tipo de dispositivo'),
-        max_length=20,
-        choices=[
-            ('mobile', _('Celular')),
-            ('tablet', _('Tablet')),
-            ('desktop', _('Computador')),
-            ('unknown', _('Desconhecido')),
-        ],
-        default='unknown'
-    )
-    device_brand = models.CharField(
-        verbose_name=_('Marca do dispositivo'),
-        max_length=100,
-        blank=True,
-        help_text=_("Marca do dispositivo (ex: Apple, Samsung, etc)")
-    )
-    device_model = models.CharField(
-        verbose_name=_('Modelo do dispositivo'),
-        max_length=100,
-        blank=True,
-        help_text=_("Modelo do dispositivo (ex: iPhone 14 Pro, Galaxy S23)")
-    )
-
-    # sistema operacional
-    os_name = models.CharField(
-        verbose_name=_('Nome do sistema operacional'),
-        max_length=50,
-        blank=True,
-        help_text=_("Nome do SO (iOS, Android, Windows, macOS, Linux)")
-    )
-    os_version = models.CharField(
-        verbose_name=_('Versão do sistema operacional'),
-        max_length=50,
-        blank=True,
-        help_text=_("Versão do SO")
-    )
-
-    # client
-    browser_name = models.CharField(
-        verbose_name=_('Nome do navegador'),
-        max_length=50,
-        blank=True,
-        help_text=_("Nome do navegador ou app")
-    )
-    browser_version = models.CharField(
-        verbose_name=_('Versão do navegador'),
-        max_length=50,
-        blank=True
-    )
-    user_agent = models.TextField(
-        verbose_name=_('User agent'),
-        blank=True,
-        help_text=_("User agent completo da requisição")
-    )
-
-    # ip da origem
-    ip_address = models.GenericIPAddressField(
-        verbose_name=_('Endereço IP'),
-        null=True,
-        blank=True,
-        help_text=_("Endereço IP da origem")
-    )
-
-    # localização geográfica baseado no ip
-    country = models.CharField(
-        verbose_name=_('País'),
-        max_length=100,
-        blank=True,
-        help_text=_("País")
-    )
-    country_code = models.CharField(
-        verbose_name=_('Código do país'),
-        max_length=2,
-        blank=True,
-        help_text=_("Código do país (ISO 3166-1 alpha-2)")
-    )
-    region = models.CharField(
-        verbose_name=_('Estado/Região'),
-        max_length=100,
-        blank=True,
-        help_text=_("Estado/Região")
-    )
-    city = models.CharField(
-        verbose_name=_('Cidade'),
-        max_length=100,
-        blank=True,
-        help_text=_("Cidade")
-    )
-    latitude = models.DecimalField(
-        verbose_name=_('Latitude'),
-        max_digits=9,
-        decimal_places=6,
-        null=True,
-        blank=True
-    )
-    longitude = models.DecimalField(
-        verbose_name=_('Longitude'),
-        max_digits=9,
-        decimal_places=6,
-        null=True,
-        blank=True
-    )
-    timezone = models.CharField(
-        verbose_name=_('Fuso horário'),
-        max_length=50,
-        blank=True,
-        help_text=_("Fuso horário (ex: America/Sao_Paulo)")
-    )
-    isp = models.CharField(
-        verbose_name=_('Provedor de internet'),
-        max_length=255,
-        blank=True,
-        help_text=_("Provedor de internet")
-    )
-
-    # informações de uso
-    first_used = models.DateTimeField(
-        verbose_name=_('Primeiro uso'),
-        auto_now_add=True,
-        help_text=_("Primeira vez que o token foi usado")
-    )
-    last_used = models.DateTimeField(
-        verbose_name=_('Último uso'),
-        auto_now=True,
-        help_text=_("Última vez que o token foi usado")
-    )
-    usage_count = models.PositiveIntegerField(
-        verbose_name=_('Contador de uso'),
-        default=0,
-        help_text=_("Número de vezes que o token foi usado")
+        help_text=_("Data e hora da última confirmação recente de senha da sessão."),
+        db_comment="Data e hora da última confirmação recente de senha da sessão.",
     )
 
     # segurança e risco
     is_suspicious = models.BooleanField(
-        verbose_name=_('É suspeito'),
-        default=False,
-        help_text=_("Marcado como suspeito por mudança de IP/localização")
+        verbose_name=_("É suspeito"), default=False, help_text=_("Marcado como suspeito por mudança de IP/localização")
     )
-    suspicious_reason = models.TextField(
-        verbose_name=_('Motivo da suspeita'),
-        blank=True,
-        help_text=_("Motivo da suspeita")
-    )
-    risk_score = models.PositiveSmallIntegerField(
-        verbose_name=_('Pontuação de risco'),
-        default=0,
-        help_text=_("Score de risco (0-100)")
-    )
+    suspicious_reason = models.TextField(verbose_name=_("Motivo da suspeita"), blank=True, help_text=_("Motivo da suspeita"))
+    risk_score = models.PositiveSmallIntegerField(verbose_name=_("Pontuação de risco"), default=0, help_text=_("Score de risco (0-100)"))
 
     # adicionais do app/frontend
-    app_version = models.CharField(
-        verbose_name=_('Versão do app'),
-        max_length=20,
-        blank=True,
-        help_text=_("Versão do app/frontend (ex: 1.2.3)")
-    )
-    fcm_token = models.TextField(
-        verbose_name=_('Token FCM'),
-        blank=True,
-        help_text=_("Token para push notifications (Firebase Cloud Messaging)")
-    )
+    app_version = models.CharField(verbose_name=_("Versão do app"), max_length=20, blank=True, help_text=_("Versão do app/frontend (ex: 1.2.3)"))
+    fcm_token = models.TextField(verbose_name=_("Token FCM"), blank=True, help_text=_("Token para push notifications (Firebase Cloud Messaging)"))
 
     # metadados customizados
-    extra_data = models.JSONField(
-        verbose_name=_('Dados extras'),
-        default=dict,
-        blank=True,
-        help_text=_("Dados adicionais em formato JSON")
-    )
+    extra_data = models.JSONField(verbose_name=_("Dados extras"), default=dict, blank=True, help_text=_("Dados adicionais em formato JSON"))
 
     def mark_as_suspicious(self, reason):
         """Marca o token como suspeito"""
 
         self.is_suspicious = True
         self.suspicious_reason = reason
-        self.save(update_fields=['is_suspicious', 'suspicious_reason'])
+        self.save(update_fields=["is_suspicious", "suspicious_reason"])
 
     def increment_usage(self):
         """Incrementa o contador de uso"""
 
         self.usage_count += 1
-        self.save(update_fields=['usage_count', 'last_used'])
+        self.save(update_fields=["usage_count", "last_used"])
 
     def get_location_string(self):
         """Retorna string formatada da localização"""
 
         parts = [p for p in [self.city, self.region, self.country] if p]
-        return ', '.join(parts) if parts else _('Localização desconhecida')
+        return ", ".join(parts) if parts else _("Localização desconhecida")
 
     class Meta:
-        db_table = 'token_metadata'
-        ordering = ['-last_used']
-        verbose_name = _('Metadado de token')
-        verbose_name_plural = _('Metadados de tokens')
+        db_table = "token_metadata"
+        ordering = ["-last_used"]
+        verbose_name = _("Metadado de token")
+        verbose_name_plural = _("Metadados de tokens")
         permissions = [
             ("grant_unrestricted_apikey", _("Pode conceder API keys com scope irrestrito (*)")),
         ]
@@ -706,4 +613,128 @@ class TokenMetaData(models.Model):
 #         )
 
 
+class MFAFactor(models.Model):
+    """Segundo fator configurado pelo usuário, com no máximo um de cada tipo."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="mfa_factors", verbose_name=_("usuário"))
+    type = models.CharField(_("tipo"), max_length=16, choices=MFAFactorType.choices)
+    secret = encrypt(
+        models.CharField(
+            _("segredo"),
+            max_length=64,
+            blank=True,
+            null=True,
+            default=None,
+            help_text=_("Segredo TOTP cifrado."),
+            db_comment="Segredo TOTP cifrado.",
+        )
+    )
+    confirmed_at = models.DateTimeField(_("confirmado em"), blank=True, null=True)
+    enabled_at = models.DateTimeField(_("ativado em"), blank=True, null=True)
+    disabled_at = models.DateTimeField(_("desativado em"), blank=True, null=True)
+    last_used_at = models.DateTimeField(_("usado por último em"), blank=True, null=True)
+    totp_last_counter = models.PositiveBigIntegerField(_("último contador TOTP"), blank=True, null=True)
+    totp_algorithm = models.CharField(_("algoritmo TOTP"), max_length=16, default="SHA1")
+    totp_digits = models.PositiveSmallIntegerField(_("dígitos TOTP"), default=6)
+    totp_period = models.PositiveSmallIntegerField(_("período TOTP"), default=30)
+
+    class Meta:
+        db_table = "mfa_factor"
+        constraints = [
+            models.UniqueConstraint(fields=("user", "type"), name="mfa_factor_unique_user_type"),
+            models.CheckConstraint(
+                condition=(models.Q(type=MFAFactorType.TOTP) & models.Q(secret__isnull=False))
+                | (~models.Q(type=MFAFactorType.TOTP) & models.Q(secret__isnull=True)),
+                name="mfa_factor_totp_secret_only",
+            ),
+        ]
+
+
+class MFAChallenge(models.Model):
+    """Desafio de uso único para login, enrollment ou reautenticação."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="mfa_challenges", verbose_name=_("usuário"))
+    factor = models.ForeignKey(MFAFactor, on_delete=models.CASCADE, related_name="challenges", verbose_name=_("fator"))
+    token = models.ForeignKey(
+        AuthToken,
+        on_delete=models.CASCADE,
+        related_name="mfa_challenges",
+        blank=True,
+        null=True,
+        verbose_name=_("token de autenticação"),
+    )
+    purpose = models.CharField(_("finalidade"), max_length=24, choices=MFAChallengePurpose.choices)
+    otp_digest = models.CharField(_("digest do OTP"), max_length=128, blank=True)
+    expires_at = models.DateTimeField(_("expira em"), db_index=True)
+    cooldown_until = models.DateTimeField(_("cooldown até"), blank=True, null=True)
+    attempts = models.PositiveSmallIntegerField(_("tentativas"), default=0)
+    delivery_status = models.CharField(
+        _("estado de entrega"), max_length=16, choices=MFAChallengeDeliveryStatus.choices, default=MFAChallengeDeliveryStatus.PENDING
+    )
+    delivered_at = models.DateTimeField(_("entregue em"), blank=True, null=True)
+    consumed_at = models.DateTimeField(_("consumido em"), blank=True, null=True)
+    created_at = models.DateTimeField(_("criado em"), auto_now_add=True)
+
+    class Meta:
+        db_table = "mfa_challenge"
+        indexes = [models.Index(fields=("user", "expires_at"), name="mfa_challenge_user_expiry")]
+
+    @property
+    def is_expired(self):
+        return self.expires_at <= timezone.now()
+
+    @property
+    def is_consumed(self):
+        return self.consumed_at is not None
+
+
+class MFARecoveryCode(models.Model):
+    """Código de recuperação armazenado somente como hash lento e salgado."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="mfa_recovery_codes", verbose_name=_("usuário"))
+    digest = models.CharField(_("digest"), max_length=128)
+    created_at = models.DateTimeField(_("criado em"), auto_now_add=True)
+    consumed_at = models.DateTimeField(_("consumido em"), blank=True, null=True)
+
+    class Meta:
+        db_table = "mfa_recovery_code"
+        constraints = [models.CheckConstraint(condition=~models.Q(digest=""), name="mfa_recovery_code_requires_digest")]
+
+
+class TrustedDevice(models.Model):
+    """Dispositivo confiável identificado por uma credencial rotacionável."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="trusted_devices", verbose_name=_("usuário"))
+    digest = models.CharField(_("digest"), max_length=128, unique=True)
+    name = models.CharField(_("nome"), max_length=255, blank=True)
+    user_agent = models.TextField(_("user agent"), blank=True)
+    ip_address = models.GenericIPAddressField(_("IP"), blank=True, null=True)
+    created_at = models.DateTimeField(_("criado em"), auto_now_add=True)
+    expires_at = models.DateTimeField(_("expira em"), db_index=True)
+    last_used_at = models.DateTimeField(_("usado por último em"), blank=True, null=True)
+    revoked_at = models.DateTimeField(_("revogado em"), blank=True, null=True)
+
+    class Meta:
+        db_table = "trusted_device"
+        constraints = [models.CheckConstraint(condition=~models.Q(digest=""), name="trusted_device_requires_digest")]
+        indexes = [models.Index(fields=("user", "expires_at"), name="trusted_device_user_expiry")]
+
+
+class MFAResetAudit(models.Model):
+    """Registro não sensível de um reset administrativo de MFA."""
+
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="mfa_resets_performed")
+    target = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="mfa_resets_received")
+    reason = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "mfa_reset_audit"
+
+
 register(TokenMetaData)
+register(MFAFactor)
+register(MFAChallenge, exclude_fields=["otp_digest"])
+register(MFARecoveryCode, exclude_fields=["digest"])
+register(TrustedDevice, exclude_fields=["digest"])
+register(MFAResetAudit)

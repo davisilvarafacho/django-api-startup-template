@@ -110,12 +110,12 @@ _Atualizado em 2026-07-31._
 - ✅ **Envelope de erros unificado** (`{"errors": [...], "request_id": ...}`) para DRF, middlewares e handlers de status HTTP do Django.
 - ✅ **Gestão de sessões** (`/auth/sessions/`, `/auth/logout*`) e **autenticação recente/step-up** (`@require_recent_auth`, `/auth/reauthenticate/`).
 - ✅ **API keys por organização** (`/auth/api_keys/`): CRUD, rotação atômica, suspensão manual/automática (fail-closed quando o responsável perde o vínculo) e retomada; UUID como identificador público; plain token exibido só na criação/rotação.
+- 🚧 **MFA/2FA** entregue (TOTP, e-mail, SMS, recovery codes, token `PRE_AUTH` e
+  trusted devices); a checagem de senha vazada (HaveIBeenPwned) segue pendente.
 - ✅ **Cache de permissions** com invalidação ao alterar papéis, vínculos, grupos
   ou permissões (ver `docs/adr/0005-cache-semantico-de-autorizacao.md`).
 - ⏳ Para fechar o batch:
-  - **MFA/2FA** + checagem de senha vazada (HaveIBeenPwned); os pontos de
-    integração já existem como stubs seguros
-    (`user_has_mfa_enabled()`/`verify_mfa_code()`).
+  - Checagem de **senha vazada** (HaveIBeenPwned).
   - **Field-level permissions** com serializers dinâmicos por papel.
   - **Ciclo de vida de conta**: verificação de e-mail, social auth,
     desativação e exclusão.

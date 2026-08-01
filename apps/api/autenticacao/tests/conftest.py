@@ -1,11 +1,26 @@
 """Fixtures compartilhadas dos testes de autenticação."""
 
+from django.core.cache import cache
+
 from rest_framework.test import APIClient
 
 import pytest
 from threadlocals.threadlocals import set_current_user, set_thread_variable
 
 from apps.api.autenticacao.views import LoginView
+
+
+@pytest.fixture(autouse=True)
+def _isolar_throttle():
+    """Zera o contador de throttle entre testes.
+
+    O DRF guarda o histórico de requisições no cache `default`, que sobrevive ao
+    rollback do banco. Sem limpar, um teste que faz login herda as tentativas dos
+    anteriores e leva 429 assim que a suíte cresce.
+    """
+    cache.clear()
+    yield
+    cache.clear()
 
 
 @pytest.fixture

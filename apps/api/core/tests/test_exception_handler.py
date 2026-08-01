@@ -73,9 +73,7 @@ def test_validation_error_aninhado_vira_422_com_paths(context):
 
 
 def test_validation_error_com_multiplos_campos_produz_multiplos_itens(context):
-    exc = serializers.ValidationError(
-        {"email": ["Este campo é obrigatório."], "nome": ["Valor inválido."]}
-    )
+    exc = serializers.ValidationError({"email": ["Este campo é obrigatório."], "nome": ["Valor inválido."]})
 
     response = api_exception_handler(exc, context)
 

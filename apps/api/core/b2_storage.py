@@ -43,9 +43,7 @@ class BackblazeB2Storage(Storage):
         self.bucket_name = bucket_name or getattr(settings, "B2_BUCKET_NAME", None)
         self.bucket_id = bucket_id or getattr(settings, "B2_BUCKET_ID", None)
         self.location = self._clean_location(location if location is not None else getattr(settings, "B2_LOCATION", ""))
-        self.public_base_url = (
-            public_base_url or getattr(settings, "B2_PUBLIC_BASE_URL", None) or getattr(settings, "B2_ENDPOINT_URL", None)
-        )
+        self.public_base_url = public_base_url or getattr(settings, "B2_PUBLIC_BASE_URL", None) or getattr(settings, "B2_ENDPOINT_URL", None)
         self._api = None
         self._bucket = None
 

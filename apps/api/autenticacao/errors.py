@@ -17,3 +17,11 @@ class AuthErrorCode(models.TextChoices):
     API_KEY_SUSPENDED = "auth.api_key_suspended", _("Esta API key está suspensa.")
     RESPONSIBLE_INACTIVE = "auth.responsible_inactive", _("O responsável por esta credencial está inativo.")
     TOKEN_LIMIT_EXCEEDED = "auth.token_limit_exceeded", _("Limite de sessões ativas excedido.")
+
+    # MFA / 2FA
+    INVALID_CHALLENGE = "auth.invalid_challenge", _("Desafio de verificação inválido ou expirado.")
+    INVALID_OTP = "auth.invalid_otp", _("Código de verificação inválido.")
+    OTP_COOLDOWN = "auth.otp_cooldown", _("Aguarde antes de solicitar um novo código.")
+    TOO_MANY_ATTEMPTS = "auth.too_many_attempts", _("Tentativas demais. Tente novamente mais tarde.")
+    PWNED_PASSWORD = "auth.pwned_password", _("Esta senha apareceu em vazamentos públicos. Escolha outra.")
+    DELIVERY_UNAVAILABLE = "auth.delivery_unavailable", _("Não foi possível enviar o código de verificação.")

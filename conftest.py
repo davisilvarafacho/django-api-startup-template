@@ -5,11 +5,16 @@ from django.conf import settings
 from django.core.cache import caches
 from django.test import override_settings
 
+from rest_framework.test import APIClient
+
 import pytest
+from cryptography.fernet import Fernet
 from redis import Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 from threadlocals.threadlocals import set_current_user, set_thread_variable
+
+from apps.usuarios.factories import UsuarioFactory
 
 
 @pytest.fixture(autouse=True)
@@ -27,6 +32,21 @@ def _isolar_usuario_da_thread():
     yield
     set_current_user(None)
     set_thread_variable("request", None)
+
+
+@pytest.fixture
+def usuario(db):
+    return UsuarioFactory(password="Senha123!")
+
+
+@pytest.fixture
+def api_client():
+    return APIClient()
+
+
+@pytest.fixture(autouse=True)
+def sensitive_field_key(monkeypatch):
+    monkeypatch.setenv("SENSITIVE_FIELD_KEYS", Fernet.generate_key().decode())
 
 
 @pytest.fixture(scope="session")
