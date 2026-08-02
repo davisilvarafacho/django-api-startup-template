@@ -34,6 +34,10 @@ para comportar múltiplos arquivos de teste.
             test_*.py
 ```
 
+Nomes de arquivo **devem** ser sempre no plural (ex.: `models.py`, `serializers.py`,
+`views.py`, `handlers.py`, `filters.py`), inclusive os que não fazem parte da lista
+fixa acima (ex.: `validators.py`, não `validator.py`).
+
 ### 1.3. Criação de Apps
 
 Apps **devem** ser criados pelo comando do projeto, não pelo `startapp` do Django:
@@ -355,6 +359,7 @@ Todo ViewSet herda, de graça:
 |---|---|
 | Estrutura | Todos os apps sempre dentro da pasta `apps/` |
 | Estrutura | Módulos como **arquivos** `.py`; `tests/` como **pacote** |
+| Estrutura | Nomes de arquivo sempre no **plural** (`models.py`, `validators.py`, etc.) |
 | Estrutura | `common/` = implementações próprias (serialização, cache de permissões, encrypt de fields); domínio fica em `apps/`, helpers em `utils/` |
 | QuerySets | `select_related`/`prefetch_related` obrigatórios; `only()`/`values()` para limitar campos |
 | Models | Choices no topo do `models.py`, `IntegerChoices`, docstring referenciando modelo/coluna |
