@@ -6,7 +6,7 @@ com o que **já foi implementado** e o que está **planejado**, em ondas (batche
 **Legenda:** ✅ feito · 🚧 em andamento · ⏳ planejado · 🧠 brainstorm próprio antes de
 codar · 🔎 estudar antes · ⏸️ adiado
 
-_Atualizado em 2026-08-01._
+_Atualizado em 2026-08-02._
 
 ---
 
@@ -26,7 +26,7 @@ _Atualizado em 2026-08-01._
 | Batch 8 | Domínio & segurança | 🚧 |
 | Batch 9 | API avançada | ⏳ |
 | Batch 10 | Escala de banco | ⏳ |
-| Batch 11 | DevEx & operação (restante) | ⏳ |
+| Batch 11 | DevEx & operação (restante) | 🚧 |
 
 ---
 
@@ -57,6 +57,12 @@ _Atualizado em 2026-08-01._
 - `GET /lookup/<chave>/` com `IsAuthenticated` (não exige permissão do modelo-alvo).
 - Saída via serializer DRF (default `{id, label}` ou serializer próprio).
 - N+1 tratado (`select_related`/`prefetch_related` + `setup_eager_loading`).
+
+### Soft delete real
+- `Base.delete()` marca `is_deleted=True` em vez de apagar; `perform_destroy` do
+  `BaseModelViewSet` passa a ser soft delete por padrão.
+- Managers: `objects` (não deletados), `all_objects` (inclui deletados) e `ativos`
+  (`is_active=True`).
 
 ### Batch 3 — DevEx / CI
 - **pre-commit** (ruff + hooks básicos).
@@ -149,11 +155,14 @@ _Atualizado em 2026-08-01._
 - **Constraints no banco** (`UniqueConstraint`, `CheckConstraint`) e triggers com **`django-pgtrigger`**.
 - Data migrations separadas de schema migrations.
 
-### Batch 11 — DevEx & operação (restante)
-- **Fixtures / seeds / demo data** via management command.
-- **Devcontainer** para onboarding.
+### Batch 11 — DevEx & operação (restante) 🚧
+- ✅ **Fixtures / seeds / demo data** via management command (`manage.py seed_demo`,
+  idempotente e bloqueado em produção).
+- ✅ **Devcontainer** para onboarding (`.devcontainer/`).
+- ✅ **Ambiente local completo atrás do Nginx** (`docker/nginx/`, `make stack` e
+  `make nginx-test`; ver `docs/how-to/proxy-nginx.md`).
+- ⏳ Política de **deprecação de API** (changelog de API + header `Sunset`).
 - ⏸️ **Runbooks** operacionais (adiado).
-- Política de **deprecação de API** (changelog de API + header `Sunset`).
 
 ---
 
@@ -162,9 +171,10 @@ _Atualizado em 2026-08-01._
 - **URLs assinadas** para arquivos privados (auth base que gera e valida token).
 
 ## 🔎 A estudar
-- **Soft delete real**: existe o campo `ativo`, mas o `destroy` apaga fisicamente.
 - **`django-constance`** (configuração em runtime, sem redeploy).
-- Headers de **SSL/HSTS/secure** + `manage.py check --deploy`.
+- Headers de **SSL/HSTS/secure**: o alvo `make check` (`manage.py check --deploy`) já
+  existe, mas o settings só define `SECURE_PROXY_SSL_HEADER` — faltam
+  `SECURE_SSL_REDIRECT`, `SECURE_HSTS_*`, `SESSION_COOKIE_SECURE` e `CSRF_COOKIE_SECURE`.
 - **CSP** (`django-csp`).
 - **oso** / **casbin** (camada de policy).
 - Regras de **migration zero-downtime** (Saleor/Sentry) — entender se é limitação de banco.
