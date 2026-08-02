@@ -8,10 +8,10 @@ import pytest
 
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
 from apps.usuarios.factories import UsuarioFactory
-from common.permission_cache.epochs import EpochStore
-from common.permission_cache.resolvers.tenant import TenantAccessResolver
-from common.permission_cache.store import PermissionCacheStore
-from common.permission_cache.types import TenantAccess
+from internal_frameworks.permission_cache.epochs import EpochStore
+from internal_frameworks.permission_cache.resolvers.tenant import TenantAccessResolver
+from internal_frameworks.permission_cache.store import PermissionCacheStore
+from internal_frameworks.permission_cache.types import TenantAccess
 
 pytestmark = pytest.mark.django_db
 

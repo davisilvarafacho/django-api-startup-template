@@ -1,6 +1,6 @@
 import pytest
 
-from common.permission_cache.types import (
+from internal_frameworks.permission_cache.types import (
     DjangoPermissionSnapshot,
     InvalidEnvelope,
     TenantAccess,

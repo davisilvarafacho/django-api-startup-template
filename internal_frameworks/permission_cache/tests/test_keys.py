@@ -1,4 +1,4 @@
-from common.permission_cache.keys import (
+from internal_frameworks.permission_cache.keys import (
     epoch_key,
     global_scope,
     guardian_object_scope,

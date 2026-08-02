@@ -10,8 +10,8 @@ from guardian.shortcuts import assign_perm
 
 from apps.organizacoes.models import Organizacao
 from apps.usuarios.factories import UsuarioFactory
-from common.permission_cache.backends import CachedObjectPermissionBackend
-from common.permission_cache.resolvers.guardian import GuardianPermissionResolver
+from internal_frameworks.permission_cache.backends import CachedObjectPermissionBackend
+from internal_frameworks.permission_cache.resolvers.guardian import GuardianPermissionResolver
 
 pytestmark = pytest.mark.django_db
 

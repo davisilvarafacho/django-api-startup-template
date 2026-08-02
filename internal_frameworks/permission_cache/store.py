@@ -4,11 +4,11 @@ from typing import TypeVar
 
 from django.core.cache import caches
 
-from common.permission_cache.config import get_authorization_cache_config
-from common.permission_cache.epochs import EpochStore
-from common.permission_cache.keys import snapshot_key
-from common.permission_cache.metrics import record_fallback, record_operation, time_resolve
-from common.permission_cache.types import InvalidEnvelope, decode_envelope, encode_envelope
+from internal_frameworks.permission_cache.config import get_authorization_cache_config
+from internal_frameworks.permission_cache.epochs import EpochStore
+from internal_frameworks.permission_cache.keys import snapshot_key
+from internal_frameworks.permission_cache.metrics import record_fallback, record_operation, time_resolve
+from internal_frameworks.permission_cache.types import InvalidEnvelope, decode_envelope, encode_envelope
 
 logger = logging.getLogger(__name__)
 

@@ -4,8 +4,8 @@ from django.core.cache import caches
 
 from django_redis.cache import RedisCache
 
-from common.permission_cache.config import get_authorization_cache_config
-from common.permission_cache.keys import epoch_key
+from internal_frameworks.permission_cache.config import get_authorization_cache_config
+from internal_frameworks.permission_cache.keys import epoch_key
 
 MINIMUM_SEED = 2**52
 SEED_VARIANTS = 2**52

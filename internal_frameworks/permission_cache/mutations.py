@@ -11,9 +11,9 @@ from guardian.utils import get_group_obj_perms_model, get_user_obj_perms_model
 
 from apps.organizacoes.models import Vinculo
 from apps.usuarios.models import Usuario
-from common.permission_cache.invalidation import schedule_epoch_bumps
-from common.permission_cache.keys import guardian_object_scope, layer_scope, user_scope
-from common.permission_cache.signals.guardian import suppress_guardian_signal_invalidation
+from internal_frameworks.permission_cache.invalidation import schedule_epoch_bumps
+from internal_frameworks.permission_cache.keys import guardian_object_scope, layer_scope, user_scope
+from internal_frameworks.permission_cache.signals.guardian import suppress_guardian_signal_invalidation
 
 
 def _database_alias(instances: list[models.Model], fallback: str = DEFAULT_DB_ALIAS) -> str:

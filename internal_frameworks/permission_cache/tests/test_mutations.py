@@ -15,7 +15,7 @@ from guardian.utils import get_user_obj_perms_model
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
 from apps.usuarios.factories import UsuarioFactory
 from apps.usuarios.models import Usuario
-from common.permission_cache.mutations import (
+from internal_frameworks.permission_cache.mutations import (
     bulk_create_memberships,
     bulk_create_permissions,
     bulk_update_memberships,

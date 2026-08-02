@@ -17,10 +17,10 @@ from django_redis import get_redis_connection
 from django_redis.cache import RedisCache
 from redis.exceptions import ResponseError
 
-from common.permission_cache.epochs import EpochStore
-from common.permission_cache.invalidation import bump_epoch_scopes
-from common.permission_cache.keys import epoch_key, global_scope, guardian_object_scope, layer_scope, snapshot_key, user_scope
-from common.permission_cache.store import PermissionCacheStore
+from internal_frameworks.permission_cache.epochs import EpochStore
+from internal_frameworks.permission_cache.invalidation import bump_epoch_scopes
+from internal_frameworks.permission_cache.keys import epoch_key, global_scope, guardian_object_scope, layer_scope, snapshot_key, user_scope
+from internal_frameworks.permission_cache.store import PermissionCacheStore
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

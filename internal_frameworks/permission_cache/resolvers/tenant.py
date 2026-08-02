@@ -3,9 +3,9 @@ from collections.abc import Callable
 from cachalot.api import cachalot_disabled
 
 from apps.organizacoes.models import Vinculo
-from common.permission_cache.keys import global_scope, layer_scope, user_scope
-from common.permission_cache.store import PermissionCacheStore
-from common.permission_cache.types import TenantAccess
+from internal_frameworks.permission_cache.keys import global_scope, layer_scope, user_scope
+from internal_frameworks.permission_cache.store import PermissionCacheStore
+from internal_frameworks.permission_cache.types import TenantAccess
 
 
 class TenantAccessResolver:

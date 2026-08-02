@@ -6,9 +6,9 @@ import pytest
 
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
 from apps.usuarios.factories import UsuarioFactory
-from common.permission_cache.invalidation import bump_epoch_scopes
-from common.permission_cache.resolvers.tenant import TenantAccessResolver
-from common.permission_cache.types import TenantAccess
+from internal_frameworks.permission_cache.invalidation import bump_epoch_scopes
+from internal_frameworks.permission_cache.resolvers.tenant import TenantAccessResolver
+from internal_frameworks.permission_cache.types import TenantAccess
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

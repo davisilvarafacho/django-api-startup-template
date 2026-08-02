@@ -6,10 +6,10 @@ from django.test import override_settings
 
 import pytest
 
-from common.permission_cache.epochs import EpochStore
-from common.permission_cache.keys import snapshot_key
-from common.permission_cache.store import PermissionCacheStore
-from common.permission_cache.types import decode_envelope
+from internal_frameworks.permission_cache.epochs import EpochStore
+from internal_frameworks.permission_cache.keys import snapshot_key
+from internal_frameworks.permission_cache.store import PermissionCacheStore
+from internal_frameworks.permission_cache.types import decode_envelope
 
 
 def build_store():

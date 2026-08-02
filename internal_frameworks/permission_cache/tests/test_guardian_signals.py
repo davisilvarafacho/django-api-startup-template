@@ -9,7 +9,7 @@ from guardian.utils import get_group_obj_perms_model, get_user_obj_perms_model
 
 from apps.organizacoes.models import Organizacao
 from apps.usuarios.factories import UsuarioFactory
-from common.permission_cache.signals.guardian import connect_guardian_signals
+from internal_frameworks.permission_cache.signals.guardian import connect_guardian_signals
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

@@ -5,7 +5,7 @@ from django.test import RequestFactory
 import pytest
 
 from apps.api.core import metrics as modulo
-from common.permission_cache import metrics as permission_cache_metrics
+from internal_frameworks.permission_cache import metrics as permission_cache_metrics
 
 
 @pytest.fixture

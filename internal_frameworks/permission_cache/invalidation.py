@@ -2,8 +2,8 @@ import logging
 
 from django.db import DEFAULT_DB_ALIAS, transaction
 
-from common.permission_cache.epochs import EpochStore
-from common.permission_cache.metrics import record_invalidation
+from internal_frameworks.permission_cache.epochs import EpochStore
+from internal_frameworks.permission_cache.metrics import record_invalidation
 
 logger = logging.getLogger(__name__)
 

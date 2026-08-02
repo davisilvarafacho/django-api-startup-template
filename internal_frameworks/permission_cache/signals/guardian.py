@@ -5,8 +5,8 @@ from django.db.models.signals import post_delete, post_save, pre_delete, pre_sav
 
 from guardian.utils import get_group_obj_perms_model, get_user_obj_perms_model
 
-from common.permission_cache.invalidation import schedule_epoch_bumps
-from common.permission_cache.keys import guardian_object_scope
+from internal_frameworks.permission_cache.invalidation import schedule_epoch_bumps
+from internal_frameworks.permission_cache.keys import guardian_object_scope
 
 _PREVIOUS_SCOPE_ATTRIBUTE = "_permission_cache_previous_guardian_object_scope"
 _DELETED_SCOPE_ATTRIBUTE = "_permission_cache_deleted_guardian_object_scope"

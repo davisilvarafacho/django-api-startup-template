@@ -3,9 +3,9 @@ from django.db import DEFAULT_DB_ALIAS
 
 from cachalot.api import cachalot_disabled
 
-from common.permission_cache.keys import global_scope, layer_scope, user_scope
-from common.permission_cache.store import PermissionCacheStore
-from common.permission_cache.types import DjangoPermissionSnapshot
+from internal_frameworks.permission_cache.keys import global_scope, layer_scope, user_scope
+from internal_frameworks.permission_cache.store import PermissionCacheStore
+from internal_frameworks.permission_cache.types import DjangoPermissionSnapshot
 
 
 class DjangoPermissionResolver:

@@ -10,9 +10,9 @@ from django_redis.cache import RedisCache
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import ResponseError
 
-from common.permission_cache import invalidation
-from common.permission_cache.epochs import EpochStore
-from common.permission_cache.keys import epoch_key
+from internal_frameworks.permission_cache import invalidation
+from internal_frameworks.permission_cache.epochs import EpochStore
+from internal_frameworks.permission_cache.keys import epoch_key
 
 
 def make_cache():

@@ -13,6 +13,6 @@ class OrganizacoesConfig(AppConfig):
         # Sem isso a TenantPermission falha alto ao ser consultada.
         tenant_free_registry.discover()
 
-        from common.permission_cache.signals.tenant import connect_tenant_signals
+        from internal_frameworks.permission_cache.signals.tenant import connect_tenant_signals
 
         connect_tenant_signals()

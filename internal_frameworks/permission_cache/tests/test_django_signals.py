@@ -12,7 +12,7 @@ from django.db.models.signals import post_migrate
 import pytest
 
 from apps.usuarios.factories import UsuarioFactory
-from common.permission_cache.signals.django import _affected_user_ids, _capture_reverse_clear_user_ids
+from internal_frameworks.permission_cache.signals.django import _affected_user_ids, _capture_reverse_clear_user_ids
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

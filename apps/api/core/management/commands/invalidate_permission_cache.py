@@ -1,8 +1,8 @@
 from django.core.management.base import BaseCommand, CommandError
 from django.db import DEFAULT_DB_ALIAS
 
-from common.permission_cache.invalidation import bump_epoch_scopes
-from common.permission_cache.keys import global_scope
+from internal_frameworks.permission_cache.invalidation import bump_epoch_scopes
+from internal_frameworks.permission_cache.keys import global_scope
 
 
 class Command(BaseCommand):

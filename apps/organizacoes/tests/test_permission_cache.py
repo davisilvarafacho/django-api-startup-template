@@ -15,8 +15,8 @@ from apps.organizacoes.serializers import ConviteCreateSerializer, VinculoSerial
 from apps.organizacoes.tests.test_api import client_autenticado
 from apps.organizacoes.views import TimeViewSet
 from apps.usuarios.factories import UsuarioFactory
-from common.permission_cache.resolvers.tenant import TenantAccessResolver
-from common.permission_cache.types import TenantAccess
+from internal_frameworks.permission_cache.resolvers.tenant import TenantAccessResolver
+from internal_frameworks.permission_cache.types import TenantAccess
 
 
 @pytest.mark.django_db

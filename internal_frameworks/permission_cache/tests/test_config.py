@@ -4,7 +4,7 @@ from django.core.cache import caches
 from django.db import connection
 from django.test import override_settings
 
-from common.permission_cache.config import get_authorization_cache_config
+from internal_frameworks.permission_cache.config import get_authorization_cache_config
 
 
 def test_django_uses_isolated_permission_cache_test_database():

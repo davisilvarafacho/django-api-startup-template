@@ -5,8 +5,8 @@ from guardian.backends import ObjectPermissionBackend, check_support
 from guardian.ctypes import get_content_type
 from guardian.exceptions import WrongAppError
 
-from common.permission_cache.resolvers.django import DjangoPermissionResolver
-from common.permission_cache.resolvers.guardian import GuardianPermissionResolver
+from internal_frameworks.permission_cache.resolvers.django import DjangoPermissionResolver
+from internal_frameworks.permission_cache.resolvers.guardian import GuardianPermissionResolver
 
 
 class CachedModelBackend(ModelBackend):

@@ -22,12 +22,12 @@ from guardian.shortcuts import assign_perm
 from apps.api.autenticacao.permissions import CustomDjangoModelPermissions
 from apps.organizacoes.models import Organizacao
 from apps.usuarios.factories import UsuarioFactory
-from common.permission_cache.backends import CachedModelBackend
-from common.permission_cache.epochs import EpochStore
-from common.permission_cache.keys import global_scope, layer_scope, snapshot_key, user_scope
-from common.permission_cache.resolvers.django import DjangoPermissionResolver
-from common.permission_cache.store import PermissionCacheStore
-from common.permission_cache.types import DjangoPermissionSnapshot, encode_envelope
+from internal_frameworks.permission_cache.backends import CachedModelBackend
+from internal_frameworks.permission_cache.epochs import EpochStore
+from internal_frameworks.permission_cache.keys import global_scope, layer_scope, snapshot_key, user_scope
+from internal_frameworks.permission_cache.resolvers.django import DjangoPermissionResolver
+from internal_frameworks.permission_cache.store import PermissionCacheStore
+from internal_frameworks.permission_cache.types import DjangoPermissionSnapshot, encode_envelope
 
 pytestmark = pytest.mark.django_db
 

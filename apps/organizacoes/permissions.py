@@ -18,7 +18,7 @@ from apps.organizacoes.context import definir_organizacao_atual
 from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.models import Papel
 from apps.organizacoes.routes import tenant_free_registry
-from common.permission_cache.resolvers.tenant import TenantAccessResolver
+from internal_frameworks.permission_cache.resolvers.tenant import TenantAccessResolver
 
 
 def _is_api_key(request):

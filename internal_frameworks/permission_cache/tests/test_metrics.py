@@ -6,9 +6,9 @@ from django.core.cache.backends.locmem import LocMemCache
 import pytest
 from prometheus_client import generate_latest
 
-from common.permission_cache import metrics
-from common.permission_cache.epochs import EpochStore
-from common.permission_cache.store import PermissionCacheStore
+from internal_frameworks.permission_cache import metrics
+from internal_frameworks.permission_cache.epochs import EpochStore
+from internal_frameworks.permission_cache.store import PermissionCacheStore
 
 
 @pytest.mark.parametrize(

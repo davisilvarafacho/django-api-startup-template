@@ -1,8 +1,8 @@
 from django.db.models.signals import post_delete, post_save, pre_delete, pre_save
 
 from apps.organizacoes.models import Organizacao, Vinculo
-from common.permission_cache.invalidation import schedule_epoch_bumps
-from common.permission_cache.keys import layer_scope, user_scope
+from internal_frameworks.permission_cache.invalidation import schedule_epoch_bumps
+from internal_frameworks.permission_cache.keys import layer_scope, user_scope
 
 
 def _remember_membership_previous(instance, using, raw, update_fields, **kwargs) -> None:
