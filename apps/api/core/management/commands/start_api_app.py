@@ -138,6 +138,11 @@ class Command(TemplateCommand):
     def add_arguments(self, parser):
         parser.add_argument("name", help="Nome do app novo.")
         parser.add_argument(
+            "directory",
+            nargs="?",
+            help="Diretório de destino, que já deve existir e ficar dentro de apps/ (como no startapp do Django). Incompatível com --parent.",
+        )
+        parser.add_argument(
             "--parent",
             help="Nome do app pai (em qualquer profundidade) ou caminho relativo a apps/; o app novo nasce em <pai>/subapps/.",
         )
@@ -180,8 +185,44 @@ class Command(TemplateCommand):
 
         return encontrados[0]
 
+    def resolve_directory(self, apps_root, directory):
+        """Resolve o diretório de destino informado explicitamente na linha de comando.
+
+        Diferente do `startapp` do Django, o destino não é livre: ele precisa
+        estar dentro de `apps/` e cada componente do caminho precisa ser um
+        identificador válido, senão o dotted path registrado em `BUSINESS_APPS`
+        não seria importável.
+
+        Args:
+            apps_root: O diretório `apps/` do projeto.
+            directory: Caminho informado pelo usuário, relativo ao diretório
+                atual ou absoluto.
+
+        Returns:
+            O diretório de destino, já existente.
+
+        Raises:
+            CommandError: Se o diretório não existir, não for um diretório,
+                estiver fora de `apps/` ou tiver um componente que não é um
+                nome de módulo válido.
+        """
+        destino = Path(directory).expanduser().resolve()
+
+        if not destino.is_dir():
+            raise CommandError(f"'{destino}' não existe; crie o diretório primeiro ou omita o argumento.")
+
+        if not destino.is_relative_to(apps_root) or destino == apps_root:
+            raise CommandError(f"'{destino}' está fora de apps/; todo app do projeto mora dentro de apps/.")
+
+        for parte in destino.relative_to(apps_root).parts:
+            if not parte.isidentifier() or keyword.iskeyword(parte):
+                raise CommandError(f"'{parte}' não é um nome de módulo válido; o caminho até o app precisa ser importável.")
+
+        return destino
+
     def handle(self, **options):
         app_name = options.pop("name")
+        directory = options.pop("directory")
         parent = options.pop("parent")
 
         # `TemplateCommand.handle()` faz esta mesma checagem, mas só depois de
@@ -194,16 +235,28 @@ class Command(TemplateCommand):
         if parent is not None and not parent:
             raise CommandError("--parent não pode ser vazio; omita a opção para criar o app em apps/.")
 
-        base_dir = Path(settings.BASE_DIR)
+        if directory is not None and parent is not None:
+            raise CommandError("--parent e o diretório de destino decidem a mesma coisa; informe apenas um dos dois.")
+
+        if directory is not None and not directory:
+            raise CommandError("o diretório de destino não pode ser vazio; omita o argumento para criar o app em apps/.")
+
+        base_dir = Path(settings.BASE_DIR).resolve()
         apps_root = base_dir / "apps"
 
-        if parent is not None:
+        # Um destino já existente é o caso normal quando ele vem explícito na
+        # linha de comando — é justamente para isso que o argumento existe.
+        criar_destino = directory is None
+
+        if directory is not None:
+            destination = self.resolve_directory(apps_root, directory)
+        elif parent is not None:
             parent_dir = self.find_parent_app(apps_root, parent)
             destination = parent_dir / "subapps" / app_name
         else:
             destination = apps_root / app_name
 
-        if destination.exists():
+        if criar_destino and destination.exists():
             raise CommandError(f"'{destination}' já existe.")
 
         dotted_path = ".".join(destination.relative_to(base_dir).parts)
@@ -224,7 +277,8 @@ class Command(TemplateCommand):
         registrado = insert_business_app(source, dotted_path)
 
         # --- a partir daqui, escreve no disco ---
-        destination.mkdir(parents=True)
+        if criar_destino:
+            destination.mkdir(parents=True)
         try:
             options["template"] = str(APP_TEMPLATE_DIR)
             options["extensions"] = ["py"]
@@ -233,12 +287,15 @@ class Command(TemplateCommand):
             super().handle("app", app_name, str(destination), **options)
 
             # `subapps/` não pode vir do template: git não versiona diretório vazio.
-            (destination / "subapps").mkdir()
+            (destination / "subapps").mkdir(exist_ok=True)
         except Exception:
             # `super().handle()` roda a validação completa do Django (nome
             # colidindo com módulo importável, por exemplo) só agora — depois
-            # do `mkdir`. Se falhar aqui, o diretório não pode sobreviver.
-            shutil.rmtree(destination, ignore_errors=True)
+            # do `mkdir`. Se falhar aqui, o diretório não pode sobreviver —
+            # mas só quando foi este comando que o criou: apagar um diretório
+            # que já era do usuário levaria junto o que havia nele.
+            if criar_destino:
+                shutil.rmtree(destination, ignore_errors=True)
             raise
 
         if registrado is None:

@@ -45,11 +45,18 @@ Apps **devem** ser criados pelo comando do projeto, não pelo `startapp` do Djan
 ```bash
 python manage.py start_api_app vendas                    # apps/vendas/
 python manage.py start_api_app pedidos --parent vendas   # apps/vendas/subapps/pedidos/
+python manage.py start_api_app vendas apps/vendas        # usa o diretório já criado
 ```
 
 O comando cria a estrutura desta seção (incluindo `tests/` como pacote e um
 `subapps/` para apps do mesmo domínio), e registra o app em `BUSINESS_APPS`. O
 `--parent` aceita o nome de qualquer app já existente, em qualquer profundidade.
+
+O segundo argumento posicional é o destino, como no `startapp` do Django: o
+diretório precisa **já existir** e ficar dentro de `apps/`, e o dotted path
+registrado vem dele (não do nome do app). Arquivo já existente no destino não é
+sobrescrito — o comando falha. É incompatível com `--parent`, que decide a mesma
+coisa.
 
 ### 1.4. Pasta `common/`
 

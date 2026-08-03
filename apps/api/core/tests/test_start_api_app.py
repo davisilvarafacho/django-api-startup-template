@@ -407,6 +407,125 @@ def test_label_duplicado_falha_alto_e_nao_escreve_nada(projeto):
     assert (projeto / "api_settings.py").read_text(encoding="utf-8") == original
 
 
+def test_diretorio_existente_recebe_a_estrutura(projeto):
+    destino = projeto / "apps" / "vendas"
+    destino.mkdir()
+
+    call_command("start_api_app", "vendas", str(destino))
+
+    assert (destino / "apps.py").is_file()
+    assert (destino / "tests" / "__init__.py").is_file()
+    assert (destino / "subapps").is_dir()
+    assert '    "apps.vendas",\n' in (projeto / "api_settings.py").read_text(encoding="utf-8")
+
+
+def test_diretorio_existente_preserva_o_que_ja_estava_la(projeto):
+    destino = projeto / "apps" / "vendas"
+    destino.mkdir()
+    (destino / "README.md").write_text("anotações", encoding="utf-8")
+
+    call_command("start_api_app", "vendas", str(destino))
+
+    assert (destino / "README.md").read_text(encoding="utf-8") == "anotações"
+
+
+def test_diretorio_aninhado_gera_o_dotted_path_completo(projeto):
+    destino = projeto / "apps" / "vendas" / "subapps" / "pedidos"
+    destino.mkdir(parents=True)
+
+    call_command("start_api_app", "pedidos", str(destino))
+
+    assert 'name = "apps.vendas.subapps.pedidos"' in (destino / "apps.py").read_text(encoding="utf-8")
+    assert '    "apps.vendas.subapps.pedidos",\n' in (projeto / "api_settings.py").read_text(encoding="utf-8")
+
+
+def test_diretorio_relativo_ao_cwd(projeto, monkeypatch):
+    (projeto / "apps" / "vendas").mkdir()
+    monkeypatch.chdir(projeto)
+
+    call_command("start_api_app", "vendas", "apps/vendas")
+
+    assert (projeto / "apps" / "vendas" / "apps.py").is_file()
+
+
+def test_diretorio_inexistente_falha_alto_e_nao_escreve_nada(projeto):
+    original = (projeto / "api_settings.py").read_text(encoding="utf-8")
+
+    with pytest.raises(CommandError, match="não existe"):
+        call_command("start_api_app", "vendas", str(projeto / "apps" / "vendas"))
+
+    assert not (projeto / "apps" / "vendas").exists()
+    assert (projeto / "api_settings.py").read_text(encoding="utf-8") == original
+
+
+def test_diretorio_vazio_falha_alto(projeto):
+    with pytest.raises(CommandError, match="não pode ser vazio"):
+        call_command("start_api_app", "vendas", "")
+
+    assert not (projeto / "apps" / "vendas").exists()
+
+
+def test_diretorio_fora_de_apps_falha_alto(projeto):
+    fora = projeto / "fora"
+    fora.mkdir()
+
+    with pytest.raises(CommandError, match="fora de apps/"):
+        call_command("start_api_app", "vendas", str(fora))
+
+    assert list(fora.iterdir()) == []
+
+
+def test_o_proprio_apps_nao_serve_como_destino(projeto):
+    with pytest.raises(CommandError, match="fora de apps/"):
+        call_command("start_api_app", "vendas", str(projeto / "apps"))
+
+
+def test_componente_do_caminho_que_nao_e_modulo_falha_alto(projeto):
+    destino = projeto / "apps" / "meu-dominio" / "vendas"
+    destino.mkdir(parents=True)
+
+    with pytest.raises(CommandError, match="meu-dominio"):
+        call_command("start_api_app", "vendas", str(destino))
+
+    assert list(destino.iterdir()) == []
+
+
+def test_diretorio_com_parent_falha_alto(projeto):
+    criar_app_falso(projeto / "apps" / "vendas")
+    destino = projeto / "apps" / "vendas" / "subapps" / "pedidos"
+    destino.mkdir(parents=True)
+
+    with pytest.raises(CommandError, match="apenas um dos dois"):
+        call_command("start_api_app", "pedidos", str(destino), "--parent", "vendas")
+
+
+def test_arquivo_conflitante_no_destino_falha_sem_registrar(projeto):
+    destino = projeto / "apps" / "vendas"
+    destino.mkdir()
+    (destino / "models.py").write_text("# meu model\n", encoding="utf-8")
+    original = (projeto / "api_settings.py").read_text(encoding="utf-8")
+
+    with pytest.raises(CommandError, match="models.py"):
+        call_command("start_api_app", "vendas", str(destino))
+
+    assert (destino / "models.py").read_text(encoding="utf-8") == "# meu model\n"
+    assert (projeto / "api_settings.py").read_text(encoding="utf-8") == original
+
+
+def test_falha_com_destino_explicito_nao_apaga_o_diretorio(projeto):
+    # `json` colide com um módulo importável e só é rejeitado dentro do
+    # `super().handle()`; a limpeza do `except` não pode levar junto um
+    # diretório que já era do usuário.
+    destino = projeto / "apps" / "json"
+    destino.mkdir()
+    (destino / "README.md").write_text("anotações", encoding="utf-8")
+
+    with pytest.raises(CommandError):
+        call_command("start_api_app", "json", str(destino))
+
+    assert (destino / "README.md").read_text(encoding="utf-8") == "anotações"
+
+
 def test_parent_vazio_falha_alto_e_nao_escreve_nada(projeto):
     original = (projeto / "api_settings.py").read_text(encoding="utf-8")
 
