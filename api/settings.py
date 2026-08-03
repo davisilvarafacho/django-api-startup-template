@@ -131,6 +131,7 @@ BUSINESS_APPS = [
     "apps.api.autenticacao",
     "apps.api.base",
     "apps.api.core",
+    "apps.logs",
     "apps.organizacoes",
     "apps.usuarios",
 ]
@@ -386,7 +387,7 @@ DEFAULT_FROM_EMAIL = get_env_var("RESEND_FROM_EMAIL", "nao-responda@base.com.br"
 EMAIL_BACKEND = "anymail.backends.test.EmailBackend" if TESTING else "anymail.backends.resend.EmailBackend"
 
 
-LOGGING_ROOT = os.path.join(BASE_DIR, "logs/")
+LOGGING_ROOT = os.path.join(BASE_DIR, "logss/")
 
 os.makedirs(LOGGING_ROOT, exist_ok=True)
 
