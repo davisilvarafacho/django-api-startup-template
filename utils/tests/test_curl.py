@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 import pytest
 import requests
 
@@ -29,3 +31,14 @@ def test_as_curl_inclui_argumento_vazio_quando_corpo_esta_presente(body):
     response.request.body = body
 
     assert as_curl(response) == "curl -X POST -H 'Content-Length: 0' --data-raw '' https://example.test/items"
+
+
+def test_as_curl_salva_arquivo_e_registra_caminho(tmp_path, caplog):
+    response = make_response()
+
+    with patch("utils.curl.PROJECT_ROOT", tmp_path), patch("utils.curl.uuid4", return_value="request-id"):
+        result = as_curl(response, save_to_file=True)
+
+    output = tmp_path / "request-id.curl"
+    assert output.read_text() == result
+    assert str(output) in caplog.text
