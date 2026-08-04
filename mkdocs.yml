@@ -29,6 +29,7 @@ nav:
       - Publicar uma versão: how-to/publicar-versao.md
   - Referência:
       - API: reference/api.md
+      - Deprecação de API: reference/deprecacao-api.md
       - Convenções: reference/convencoes.md
       - Frameworks: frameworks.md
       - Guardrails internos: reference/guardrails.md

@@ -201,6 +201,8 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "api.wsgi.application"
 
+CORS_EXPOSE_HEADERS = ["Deprecation", "Sunset", "Link"]
+
 
 DATABASES = {
     "default": {

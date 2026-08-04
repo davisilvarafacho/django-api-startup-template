@@ -9,6 +9,7 @@ projeto adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ### Added
 
+- Decorator e política única para depreciação gradual de handlers da API.
 - Portal de documentação MkDocs estruturado por Diátaxis.
 - Validação de Conventional Commits em hooks e CI.
 
