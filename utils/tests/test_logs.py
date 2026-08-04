@@ -2,8 +2,8 @@
 
 from unittest.mock import patch
 
+from internal_frameworks.sensitive_fields.tests.models import RegistroSensivel
 from utils.logs import register
-from utils.tests.test_sensitive_fields import RegistroSensivel
 
 
 @patch("utils.logs.auditlog.register")

@@ -10,8 +10,8 @@ from knox import crypto
 from knox.settings import CONSTANTS, knox_settings
 
 from apps.api.base.models import CreationAuditMixin
+from internal_frameworks.sensitive_fields.fields import encrypt
 from utils.logs import register
-from utils.sensitive_fields import encrypt
 
 
 class TokenType(models.IntegerChoices):

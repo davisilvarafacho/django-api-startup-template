@@ -4,7 +4,7 @@ from django.conf import settings
 
 from auditlog.registry import auditlog
 
-from utils.sensitive_fields import is_encrypted_field
+from internal_frameworks.sensitive_fields.fields import is_encrypted_field
 
 
 def _unique(values):

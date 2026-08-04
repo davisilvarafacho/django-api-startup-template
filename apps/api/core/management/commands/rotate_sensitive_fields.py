@@ -2,7 +2,7 @@
 
 from django.core.management.base import BaseCommand, CommandError
 
-from utils.sensitive_fields import rotate_sensitive_fields
+from internal_frameworks.sensitive_fields.rotation import rotate_sensitive_fields
 
 
 class Command(BaseCommand):

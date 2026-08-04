@@ -4,8 +4,8 @@ from django.utils.translation import gettext_lazy as _
 
 from apps.api.base.models import BaseGlobal, BaseQuerySet
 from apps.usuarios import passwords
+from internal_frameworks.sensitive_fields.fields import encrypt
 from utils.logs import register
-from utils.sensitive_fields import encrypt
 
 
 class UsuarioManager(UserManager.from_queryset(BaseQuerySet)):

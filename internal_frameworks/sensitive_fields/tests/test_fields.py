@@ -1,40 +1,13 @@
-"""Tests for the sensitive-fields utility."""
+"""Tests for the encrypted model fields built by ``encrypt``."""
 
 from django.apps import apps
-from django.core.exceptions import ImproperlyConfigured
 from django.db import models
 from django.db.migrations.state import ProjectState
 
-import pytest
 from cryptography.fernet import Fernet
 
-from apps.api.base.models import BaseGlobal
 from apps.api.base.serializers import BaseModelSerializer
-from utils.sensitive_fields import encrypt, get_sensitive_field_keys
-
-
-class RegistroSensivel(BaseGlobal):
-    """Modelo efêmero para testar o contrato de campos cifrados."""
-
-    documento = encrypt(models.CharField(max_length=14))
-    anotacoes = encrypt(models.TextField(null=True))
-    dados = encrypt(models.JSONField(default=dict))
-
-    class Meta:
-        app_label = "utils"
-
-
-def test_keyring_remove_espacos_e_preserva_ordem(monkeypatch):
-    monkeypatch.setenv("SENSITIVE_FIELD_KEYS", "new-key, old-key")
-
-    assert get_sensitive_field_keys(require_configured=True) == [b"new-key", b"old-key"]
-
-
-def test_keyring_ausente_falha_quando_obrigatorio(monkeypatch):
-    monkeypatch.delenv("SENSITIVE_FIELD_KEYS", raising=False)
-
-    with pytest.raises(ImproperlyConfigured, match="SENSITIVE_FIELD_KEYS"):
-        get_sensitive_field_keys(require_configured=True)
+from internal_frameworks.sensitive_fields.tests.models import RegistroSensivel
 
 
 def test_encrypt_preserva_plaintext_na_interface_e_cifra_para_o_banco(monkeypatch):
@@ -76,7 +49,7 @@ def test_campo_cifrado_no_estado_do_django_pode_ser_desconstruido_para_migration
     name, path, args, kwargs = field.deconstruct()
 
     assert name is None
-    assert path == "utils.sensitive_fields.encrypt"
+    assert path == "internal_frameworks.sensitive_fields.fields.encrypt"
     assert isinstance(args[0], models.CharField)
     assert args[0].null is True
     assert args[0].blank is True
