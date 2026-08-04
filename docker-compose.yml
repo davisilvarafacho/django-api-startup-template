@@ -71,6 +71,18 @@ services:
       timeout: 5s
       retries: 5
 
+  uptime_kuma:
+    # Interface de monitoramento e alertas. A porta fica restrita ao host;
+    # publique-a atrás de HTTPS/VPN se precisar acessá-la remotamente.
+    image: louislam/uptime-kuma:2
+    ports:
+      - "127.0.0.1:${UPTIME_KUMA_PORT:-3002}:3001"
+    volumes:
+      - uptime_kuma_data:/app/data
+    depends_on:
+      - nginx
+    restart: unless-stopped
+
   celery_worker:
     build: .
     command: celery -A api worker -l info
@@ -102,3 +114,4 @@ volumes:
   redis_data:
   static_files:
   media_files:
+  uptime_kuma_data:

@@ -1,4 +1,4 @@
-.PHONY: help install hooks up down stack migrate run worker beat test lint format check precommit shell docs docs-serve commitlint version-check obs-up obs-down nginx-test nginx-reload
+.PHONY: help install hooks up down stack kuma-up kuma-down migrate run worker beat test lint format check precommit shell docs docs-serve commitlint version-check obs-up obs-down nginx-test nginx-reload
 
 help: ## Lista os comandos disponíveis
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "\033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -15,6 +15,12 @@ up: ## Sobe Postgres + Redis (docker compose)
 
 stack: ## Sobe a stack completa, com a API atrás do nginx (http://localhost:8000)
 	docker compose up -d --build
+
+kuma-up: ## Sobe o Uptime Kuma (http://127.0.0.1:3002)
+	docker compose up -d uptime_kuma
+
+kuma-down: ## Para o Uptime Kuma sem apagar os dados
+	docker compose stop uptime_kuma
 
 down: ## Derruba os serviços do docker compose
 	docker compose down
