@@ -57,9 +57,7 @@ def _validate_uri(name, value):
     parsed = urlsplit(value)
     is_http = parsed.scheme in {"http", "https"} and bool(parsed.netloc)
     # `//host/path` é uma URL protocol-relative, não um caminho local.
-    is_absolute_path = (
-        not parsed.scheme and not parsed.netloc and value.startswith("/") and not value.startswith("//")
-    )
+    is_absolute_path = not parsed.scheme and not parsed.netloc and value.startswith("/") and not value.startswith("//")
     if not (is_http or is_absolute_path):
         raise ValueError(f"{name} deve ser HTTP(S) ou caminho absoluto")
     return value
