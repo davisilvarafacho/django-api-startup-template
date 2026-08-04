@@ -1,3 +1,29 @@
+"""Depreciação de endpoints da API.
+
+Fonte **única** de depreciação, conforme o
+[ADR 0004](../../../docs/adr/0004-politica-de-deprecacao-de-api.md): o decorator
+`@api_deprecated` é o único caminho permitido para anunciar que um handler vai
+sair. É proibido escrever `Deprecation`/`Sunset` na mão, declarar a depreciação
+só no OpenAPI ou gerá-la em middleware, proxy ou gateway.
+
+A mesma declaração alimenta os dois canais:
+
+- **HTTP** — `Deprecation` ([RFC 9745](https://www.rfc-editor.org/rfc/rfc9745.html)),
+  `Sunset` ([RFC 8594](https://www.rfc-editor.org/rfc/rfc8594.html)) e um `Link`
+  com `rel="deprecation"` apontando para o guia de migração.
+- **OpenAPI** — `deprecated`, `externalDocs` e as extensões `x-deprecation-since`,
+  `x-sunset` e `x-replacement`.
+
+A granularidade é **por handler Python**, não por URL: quando o `MethodMapper`
+do DRF encaminha outro método HTTP para uma função separada, essa função só é
+depreciada se receber o próprio decorator.
+
+O wrapper não captura exceções. Respostas devolvidas normalmente pelo handler
+recebem os headers em qualquer status, inclusive um `400` explícito; falhas
+produzidas antes do handler (autenticação, permissão) ou exceções convertidas
+depois pelo DRF não recebem.
+"""
+
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from email.utils import format_datetime
@@ -8,10 +34,15 @@ from django.http.response import HttpResponseBase
 
 from drf_spectacular.utils import extend_schema
 
+__all__ = ["ApiDeprecation", "api_deprecated"]
+
 _METADATA_ATTRIBUTE = "__api_deprecation__"
+
+JANELA_MINIMA = timedelta(days=90)
 
 
 def _parse_date(name, value):
+    """Converte uma data ISO `YYYY-MM-DD`, recusando qualquer outro formato."""
     try:
         return date.fromisoformat(value)
     except (TypeError, ValueError) as exc:
@@ -19,12 +50,16 @@ def _parse_date(name, value):
 
 
 def _validate_uri(name, value):
+    """Aceita URI HTTP(S) com host ou caminho absoluto iniciado por uma `/`."""
     if not isinstance(value, str) or not value or any(char.isspace() for char in value):
         raise ValueError(f"{name} deve ser uma URI válida")
 
     parsed = urlsplit(value)
     is_http = parsed.scheme in {"http", "https"} and bool(parsed.netloc)
-    is_absolute_path = not parsed.scheme and not parsed.netloc and value.startswith("/") and not value.startswith("//")
+    # `//host/path` é uma URL protocol-relative, não um caminho local.
+    is_absolute_path = (
+        not parsed.scheme and not parsed.netloc and value.startswith("/") and not value.startswith("//")
+    )
     if not (is_http or is_absolute_path):
         raise ValueError(f"{name} deve ser HTTP(S) ou caminho absoluto")
     return value
@@ -32,6 +67,15 @@ def _validate_uri(name, value):
 
 @dataclass(frozen=True)
 class ApiDeprecation:
+    """Metadados imutáveis de uma depreciação, validados na importação.
+
+    Attributes:
+        since: Data efetiva da depreciação, em UTC.
+        sunset: Data a partir da qual a rota pode ser removida, em UTC.
+        documentation: URI do guia de migração.
+        replacement: URI do substituto, quando existir.
+    """
+
     since: date
     sunset: date
     documentation: str
@@ -39,33 +83,52 @@ class ApiDeprecation:
 
     @classmethod
     def from_strings(cls, *, since, sunset, documentation, replacement):
+        """Valida os argumentos do decorator e monta os metadados.
+
+        Args:
+            since: Data efetiva no formato `YYYY-MM-DD`.
+            sunset: Data de sunset no formato `YYYY-MM-DD`.
+            documentation: URI do guia de migração.
+            replacement: URI do substituto ou `None`.
+
+        Returns:
+            A instância de `ApiDeprecation` correspondente.
+
+        Raises:
+            ValueError: Se alguma data ou URI for inválida, ou se a janela
+                entre `since` e `sunset` for menor que 90 dias.
+        """
         since_date = _parse_date("since", since)
         sunset_date = _parse_date("sunset", sunset)
-        if sunset_date - since_date < timedelta(days=90):
+        if sunset_date - since_date < JANELA_MINIMA:
             raise ValueError("sunset deve ficar pelo menos 90 dias depois de since")
         return cls(
             since=since_date,
             sunset=sunset_date,
             documentation=_validate_uri("documentation", documentation),
-            replacement=_validate_uri("replacement", replacement) if replacement is not None else None,
+            replacement=(_validate_uri("replacement", replacement) if replacement is not None else None),
         )
 
     @property
     def deprecation_header(self):
+        """Valor do header `Deprecation`: `@<timestamp Unix de since>`."""
         instant = datetime.combine(self.since, time.min, tzinfo=UTC)
         return f"@{int(instant.timestamp())}"
 
     @property
     def sunset_header(self):
+        """Valor do header `Sunset`, no formato HTTP-date em GMT."""
         instant = datetime.combine(self.sunset, time.min, tzinfo=UTC)
         return format_datetime(instant, usegmt=True)
 
     @property
     def documentation_link(self):
+        """Entrada de `Link` que aponta para o guia de migração."""
         return f'<{self.documentation}>; rel="deprecation"; type="text/html"'
 
     @property
     def openapi_extensions(self):
+        """Extensões `x-*` publicadas na operação do OpenAPI."""
         extensions = {
             "x-deprecation-since": self.since.isoformat(),
             "x-sunset": self.sunset.isoformat(),
@@ -75,6 +138,11 @@ class ApiDeprecation:
         return extensions
 
     def apply_headers(self, response):
+        """Aplica os headers de depreciação, preservando um `Link` existente.
+
+        Args:
+            response: A resposta devolvida pelo handler decorado.
+        """
         response["Deprecation"] = self.deprecation_header
         response["Sunset"] = self.sunset_header
         current_link = response.headers.get("Link")
@@ -85,6 +153,28 @@ class ApiDeprecation:
 
 
 def api_deprecated(*, since, sunset, documentation, replacement=None):
+    """Marca um handler de ViewSet como depreciado.
+
+    Aplique sempre imediatamente acima do handler — abaixo do `@action`, quando
+    houver — para que o decorator envolva a função e não o roteamento.
+
+    Args:
+        since: Data efetiva da depreciação (`YYYY-MM-DD`, meia-noite UTC). Pode
+            ser futura: os headers são emitidos desde já e anunciam a mudança
+            com antecedência. Datas retroativas são proibidas pelo ADR 0004.
+        sunset: Data a partir da qual a rota pode ser removida, ao menos 90 dias
+            depois de `since`. Não remove a rota automaticamente.
+        documentation: URI do guia de migração em `docs/how-to/`.
+        replacement: URI do substituto, quando houver. Só aparece no OpenAPI,
+            nunca como header de resposta.
+
+    Returns:
+        O decorator que envolve o handler.
+
+    Raises:
+        ValueError: Se a configuração for inválida ou se o handler já estiver
+            decorado — as duas falham durante a importação do módulo.
+    """
     metadata = ApiDeprecation.from_strings(
         since=since,
         sunset=sunset,
@@ -99,6 +189,7 @@ def api_deprecated(*, since, sunset, documentation, replacement=None):
         @wraps(handler)
         def wrapped(*args, **kwargs):
             response = handler(*args, **kwargs)
+            # Retornos que não são resposta ficam para a validação do DRF.
             if isinstance(response, HttpResponseBase):
                 metadata.apply_headers(response)
             return response
