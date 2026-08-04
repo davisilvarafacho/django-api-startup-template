@@ -31,6 +31,7 @@ nav:
       - API: reference/api.md
       - Convenções: reference/convencoes.md
       - Frameworks: frameworks.md
+      - Guardrails internos: reference/guardrails.md
       - Roadmap: ROADMAP.md
       - Changelog: CHANGELOG.md
       - Relatório da base: relatorio-base-gente-grande.md
