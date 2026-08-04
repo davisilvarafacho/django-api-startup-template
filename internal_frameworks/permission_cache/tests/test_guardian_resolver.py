@@ -17,7 +17,7 @@ pytestmark = pytest.mark.django_db
 
 
 def test_cached_guardian_backend_replaces_upstream_backend():
-    assert settings.AUTHENTICATION_BACKENDS.count("common.permission_cache.backends.CachedObjectPermissionBackend") == 1
+    assert settings.AUTHENTICATION_BACKENDS.count("internal_frameworks.permission_cache.backends.CachedObjectPermissionBackend") == 1
     assert "guardian.backends.ObjectPermissionBackend" not in settings.AUTHENTICATION_BACKENDS
     call_command("check")
 

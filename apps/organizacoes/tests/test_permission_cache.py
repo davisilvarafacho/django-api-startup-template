@@ -65,7 +65,7 @@ def test_tenant_permission_denies_cached_missing_membership():
     client = client_autenticado(user)
 
     first = client.get("/times/", HTTP_X_ORGANIZATION="missing")
-    with patch("common.permission_cache.resolvers.tenant.TenantAccessResolver._load", wraps=TenantAccessResolver._load) as loader:
+    with patch("internal_frameworks.permission_cache.resolvers.tenant.TenantAccessResolver._load", wraps=TenantAccessResolver._load) as loader:
         second = client.get("/times/", HTTP_X_ORGANIZATION="missing")
 
     assert first.status_code == second.status_code == 403

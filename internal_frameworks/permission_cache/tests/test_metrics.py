@@ -57,7 +57,7 @@ def test_metric_helpers_pass_only_closed_labels_to_collectors(monkeypatch):
 def test_resolve_times_hit_and_miss_without_dynamic_identifiers(monkeypatch):
     timer = Mock()
     timer.return_value = nullcontext()
-    monkeypatch.setattr("common.permission_cache.store.time_resolve", timer)
+    monkeypatch.setattr("internal_frameworks.permission_cache.store.time_resolve", timer)
     cache = LocMemCache("permission-metrics-tests", {})
     store = PermissionCacheStore(cache_backend=cache, epoch_store=EpochStore(cache_backend=cache))
     loader = Mock(return_value="database")
@@ -119,7 +119,7 @@ def test_cache_exception_log_has_layer_and_exception_class_without_payload_or_pi
     epochs.read.return_value = (101,)
     store = PermissionCacheStore(cache_backend=cache, epoch_store=epochs)
 
-    with caplog.at_level("WARNING", logger="common.permission_cache.store"):
+    with caplog.at_level("WARNING", logger="internal_frameworks.permission_cache.store"):
         result = store.resolve(
             layer="guardian",
             database_alias="default",

@@ -34,7 +34,7 @@ def test_command_does_not_log_or_print_redis_connection_details(caplog, capsys):
     store = Mock()
     store.bump.side_effect = ConnectionError("redis://sentinel-user:sentinel-token@sentinel-host:6379/4 key=sentinel-key")
 
-    with patch("common.permission_cache.invalidation.EpochStore", return_value=store):
+    with patch("internal_frameworks.permission_cache.invalidation.EpochStore", return_value=store):
         with pytest.raises(CommandError) as error:
             call_command("invalidate_permission_cache", stderr=stderr)
 

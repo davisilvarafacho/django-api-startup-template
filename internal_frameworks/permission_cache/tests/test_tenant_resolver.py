@@ -59,7 +59,7 @@ def test_loader_disables_cachalot_for_all_queries(monkeypatch):
         calls.append(all_queries)
         yield
 
-    monkeypatch.setattr("common.permission_cache.resolvers.tenant.cachalot_disabled", recording_context)
+    monkeypatch.setattr("internal_frameworks.permission_cache.resolvers.tenant.cachalot_disabled", recording_context)
     user = UsuarioFactory()
 
     assert TenantAccessResolver().by_slug(user.pk, "missing") is None

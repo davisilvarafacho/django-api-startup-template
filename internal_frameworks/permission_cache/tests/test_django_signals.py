@@ -58,7 +58,7 @@ def test_direct_permission_bumps_only_after_commit():
     user = UsuarioFactory()
     permission = Permission.objects.first()
 
-    with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+    with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with transaction.atomic():
             user.user_permissions.add(permission)
             bump.assert_not_called()
@@ -79,7 +79,7 @@ def test_rollback_does_not_bump_user_epoch():
             user.user_permissions.add(permission)
             raise RuntimeError("rollback")
 
-    with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+    with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with pytest.raises(RuntimeError, match="rollback"):
             add_permission_then_rollback()
 
@@ -94,7 +94,7 @@ def test_user_group_add_remove_and_clear_bump_both_user_layers():
         if operation in {"remove", "clear"}:
             user.groups.add(group)
 
-        with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+        with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
             with transaction.atomic():
                 if operation == "add":
                     user.groups.add(group)
@@ -112,7 +112,7 @@ def test_reverse_group_clear_captures_users_in_pre_clear():
     users = (UsuarioFactory(), UsuarioFactory())
     group.user_set.add(*users)
 
-    with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+    with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with transaction.atomic():
             group.user_set.clear()
             bump.assert_not_called()
@@ -160,7 +160,7 @@ def test_group_permission_change_bumps_django_global():
         if operation in {"remove", "clear"}:
             group.permissions.add(permission)
 
-        with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+        with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
             with transaction.atomic():
                 if operation == "add":
                     group.permissions.add(permission)
@@ -176,7 +176,7 @@ def test_group_permission_change_bumps_django_global():
 def test_group_delete_bumps_django_and_guardian_global():
     group = Group.objects.create(name="deleted group")
 
-    with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+    with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with transaction.atomic():
             group.delete()
             bump.assert_not_called()
@@ -189,7 +189,7 @@ def test_user_active_or_superuser_change_bumps_all_user_layers():
         user = UsuarioFactory()
         setattr(user, field, not getattr(user, field))
 
-        with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+        with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
             with transaction.atomic():
                 user.save(update_fields=[field])
                 bump.assert_not_called()
@@ -201,7 +201,7 @@ def test_user_delete_bumps_all_user_layers():
     user = UsuarioFactory()
     user_id = user.pk
 
-    with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+    with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with without_dangling_rls_test_model():
             with transaction.atomic():
                 user.delete()
@@ -218,28 +218,28 @@ def test_permission_and_content_type_changes_bump_global_layers():
         name="Permission cache signal",
     )
 
-    with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+    with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with transaction.atomic():
             permission.name = "Updated permission cache signal"
             permission.save(update_fields=["name"])
             bump.assert_not_called()
         assert_global_layer_bumps(bump)
 
-    with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+    with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with transaction.atomic():
             permission.delete()
             bump.assert_not_called()
         assert_global_layer_bumps(bump)
 
     original_model = content_type.model
-    with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+    with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with transaction.atomic():
             content_type.model = f"{original_model}_renamed"
             content_type.save(update_fields=["model"])
             bump.assert_not_called()
         assert_global_layer_bumps(bump)
 
-    with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+    with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with transaction.atomic():
             content_type.model = original_model
             content_type.save(update_fields=["model"])
@@ -250,7 +250,7 @@ def test_permission_and_content_type_changes_bump_global_layers():
 def test_post_migrate_bumps_global_layers():
     app_config = apps.get_app_config("autenticacao")
 
-    with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+    with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with transaction.atomic():
             post_migrate.send(
                 sender=app_config,

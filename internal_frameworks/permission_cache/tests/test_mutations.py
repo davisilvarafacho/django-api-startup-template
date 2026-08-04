@@ -104,7 +104,7 @@ def test_bulk_create_memberships_invalidates_every_user_after_commit():
         Vinculo(usuario=second, organizacao=organization, papel=Papel.GESTOR),
     ]
 
-    with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+    with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with transaction.atomic():
             created = bulk_create_memberships(memberships)
             bump.assert_not_called()
@@ -135,7 +135,7 @@ def test_bulk_update_memberships_invalidates_old_and_new_users():
     for row in rows:
         row.usuario = replacement
 
-    with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+    with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with transaction.atomic():
             updated = bulk_update_memberships(rows, ["usuario"])
             bump.assert_not_called()
@@ -155,7 +155,7 @@ def test_update_memberships_reads_users_before_queryset_update():
     Vinculo.objects.create(usuario=first, organizacao=organization, papel=Papel.MEMBRO)
     Vinculo.objects.create(usuario=second, organizacao=organization, papel=Papel.MEMBRO)
 
-    with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+    with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with transaction.atomic():
             updated = update_memberships(Vinculo.objects.filter(organizacao=organization), papel=Papel.GESTOR)
             bump.assert_not_called()
@@ -174,14 +174,14 @@ def test_guardian_bulk_assign_and_remove_invalidate_every_object():
     first = create_organization("guardian-bulk-first")
     second = create_organization("guardian-bulk-second")
 
-    with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+    with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with transaction.atomic():
             assigned = guardian_bulk_assign("view_organizacao", user, [first, second])
             bump.assert_not_called()
         assert {str(row.object_pk) for row in assigned} == {str(first.pk), str(second.pk)}
         assert_object_bump(bump, first, second)
 
-    with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+    with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with transaction.atomic():
             removed = guardian_bulk_remove("view_organizacao", user, [first, second])
             bump.assert_not_called()
@@ -195,14 +195,14 @@ def test_guardian_assign_to_many_and_remove_from_many_invalidate_once():
     second = UsuarioFactory()
     organization = create_organization("guardian-many")
 
-    with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+    with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with transaction.atomic():
             assigned = guardian_assign_to_many("view_organizacao", [first, second], organization)
             bump.assert_not_called()
         assert len(assigned) == 2
         assert_object_bump(bump, organization)
 
-    with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+    with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with transaction.atomic():
             removed = guardian_remove_from_many("view_organizacao", [first, second], organization)
             bump.assert_not_called()
@@ -219,7 +219,7 @@ def test_guardian_bulk_assign_writes_on_object_database_alias(replica_alias):
     organization._state.db = replica_alias
 
     with (
-        patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump,
+        patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump,
         CaptureQueriesContext(connections["default"]) as default_queries,
         CaptureQueriesContext(connections[replica_alias]) as replica_queries,
     ):
@@ -246,7 +246,7 @@ def test_guardian_assign_to_many_writes_on_object_database_alias(replica_alias):
         instance._state.db = replica_alias
 
     with (
-        patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump,
+        patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump,
         CaptureQueriesContext(connections["default"]) as default_queries,
         CaptureQueriesContext(connections[replica_alias]) as replica_queries,
     ):
@@ -274,7 +274,7 @@ def test_guardian_bulk_remove_uses_alias_content_type_when_ids_diverge(replica_a
 
     with (
         alias_content_type_lookup(replica_alias, content_type),
-        patch("common.permission_cache.invalidation.bump_epoch_scopes"),
+        patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes"),
         CaptureQueriesContext(connections["default"]) as default_queries,
         CaptureQueriesContext(connections[replica_alias]) as replica_queries,
     ):
@@ -298,7 +298,7 @@ def test_guardian_remove_from_many_uses_alias_content_type_when_ids_diverge(repl
 
     with (
         alias_content_type_lookup(replica_alias, content_type),
-        patch("common.permission_cache.invalidation.bump_epoch_scopes"),
+        patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes"),
         CaptureQueriesContext(connections["default"]) as default_queries,
         CaptureQueriesContext(connections[replica_alias]) as replica_queries,
     ):
@@ -321,7 +321,7 @@ def test_permission_bulk_wrappers_bump_global_layers():
         call(("guardian:global",), database_alias="default", layer="guardian"),
     ]
 
-    with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+    with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with transaction.atomic():
             created = bulk_create_permissions(permissions)
             bump.assert_not_called()
@@ -330,7 +330,7 @@ def test_permission_bulk_wrappers_bump_global_layers():
 
     for permission in created:
         permission.name = f"Updated {permission.codename}"
-    with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+    with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with transaction.atomic():
             updated = bulk_update_permissions(created, ["name"])
             bump.assert_not_called()
@@ -350,7 +350,7 @@ def test_bulk_user_state_update_bumps_all_layers():
         for layer in ("django", "tenant", "guardian")
     ]
 
-    with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+    with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with transaction.atomic():
             updated = update_user_authorization_state(Usuario.objects.filter(pk__in=[first.pk, second.pk]), is_active=False)
             bump.assert_not_called()
@@ -363,7 +363,7 @@ def test_bulk_user_state_update_bumps_all_layers():
 def test_bulk_user_state_update_rejects_non_authorization_fields(django_assert_num_queries):
     user = UsuarioFactory()
 
-    with patch("common.permission_cache.invalidation.bump_epoch_scopes") as bump:
+    with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with django_assert_num_queries(0):
             with pytest.raises(ValueError, match="first_name"):
                 update_user_authorization_state(Usuario.objects.filter(pk=user.pk), first_name="x")
@@ -652,7 +652,7 @@ def production_python_files() -> list[Path]:
         relative = path.relative_to(REPOSITORY_ROOT)
         if any(part in {"migrations", "tests", ".venv", ".worktrees"} for part in relative.parts):
             continue
-        if relative == Path("common/permission_cache/mutations.py"):
+        if relative == Path("internal_frameworks/permission_cache/mutations.py"):
             continue
         files.append(path)
     return files
@@ -666,4 +666,4 @@ def test_production_code_has_no_direct_bulk_authorization_writes(path):
         for write_name, line in scan_authorization_writes(path.read_text(encoding="utf-8"))
         if (write_name, relative) not in DIRECT_AUTHORIZATION_WRITE_ALLOWLIST
     ]
-    assert violations == [], f"Direct authorization writes in {relative} must use common.permission_cache.mutations: {violations}"
+    assert violations == [], f"Direct authorization writes in {relative} must use internal_frameworks.permission_cache.mutations: {violations}"

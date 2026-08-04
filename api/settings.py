@@ -277,8 +277,8 @@ AUTHENTICATION_BACKENDS = [
     # backends seguintes. Precisa ser o primeiro para interromper antes deles.
     "axes.backends.AxesStandaloneBackend",
     "rules.permissions.ObjectPermissionBackend",
-    "common.permission_cache.backends.CachedModelBackend",
-    "common.permission_cache.backends.CachedObjectPermissionBackend",
+    "internal_frameworks.permission_cache.backends.CachedModelBackend",
+    "internal_frameworks.permission_cache.backends.CachedObjectPermissionBackend",
 ]
 
 # CachedObjectPermissionBackend subclasses and compatibility-tests Guardian's backend.
