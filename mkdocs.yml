@@ -1,8 +1,8 @@
 site_name: DRF Base API
 site_description: Base reutilizável para APIs Django REST Framework.
-site_url: https://github.com/forteplus/drf-base-api-project
-repo_url: https://github.com/forteplus/drf-base-api-project
-repo_name: forteplus/drf-base-api-project
+site_url: https://github.com/davisilvarafacho/drf-base-api-project
+repo_url: https://github.com/davisilvarafacho/drf-base-api-project
+repo_name: davisilvarafacho/drf-base-api-project
 
 theme:
   name: material
