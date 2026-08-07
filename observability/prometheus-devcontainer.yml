@@ -1,0 +1,11 @@
+# Prometheus dentro da rede do devcontainer; o runserver escuta em app:8000.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: drf-base-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["app:8000"]
+        labels:
+          service: drf-base-api

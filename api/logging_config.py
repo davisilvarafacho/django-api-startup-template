@@ -6,9 +6,9 @@ inline tomaria mais de cem linhas no meio das settings.
 
 Formato por ambiente:
 
-- **desenvolvimento/teste**: texto legível no console.
+- **desenvolvimento/teste**: texto legível no console, com arquivo JSON opcional.
 - **produção**: JSON em uma linha por evento (stdout + arquivo rotativo). O
-  arquivo é o que o Promtail lê para mandar ao Loki; o stdout é o que orquestrador
+  arquivo é o que o Alloy lê para mandar ao Loki; o stdout é o que orquestrador
   (Docker/Kubernetes) coleta.
 
 Todo evento carrega `request_id` e, quando a telemetria está ligada, `trace_id` /
@@ -116,13 +116,14 @@ FORMATO_JSON = " ".join(
 )
 
 
-def build_logging(environment, level, log_root):
+def build_logging(environment, level, log_root, *, write_json_file=False):
     """Monta o dicionário de `LOGGING` para o ambiente informado.
 
     Args:
         environment: `development`, `production` ou `test`.
         level: nível dos loggers da aplicação (ex.: `INFO`).
         log_root: diretório onde o arquivo de log JSON é escrito.
+        write_json_file: habilita o arquivo JSON fora de produção.
 
     Returns:
         dict: configuração no formato `logging.config.dictConfig`.
@@ -142,7 +143,7 @@ def build_logging(environment, level, log_root):
 
     handlers_ativos = ["console"]
 
-    if em_producao:
+    if em_producao or write_json_file:
         handlers["arquivo"] = {
             "class": "logging.handlers.RotatingFileHandler",
             "filename": os.path.join(log_root, "api.jsonl"),

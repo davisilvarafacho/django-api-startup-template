@@ -32,6 +32,6 @@ COPY --chown=vscode:vscode pyproject.toml uv.lock ./
 
 USER vscode
 
-RUN uv sync --frozen --group dev --no-install-project
+RUN uv sync --frozen --group dev --group observability --no-install-project
 
 CMD ["sleep", "infinity"]

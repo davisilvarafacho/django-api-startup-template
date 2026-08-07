@@ -389,15 +389,22 @@ DEFAULT_FROM_EMAIL = get_env_var("RESEND_FROM_EMAIL", "nao-responda@base.com.br"
 EMAIL_BACKEND = "anymail.backends.test.EmailBackend" if TESTING else "anymail.backends.resend.EmailBackend"
 
 
-LOGGING_ROOT = os.path.join(BASE_DIR, "logss/")
+LOGGING_ROOT = os.path.join(BASE_DIR, "logs/")
 
 os.makedirs(LOGGING_ROOT, exist_ok=True)
 
 LOG_LEVEL = get_env_var("DJANGO_LOG_LEVEL", "INFO")
 
-# Em produção sai JSON (uma linha por evento, lido pelo Promtail/Loki); nos demais
-# ambientes, texto legível no console. Ver api/logging_config.py.
-LOGGING = build_logging(CONFIG_ENVIRONMENT, LOG_LEVEL, LOGGING_ROOT)
+JSON_LOG_FILE_ENABLED = get_bool_from_env("DJANGO_JSON_LOG_FILE_ENABLED", False)
+
+# Em produção sai JSON (uma linha por evento, lido pelo Alloy/Loki); nos demais
+# ambientes, o arquivo JSON é opcional. Ver api/logging_config.py.
+LOGGING = build_logging(
+    CONFIG_ENVIRONMENT,
+    LOG_LEVEL,
+    LOGGING_ROOT,
+    write_json_file=JSON_LOG_FILE_ENABLED,
+)
 
 
 # base

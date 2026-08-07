@@ -1,20 +1,30 @@
 # Subir a observabilidade localmente
 
-A stack local é Grafana + Tempo (traces) + Loki (logs) + Prometheus (métricas).
-Ela roda na mesma rede do `docker-compose.yml`, então **suba o compose principal
-antes**.
+A stack local é Grafana + Tempo (traces) + Loki/Alloy (logs) + Prometheus
+(métricas). Ela entra na rede da aplicação para receber traces e raspar métricas.
 
 ## 1. Subir os serviços
 
 ```bash
 make up        # Postgres + Redis (e a rede que a stack de observabilidade usa)
-make obs-up    # Grafana, Tempo, Loki, Prometheus, Promtail
+make obs-up    # Grafana, Tempo, Loki, Prometheus e Alloy
 ```
 
 Grafana em <http://localhost:3001> — login desabilitado, entra direto. As
 datasources e o dashboard "DRF Base API — visão geral" já vêm provisionados.
 
-## 2. Ligar os traces
+### Com Dev Containers
+
+Abra o devcontainer primeiro, para criar sua rede. Depois execute no host:
+
+```bash
+make dev-obs-up
+```
+
+Esse comando usa a mesma stack, mas conecta Tempo e Prometheus à rede
+`drf-base-api-devcontainer_default` e raspa métricas em `app:8000`.
+
+## 2. Ligar traces e logs
 
 Os pacotes do OpenTelemetry estão num grupo opcional:
 
@@ -22,14 +32,27 @@ Os pacotes do OpenTelemetry estão num grupo opcional:
 uv sync --group observability
 ```
 
+O devcontainer já instala esse grupo durante o build.
+
 E no `.env`:
 
 ```bash
 OTEL_ENABLED=True
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318   # tempo, se o Django roda no host
+DJANGO_JSON_LOG_FILE_ENABLED=True                  # arquivo consumido pelo Alloy
 ```
 
-Rodando o Django em container, use `http://tempo:4318`.
+Em vez de exportar essas variáveis manualmente, inicie a aplicação com
+`make run-observed`. No devcontainer, o endpoint já é `http://tempo:4318` e o
+arquivo JSON já está habilitado.
+
+Para observar tasks no devcontainer, evite dois workers na mesma fila. No host,
+pare o worker automático e, dentro do devcontainer, inicie o instrumentado:
+
+```bash
+docker compose -f .devcontainer/docker-compose.yml stop worker
+make worker-observed
+```
 
 ## 3. Conferir cada sinal
 
@@ -40,9 +63,11 @@ Rodando o Django em container, use `http://tempo:4318`.
 | Traces | Grafana → Explore → Tempo | Spans de request, query e task. |
 | Correlação | No painel de log, clicar em **TraceID** | Abre o trace correspondente no Tempo. |
 
-Em desenvolvimento o log sai como texto legível no console, não como JSON — o
-Promtail lê `logs/api.jsonl`, que só é escrito em produção. Para ver o pipeline
-completo de log localmente, rode com `DJANGO_ENVIRONMENT=production`.
+Em desenvolvimento, o console permanece legível. Quando
+`DJANGO_JSON_LOG_FILE_ENABLED=True`, o mesmo evento também vai para o arquivo
+rotativo `logs/api.jsonl`, que o Alloy envia ao Loki. Na primeira execução após
+a migração, linhas antigas ainda presentes nesse arquivo podem ser reenviadas,
+pois as posições anteriores do coletor não são reaproveitadas.
 
 ## 4. Health checks
 
@@ -83,7 +108,8 @@ disparar.
 ## 6. Derrubar
 
 ```bash
-make obs-down
+make obs-down       # Compose principal
+make dev-obs-down   # devcontainer
 ```
 
 Os volumes são preservados; para descartar os dados, acrescente `-v` ao

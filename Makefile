@@ -1,4 +1,4 @@
-.PHONY: help install hooks up down stack kuma-up kuma-down migrate run worker beat test lint format check precommit shell docs docs-serve commitlint version-check obs-up obs-down nginx-test nginx-reload
+.PHONY: help install hooks up down stack kuma-up kuma-down migrate run run-observed worker worker-observed beat test lint format check precommit shell docs docs-serve commitlint version-check obs-up obs-down dev-obs-up dev-obs-down nginx-test nginx-reload
 
 help: ## Lista os comandos disponíveis
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "\033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -46,6 +46,16 @@ obs-up: ## Sobe a stack de observabilidade (Grafana, Tempo, Loki, Prometheus)
 obs-down: ## Derruba a stack de observabilidade
 	docker compose -f docker-compose.observability.yml down
 
+dev-obs-up: ## Sobe a observabilidade na rede do devcontainer (execute no host)
+	APPLICATION_NETWORK=drf-base-api-devcontainer_default \
+	PROMETHEUS_CONFIG=./observability/prometheus-devcontainer.yml \
+	docker compose -f docker-compose.observability.yml up -d
+
+dev-obs-down: ## Derruba a observabilidade conectada ao devcontainer
+	APPLICATION_NETWORK=drf-base-api-devcontainer_default \
+	PROMETHEUS_CONFIG=./observability/prometheus-devcontainer.yml \
+	docker compose -f docker-compose.observability.yml down
+
 migrate: ## Aplica as migrações
 	uv run python manage.py migrate
 
@@ -57,8 +67,14 @@ RUN_PORT ?= 8000
 run: ## Sobe o servidor de desenvolvimento (RUN_HOST/RUN_PORT ajustam o bind)
 	uv run python manage.py runserver $(RUN_HOST):$(RUN_PORT)
 
+run-observed: ## Sobe o servidor com traces OpenTelemetry habilitados
+	OTEL_ENABLED=True uv run python manage.py runserver $(RUN_HOST):$(RUN_PORT)
+
 worker: ## Sobe o worker do Celery
 	uv run celery -A api worker -l info
+
+worker-observed: ## Sobe o worker com traces OpenTelemetry habilitados
+	OTEL_ENABLED=True uv run celery -A api worker -l info
 
 beat: ## Sobe o beat do Celery (agendador via banco)
 	uv run celery -A api beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler

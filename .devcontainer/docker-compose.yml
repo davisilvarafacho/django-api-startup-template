@@ -14,6 +14,9 @@ x-app-environment: &app-environment
   REDIS_HOST: redis
   REDIS_PORT: "6379"
   POSTHOG_DISABLED: "True"
+  DJANGO_JSON_LOG_FILE_ENABLED: "True"
+  OTEL_ENABLED: "False"
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4318
   # `make run` respeita RUN_HOST/RUN_PORT. Dentro do container o runserver
   # precisa escutar em 0.0.0.0, senão o nginx não alcança o serviço `app`.
   RUN_HOST: 0.0.0.0

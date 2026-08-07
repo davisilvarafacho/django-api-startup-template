@@ -72,7 +72,7 @@ _Última atualização: 2026-07-29._
 | `django-waffle` (feature flags operacionais) | ✅ |
 | Métricas + dashboards (Grafana / Prometheus / OpenTelemetry) | ✅ |
 | Health checks de liveness/readiness | ✅ |
-| Estratégia de logs de request: JSON → Promtail → Loki, sem banco em produção | ✅ |
+| Estratégia de logs de request: JSON → Alloy → Loki, sem banco em produção | ✅ |
 
 ## 6. Segurança
 

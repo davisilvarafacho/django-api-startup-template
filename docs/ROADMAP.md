@@ -93,11 +93,11 @@ _Atualizado em 2026-08-02._
 ### Batch 7 — Observabilidade
 - **Logging estruturado (JSON)** com `python-json-logger` (`api/logging_config.py`).
 - **Correlation/request ID próprio** (`apps/api/core/request_id.py`), propagado para Sentry e Celery.
-- **Estratégia de logs de request**: nada em banco em produção; log JSON → Promtail → Loki com retenção de 30 dias ([ADR 0002](adr/0002-logs-estruturados-e-retencao.md)).
+- **Estratégia de logs de request**: nada em banco em produção; log JSON → Alloy → Loki com retenção de 30 dias ([ADR 0002](adr/0002-logs-estruturados-e-retencao.md)).
 - **Health check completo**: `/health/` (liveness) e `/health/ready/` (banco, cache, broker, storage), agora fora do bloco de desenvolvimento — o `HEALTHCHECK` do Dockerfile marcava o container como unhealthy em produção.
 - **Métricas** com `django-prometheus` em `/metrics`, restrito a rede interna/token.
 - **Traces** com **OpenTelemetry** (grupo opcional `observability`), exportando OTLP para o Tempo.
-- **Dashboards Grafana** provisionados + stack local (Tempo, Loki, Prometheus, Promtail) alinhada ao compose do projeto.
+- **Dashboards Grafana** provisionados + stack local (Tempo, Loki, Prometheus, Alloy) alinhada ao compose do projeto.
 - **`django-waffle`** (feature flags operacionais) + divisão de papéis com o PostHog ([ADR 0003](adr/0003-feature-flags.md)).
 - **PostHog** com as pendências do setup fechadas (vars no `.env.example`, SDK desligado em teste/sem token).
 

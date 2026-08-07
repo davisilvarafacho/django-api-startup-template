@@ -72,4 +72,24 @@ docker compose -f .devcontainer/docker-compose.yml ps
 docker compose -f .devcontainer/docker-compose.yml logs -f worker
 ```
 
-O Celery Beat e a stack de observabilidade não fazem parte do devcontainer.
+O Celery Beat e a stack de observabilidade não sobem automaticamente com o
+devcontainer. Para conectar a stack opcional à rede dele, execute no host, depois
+que o devcontainer estiver aberto:
+
+```bash
+make dev-obs-up
+```
+
+Então, no terminal do devcontainer, use `make run-observed` para enviar traces
+ao Tempo. O arquivo JSON consumido pelo Alloy já fica habilitado nesse ambiente.
+Para observar também as tasks, pare primeiro o worker automático no host e inicie
+um worker instrumentado dentro do devcontainer:
+
+```bash
+docker compose -f .devcontainer/docker-compose.yml stop worker
+make worker-observed
+```
+
+Ao terminar, execute `make dev-obs-down` no host. Consulte
+[Subir a observabilidade localmente](observabilidade-local.md) para validar
+métricas, logs e traces no Grafana.

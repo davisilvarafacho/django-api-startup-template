@@ -20,9 +20,10 @@ Por fim, faltava definir se o correlation ID viria de biblioteca
 ## Decisão
 
 **Formato.** Logging estruturado com `python-json-logger`: JSON de uma linha por
-evento em produção, texto legível em desenvolvimento e teste. A montagem fica em
-`api/logging_config.py`, no mesmo espírito de `api/configure_enviroment.py` — o
-`settings.py` continua sendo o único ponto de entrada, mas sem cem linhas de
+evento em produção, texto legível em desenvolvimento e teste, com arquivo JSON
+opcional nesses ambientes por `DJANGO_JSON_LOG_FILE_ENABLED`. A montagem fica
+em `api/logging_config.py`, no mesmo espírito de `api/configure_enviroment.py` —
+o `settings.py` continua sendo o único ponto de entrada, mas sem cem linhas de
 dicionário no meio.
 
 **Correlation ID próprio.** `apps/api/core/request_id.py` implementa o
@@ -39,7 +40,7 @@ que é o que fecha o link log ↔ trace no Grafana.
 **Retenção.** Log de request **não vai para banco em produção**. O
 `drf-api-logger` continua carregado apenas em desenvolvimento (e num banco
 `logging` separado, nunca no da aplicação). Em produção, cada request emite uma
-linha estruturada em stdout/arquivo, que o Promtail envia ao Loki com
+linha estruturada em stdout/arquivo, que o Grafana Alloy envia ao Loki com
 `retention_period` de 30 dias.
 
 ## Consequências

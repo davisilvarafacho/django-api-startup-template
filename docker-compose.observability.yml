@@ -1,15 +1,16 @@
-# Stack de observabilidade: Tempo (traces) + Loki (logs) + Prometheus (métricas) + Grafana (UI).
+# Stack de observabilidade: Tempo (traces) + Loki/Alloy (logs) + Prometheus
+# (métricas) + Grafana (UI).
 #
-# Complementa o docker-compose.yml — sobe na MESMA rede, para o Prometheus
-# alcançar o serviço `web` pelo nome:
+# Complementa o docker-compose.yml e entra na rede externa da aplicação para o
+# Prometheus alcançar o serviço `web` pelo nome:
 #
 #   docker compose up -d                                    # app + Postgres + Redis
 #   docker compose -f docker-compose.observability.yml up -d # observabilidade
 #
 # Grafana: http://localhost:3001 (login desabilitado, entra direto)
 #
-# O Django precisa de OTEL_ENABLED=1 e OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4318
-# no .env para exportar traces (ver docs/how-to/observabilidade-local.md).
+# No host, o Django exporta para http://localhost:4318. No devcontainer, usa
+# http://tempo:4318 pela rede externa (ver docs/how-to/observabilidade-local.md).
 name: drf-base-api-observability
 
 services:
@@ -23,6 +24,9 @@ services:
       - "3200:3200"   # API de consulta (Grafana lê daqui)
       - "4318:4318"   # OTLP HTTP  (recebe do Django)
       - "4317:4317"   # OTLP gRPC
+    networks:
+      - default
+      - application
     restart: unless-stopped
 
   loki:
@@ -35,13 +39,14 @@ services:
       - "3100:3100"
     restart: unless-stopped
 
-  promtail:
-    image: grafana/promtail:3.2.1
-    command: ["-config.file=/etc/promtail/promtail-config.yaml"]
+  alloy:
+    image: grafana/alloy:v1.18.0
+    command: ["run", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
     volumes:
-      - ./observability/promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
+      - ./observability/config.alloy:/etc/alloy/config.alloy:ro
       # LOGGING_ROOT do Django (ver api/settings.py).
       - ./logs:/var/log/drf-base-api:ro
+      - alloy_data:/var/lib/alloy/data
     depends_on:
       - loki
     restart: unless-stopped
@@ -50,13 +55,16 @@ services:
     image: prom/prometheus:v2.55.1
     command: ["--config.file=/etc/prometheus/prometheus.yml"]
     volumes:
-      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${PROMETHEUS_CONFIG:-./observability/prometheus.yml}:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     ports:
       - "9090:9090"
     extra_hosts:
       # Alternativa para quando o Django roda no host (`make run`).
       - "host.docker.internal:host-gateway"
+    networks:
+      - default
+      - application
     restart: unless-stopped
 
   grafana:
@@ -82,10 +90,11 @@ volumes:
   loki_data:
   prometheus_data:
   grafana_data:
+  alloy_data:
 
 networks:
-  # Mesma rede do docker-compose.yml (name: drf-base-api), para o Prometheus
-  # resolver `web`. Suba o compose principal antes deste.
-  default:
-    name: drf-base-api_default
+  # Tempo recebe traces e o Prometheus raspa métricas pela rede da aplicação.
+  # O devcontainer seleciona drf-base-api-devcontainer_default via Makefile.
+  application:
+    name: ${APPLICATION_NETWORK:-drf-base-api_default}
     external: true

@@ -1,0 +1,41 @@
+local.file_match "django_json_logs" {
+  path_targets = [{
+    __address__ = "localhost",
+    __path__    = "/var/log/drf-base-api/*.jsonl",
+    job         = "drf-base-api",
+  }]
+}
+
+loki.source.file "django_json_logs" {
+  targets    = local.file_match.django_json_logs.targets
+  forward_to = [loki.process.django_json_logs.receiver]
+}
+
+loki.process "django_json_logs" {
+  forward_to = [loki.write.local.receiver]
+
+  stage.json {
+    expressions = {
+      level     = "level",
+      logger    = "logger",
+      timestamp = "timestamp",
+    }
+  }
+
+  stage.labels {
+    values = {
+      level = "level",
+    }
+  }
+
+  stage.timestamp {
+    source = "timestamp"
+    format = "RFC3339"
+  }
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

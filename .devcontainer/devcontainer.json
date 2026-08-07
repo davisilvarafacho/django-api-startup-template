@@ -17,7 +17,7 @@
       "onAutoForward": "silent"
     }
   },
-  "postCreateCommand": "uv sync --frozen --group dev && npm ci",
+  "postCreateCommand": "uv sync --frozen --group dev --group observability && npm ci",
   "customizations": {
     "vscode": {
       "extensions": [
