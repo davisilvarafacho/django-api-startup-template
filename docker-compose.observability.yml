@@ -78,7 +78,7 @@ services:
       - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
     ports:
-      - "3001:3000"   # 3000 costuma estar ocupada; o Grafana interno segue em 3000
+      - "${GRAFANA_PORT:-3001}:3000"   # o Grafana interno segue em 3000
     depends_on:
       - tempo
       - loki
