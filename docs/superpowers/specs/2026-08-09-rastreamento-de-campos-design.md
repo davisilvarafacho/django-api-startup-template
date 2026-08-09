@@ -14,6 +14,8 @@ esses campos ao Django, sem código adicional nos consumidores.
 - Inclui `last_modified_at` quando houver ao menos uma mudança real.
 - Não executa `UPDATE` nem altera o timestamp quando não houver diferença.
 - Preserva exatamente o comportamento de chamadas com `update_fields`.
+- Para objetos novos que herdam de `Base`, preenche `organizacao_id` a partir
+  do contexto RLS ativo quando o chamador não o informou.
 
 ## Desenho
 
@@ -32,7 +34,10 @@ Isso evita consultas adicionais e preserva o uso de `defer()`.
 
 Após um save bem-sucedido, o snapshot é reconstruído. Objetos novos preservam o
 fluxo normal de inserção, pois todos os campos precisam ser incluídos no
-`INSERT`.
+`INSERT`. Antes disso, um objeto novo de `Base` sem `organizacao_id` recebe o
+`tenant_id` do contexto RLS ativo. Sem contexto, a base não escolhe um tenant:
+o `NOT NULL` e a policy RLS continuam rejeitando a operação. Um valor informado
+pelo chamador também não é substituído; a policy RLS decide se ele é permitido.
 
 ## Limites intencionais
 
@@ -49,3 +54,5 @@ campos necessários por quem os invoca.
 - Mutação in-place de valor mutável é detectada.
 - Campos deferred não geram consulta extra nem entram em `update_fields`.
 - `update_fields` fornecido pelo consumidor é preservado.
+- Novo objeto de `Base` sem `organizacao_id` recebe a organização do contexto
+  RLS ativo; sem ambos, falha sem escolher uma organização implicitamente.
