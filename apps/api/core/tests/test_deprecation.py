@@ -1,13 +1,16 @@
 from django.http import HttpResponse
+from django.urls import include, path
 
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, BasePermission
 from rest_framework.response import Response
+from rest_framework.routers import SimpleRouter
 from rest_framework.test import APIRequestFactory
 
 import pytest
+from drf_spectacular.generators import SchemaGenerator
 
 from apps.api.core.deprecation import api_deprecated
 
@@ -183,3 +186,26 @@ def test_permissao_negada_antes_da_action_nao_recebe_headers():
 
     assert response.status_code == 403
     assert "Deprecation" not in response
+
+
+def gerar_schema():
+    router = SimpleRouter()
+    router.register("deprecated-test", DeprecatedViewSet, basename="deprecated-test")
+    patterns = [path("", include(router.urls))]
+    return SchemaGenerator(patterns=patterns).get_schema(request=None, public=True)
+
+
+def test_openapi_recebe_metadados_do_mesmo_decorator():
+    operation = gerar_schema()["paths"]["/deprecated-test/"]["get"]
+
+    assert operation["deprecated"] is True
+    assert operation["externalDocs"] == {"url": "/docs/deprecations/listagem/"}
+    assert operation["x-deprecation-since"] == "2026-08-01"
+    assert operation["x-sunset"] == "2026-11-01"
+    assert operation["x-replacement"] == "/api/v2/itens/"
+
+
+def test_openapi_omite_replacement_quando_nao_configurado():
+    operation = gerar_schema()["paths"]["/deprecated-test/relatorio/"]["get"]
+
+    assert "x-replacement" not in operation
