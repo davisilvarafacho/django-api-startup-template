@@ -6,7 +6,7 @@ com o que **já foi implementado** e o que está **planejado**, em ondas (batche
 **Legenda:** ✅ feito · 🚧 em andamento · ⏳ planejado · 🧠 brainstorm próprio antes de
 codar · 🔎 estudar antes · ⏸️ adiado
 
-_Atualizado em 2026-08-02._
+_Atualizado em 2026-08-09._
 
 ---
 
@@ -141,8 +141,9 @@ _Atualizado em 2026-08-02._
 ### Batch 8 — Domínio & segurança 🚧
 - ⏳ Base de código de **notificações** (providers plugáveis, templates, preferências).
 - ✅ Lib para **dados sensíveis** (field-level encryption): wrapper `encrypt(...)`, keyring/rotação Fernet, write-only no DRF e exclusão automática do auditlog.
-- ⏳ **Validação de upload** genérica e plugável.
-- ⏳ **Money handling** + **metadata framework** (JSON key-value por modelo).
+- ⏸️ **Validação de upload** genérica e plugável (adiado).
+- ⏸️ **Money handling** (adiado; não será adotado por enquanto).
+- ⏳ **Metadata framework** (JSON key-value por modelo).
 - ⏳ **Idempotency keys** em POST (evita duplicidade em retry de rede/pagamento).
 - ✅ **`django-anymail`**: abstração de e-mail multi-provider; envio padrão pelo Resend, sem acoplamento ao SDK do provider.
 
@@ -150,14 +151,15 @@ _Atualizado em 2026-08-02._
 
 ### Batch 9 — API avançada
 - `select_related` / `prefetch_related` sistematizados no `BaseViewSet`.
-- Sparse fieldsets / field expansion (`?fields=`, `?expand=`).
+- ⏸️ Sparse fieldsets / field expansion (`?fields=`, `?expand=`) (adiado).
 - **ETags** / conditional requests.
 - **Cursor pagination**.
-- Serializer registry (Sentry) / dataloaders (Saleor).
+- ⏸️ Serializer registry (Sentry) / dataloaders (Saleor) (adiado).
 
 ### Batch 10 — Escala de banco
 - **Read replica + DB router** para escala de leitura.
-- **Constraints no banco** (`UniqueConstraint`, `CheckConstraint`) e triggers com **`django-pgtrigger`**.
+- **Constraints no banco** (`UniqueConstraint`, `CheckConstraint`).
+- ⏸️ Triggers com **`django-pgtrigger`** (adiado; não será adotado por enquanto).
 - Data migrations separadas de schema migrations.
 
 ### Batch 11 — DevEx & operação (restante) 🚧
@@ -188,6 +190,11 @@ _Atualizado em 2026-08-02._
 ## ⏸️ Adiado
 - **LGPD** (bloco próprio): PII, retenção/expurgo, exportação, direito ao esquecimento, consentimento, scrub de PII.
 - Arquitetura de **plugins / integrações**.
+- **Validação de upload** genérica e plugável.
+- **Money handling**.
+- Sparse fieldsets / field expansion (`?fields=`, `?expand=`).
+- Serializer registry (Sentry) / dataloaders (Saleor).
+- Triggers com **`django-pgtrigger`**.
 - **Runbooks operacionais** (item do Batch 11).
 
 ## Brainstorm do dev
