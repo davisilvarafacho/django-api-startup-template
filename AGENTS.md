@@ -11,6 +11,16 @@ Shared utilities are in `utils/`; operational configuration is in
 `observability/`; documentation is built from `docs/` with MkDocs. Do not treat
 `examples/` as part of the primary test suite.
 
+## Import Architecture
+
+Import objects directly from the module that declares them; do not create a
+`shared.py` solely to re-export symbols. Imports between apps and module types
+are otherwise unrestricted. When a concrete circular import occurs, defer only
+one edge with a local import in the smallest runtime scope. Keep type-only
+imports under `TYPE_CHECKING`. Django relational fields must reference models
+with strings, such as `"organizacoes.Organizacao"`, so model loading does not
+depend on import order.
+
 ## Build, Test, and Development Commands
 
 Use `uv` for dependencies and execution:

@@ -192,6 +192,16 @@ inicializado no `ready()` do core).
 
 ## Convenções obrigatórias
 
+### Imports entre módulos
+
+Importe cada objeto diretamente do módulo que o declara; não crie `shared.py`
+somente para reexportar símbolos. Imports entre apps e tipos de módulo são
+livres. Quando houver um ciclo concreto, adie apenas uma aresta com import local
+no menor escopo de runtime. Imports exclusivos de tipagem ficam sob
+`TYPE_CHECKING`. Campos relacionais Django referenciam models obrigatoriamente
+por string, como `"organizacoes.Organizacao"`, para desacoplar o carregamento da
+ordem de imports. Consulte o ADR 0006.
+
 `.ai/CONVENTIONS.md` é o documento normativo — leia antes de criar models, serializers
 ou views. Os pontos mais fáceis de violar:
 

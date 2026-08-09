@@ -46,3 +46,4 @@ nav:
       - '0003 — Feature flags': adr/0003-feature-flags.md
       - '0004 — Depreciação de API': adr/0004-politica-de-deprecacao-de-api.md
       - '0005 — Cache semântico de autorização': adr/0005-cache-semantico-de-autorizacao.md
+      - '0006 — Importações entre módulos': adr/0006-importacoes-entre-modulos.md
