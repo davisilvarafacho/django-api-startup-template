@@ -143,7 +143,10 @@ _Atualizado em 2026-08-09._
 - ✅ Lib para **dados sensíveis** (field-level encryption): wrapper `encrypt(...)`, keyring/rotação Fernet, write-only no DRF e exclusão automática do auditlog.
 - ⏸️ **Validação de upload** genérica e plugável (adiado).
 - ⏸️ **Money handling** (adiado; não será adotado por enquanto).
-- ⏳ **Metadata framework** (JSON key-value por modelo).
+- ✅ **Metadata framework** (JSON key-value por objeto): action `GET`/`PATCH`
+  `.../metadata/` ligada por padrão no `BaseModelViewSet` (opt-out por
+  `metadata_habilitado`), merge de chaves com `null` removendo, valores texto,
+  limites por settings e documento isolado por organização.
 - ⏳ **Idempotency keys** em POST (evita duplicidade em retry de rede/pagamento).
 - ✅ **`django-anymail`**: abstração de e-mail multi-provider; envio padrão pelo Resend, sem acoplamento ao SDK do provider.
 

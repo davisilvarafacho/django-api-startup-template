@@ -35,6 +35,7 @@ nav:
   - Referência:
       - API: reference/api.md
       - Deprecação de API: reference/deprecacao-api.md
+      - Metadata genérico: reference/metadata.md
       - Convenções: reference/convencoes.md
       - Frameworks: frameworks.md
       - Guardrails internos: reference/guardrails.md
