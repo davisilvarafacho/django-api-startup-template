@@ -7,13 +7,21 @@ todos precisam da mesma tradução `resource:action`.
 
 from .scope_registry import ScopeAction
 
-# Mapeamento imutável: action padrão do ViewSet -> action CRUD do scope registry.
-CRUD_ACTIONS_BY_VIEWSET_ACTION = {
+# Mapeamento imutável: action do ViewSet -> action do scope registry.
+SCOPE_ACTIONS_BY_VIEWSET_ACTION = {
     "list": ScopeAction.READ,
     "retrieve": ScopeAction.READ,
+    "grid": ScopeAction.READ,
+    "form": ScopeAction.READ,
     "create": ScopeAction.CREATE,
+    "bulk_create": ScopeAction.CREATE,
+    "clonar": ScopeAction.CREATE,
     "update": ScopeAction.UPDATE,
     "partial_update": ScopeAction.UPDATE,
+    "bulk_update": ScopeAction.UPDATE,
+    "ativar": ScopeAction.UPDATE,
+    "inativar": ScopeAction.UPDATE,
+    "invalidate_cache": ScopeAction.UPDATE,
     "destroy": ScopeAction.DELETE,
 }
 
@@ -47,8 +55,8 @@ class ScopeResourceMixin:
         if resource is None:
             return []
 
-        crud_action = CRUD_ACTIONS_BY_VIEWSET_ACTION.get(action_name)
-        if crud_action is None:
+        scope_action = SCOPE_ACTIONS_BY_VIEWSET_ACTION.get(action_name)
+        if scope_action is None:
             return []
 
-        return [f"{resource}:{crud_action.value}"]
+        return [f"{resource}:{scope_action.value}"]

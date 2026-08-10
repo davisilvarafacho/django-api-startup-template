@@ -113,7 +113,6 @@ class CustomDjangoModelPermissions(DjangoModelPermissions):
         "form": ["%(app_label)s.view_%(model_name)s"],
         "ativar": ["%(app_label)s.can_toggle_%(model_name)s"],
         "inativar": ["%(app_label)s.can_toggle_%(model_name)s"],
-        "lookup": ["%(app_label)s.add_%(model_name)s"],
         "invalidate_cache": ["%(app_label)s.change_%(model_name)s"],
     }
 

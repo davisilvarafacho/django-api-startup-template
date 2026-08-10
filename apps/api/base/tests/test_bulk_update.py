@@ -1,4 +1,4 @@
-"""Testes da action `bulk_update` do `BaseModelViewSet`.
+"""Testes da action `bulk_update` do `BulkUpdateViewSetMixin`.
 
 Como a `Base` é abstrata, os testes usam o model concreto `Usuario` com um ViewSet
 e serializer locais, dirigidos por `APIRequestFactory` (sem depender de rota).
@@ -10,7 +10,7 @@ from rest_framework.test import APIRequestFactory
 import pytest
 
 from apps.api.base.serializers import BaseModelSerializer
-from apps.api.base.views import BaseModelViewSet
+from apps.api.base.views import BaseModelViewSet, BulkUpdateViewSetMixin
 from apps.usuarios.factories import UsuarioFactory
 from apps.usuarios.models import Usuario
 
@@ -21,13 +21,12 @@ class _UsuarioWriteSerializer(BaseModelSerializer):
         fields = ["id", "first_name", "last_name"]
 
 
-class _UsuarioViewSet(BaseModelViewSet):
+class _UsuarioViewSet(BulkUpdateViewSetMixin, BaseModelViewSet):
     queryset = Usuario.objects.all()
     serializer_class = _UsuarioWriteSerializer
     permission_classes = [AllowAny]
     authentication_classes = []
     filter_backends = []
-    has_is_active_field = False
 
 
 def _bulk_update(payload):

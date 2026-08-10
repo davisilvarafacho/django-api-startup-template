@@ -18,38 +18,31 @@ from apps.api.core.scope_mixins import ScopeResourceMixin
 from .handlers import ativar_registro, inativar_registro
 
 
-class UtilsViewSetMixin(ScopeResourceMixin):
-    """Mixin com métodos utilitários para ViewSets."""
+class PermissionsViewSetMixin:
+    """Mixin responsável pelas permissões adicionais por action."""
+
+    base_permissions = {
+        "grid": ["%(app_label)s.view_%(model_name)s"],
+        "form": ["%(app_label)s.view_%(model_name)s"],
+        "bulk_create": ["%(app_label)s.add_%(model_name)s"],
+        "bulk_update": ["%(app_label)s.change_%(model_name)s"],
+        "clonar": ["%(app_label)s.add_%(model_name)s"],
+        "ativar": ["%(app_label)s.can_toggle_%(model_name)s"],
+        "inativar": ["%(app_label)s.can_toggle_%(model_name)s"],
+        "invalidate_cache": ["%(app_label)s.change_%(model_name)s"],
+    }
 
     def check_permissions(self, request):
-        base_permissions = {
-            "grid": ["%(app_label)s.view_%(model_name)s"],
-            "form": ["%(app_label)s.view_%(model_name)s"],
-            "ativar": ["%(app_label)s.can_toggle_%(model_name)s"],
-            "inativar": ["%(app_label)s.can_toggle_%(model_name)s"],
-        }
-
         for permission in self.get_permissions():
             if issubclass(permission.__class__, DjangoModelPermissions):
-                permission.perms_map = {**permission.perms_map, **base_permissions, **self.extra_permissions}
+                permission.perms_map = {**permission.perms_map, **self.base_permissions, **self.extra_permissions}
 
             if not permission.has_permission(request, self):
                 self.permission_denied(request, message=getattr(permission, "message", None), code=getattr(permission, "code", None))
 
-    def generic_action(self, *args, **kwargs):
-        instance = None
 
-        if "pk" in kwargs:
-            self.get_object()
-            instance = self.instance
-
-        many = isinstance(self.request.data, list)
-        serializer = self.get_serializer(instance=instance, data=self.request.data, many=many)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-        response_status = kwargs.get("status", status.HTTP_200_OK)
-        response_data = kwargs.get("data", None)
-        return Response(response_data, status=response_status)
+class QuerysetViewSetMixin:
+    """Mixin responsável pela resolução e modificação do queryset."""
 
     def get_queryset(self):
         queryset = self.modify_base_queryset(super().get_queryset())
@@ -64,10 +57,18 @@ class UtilsViewSetMixin(ScopeResourceMixin):
     def modify_base_queryset(self, queryset):
         return queryset
 
+
+class ObjectCacheViewSetMixin:
+    """Mixin responsável por armazenar o objeto recuperado em ``self.instance``."""
+
     def get_object(self):
         instance = super().get_object()
         self.instance = instance
         return instance
+
+
+class SerializerViewSetMixin:
+    """Mixin responsável pela resolução do serializer e de seu contexto."""
 
     def get_serializer_class(self, overwrite_action=None):
         assert self.serializer_classes != {} or self.serializer_class is not None, (
@@ -98,11 +99,30 @@ class UtilsViewSetMixin(ScopeResourceMixin):
         aditional_context = self.get_aditional_serializer_context()
         return {"action": self.action, "token": get_request_variable("token"), **context, **aditional_context}
 
-    # ---- cache ----
-    # Namespace versionado por modelo. As views que cacheiam resposta com TTL
-    # devem montar a chave com `build_cache_key(...)`; a action `invalidate_cache`
-    # vira a versão do namespace e torna todas as chaves antigas inalcançáveis
-    # (invalidação em massa O(1), sem depender de `delete_pattern`).
+
+class GenericActionViewSetMixin:
+    """Mixin responsável pela action genérica baseada em serializer."""
+
+    def generic_action(self, *args, **kwargs):
+        instance = None
+
+        if "pk" in kwargs:
+            self.get_object()
+            instance = self.instance
+
+        many = isinstance(self.request.data, list)
+        serializer = self.get_serializer(instance=instance, data=self.request.data, many=many)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        response_status = kwargs.get("status", status.HTTP_200_OK)
+        response_data = kwargs.get("data", None)
+        return Response(response_data, status=response_status)
+
+
+class CacheViewSetMixin:
+    """Mixin responsável pelas chaves e versão do cache do recurso."""
+
+    cache_timeout = 60
 
     def get_cache_namespace(self):
         model = self.queryset.model
@@ -123,51 +143,35 @@ class UtilsViewSetMixin(ScopeResourceMixin):
             cache.set(version_key, 2, None)
 
 
-class GenericBaseViewSet(UtilsViewSetMixin, GenericViewSet):
-    pass
+class UtilsViewSetMixin(
+    ScopeResourceMixin,
+    PermissionsViewSetMixin,
+    QuerysetViewSetMixin,
+    ObjectCacheViewSetMixin,
+    SerializerViewSetMixin,
+    GenericActionViewSetMixin,
+):
+    """Fachada compatível para os comportamentos compartilhados dos ViewSets."""
 
 
-class BaseModelViewSet(UtilsViewSetMixin, ModelViewSet):
-    queryset = None
-    serializer_class = None
-    serializer_classes = {}
-    filterset_fields = {}
-    search_fields = []
-    ordering_fields = []
-    extra_permissions = {}
-    has_is_active_field = True
-    cache_timeout = 60  # TTL padrão (segundos) para caches deste viewset
+class AtivarInativarViewSetMixin:
+    """Mixin responsável pelas actions de ativação e inativação."""
 
-    def perform_create(self, serializer, **overwrite):
-        return serializer.save(**overwrite)
-
-    def perform_update(self, serializer, **overwrite):
-        return serializer.save(**overwrite)
-
-    def modify_unique_fields(self, instance):
-        pass
-
-    def list(self, request, *args, **kwargs):
-        fields = self.queryset.model.get_serializable_column_names()
-        queryset = self.filter_queryset(self.get_queryset()).values(*fields)
-        page = self.paginate_queryset(queryset)
-        return self.get_paginated_response(page)
-
-    def retrieve(self, request, *args, **kwargs):
+    @action(methods=["post"], detail=True)
+    def ativar(self, request, *args, **kwargs):
         instance = self.get_object()
-        return Response(instance.as_dict())
+        ativar_registro(instance)
+        return Response()
 
-    def destroy(self, request, *args, **kwargs):
-        try:
-            instance = self.get_object()
-            self.perform_destroy(instance)
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        except ProtectedError as exc:
-            raise APIError(
-                CoreErrorCode.CONFLICT,
-                status_code=status.HTTP_409_CONFLICT,
-                message="Esse registro já foi utilizado pelo sistema.",
-            ) from exc
+    @action(methods=["post"], detail=True)
+    def inativar(self, request, *args, **kwargs):
+        instance = self.get_object()
+        inativar_registro(instance)
+        return Response()
+
+
+class FormGridViewSetMixin:
+    """Mixin responsável pelas actions de formulário e grid."""
 
     @action(methods=["get"], detail=True)
     def form(self, request, *args, **kwargs):
@@ -182,6 +186,10 @@ class BaseModelViewSet(UtilsViewSetMixin, ModelViewSet):
         serializer = self.get_serializer(page, many=True)
         return self.get_paginated_response(serializer.data)
 
+
+class BulkCreateViewSetMixin:
+    """Mixin responsável pela criação de registros em lote."""
+
     @action(methods=["post"], detail=False)
     def bulk_create(self, request):
         serializer = self.get_serializer(data=request.data, many=True)
@@ -189,6 +197,10 @@ class BaseModelViewSet(UtilsViewSetMixin, ModelViewSet):
         self.perform_create(serializer)
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+
+class BulkUpdateViewSetMixin:
+    """Mixin responsável pela atualização parcial e atômica em lote."""
 
     @action(methods=["patch"], detail=False)
     def bulk_update(self, request):
@@ -236,29 +248,26 @@ class BaseModelViewSet(UtilsViewSetMixin, ModelViewSet):
 
         return Response([serializer.data for serializer in serializers], status=status.HTTP_200_OK)
 
-    @action(methods=["get"], detail=True)
+
+class ClonarViewSetMixin:
+    """Mixin responsável pela clonagem de registros."""
+
+    def modify_unique_fields(self, instance):
+        pass
+
+    @action(methods=["post"], detail=True)
     def clonar(self, request, pk):
         instance = self.get_object()
-        clone = instance.clonar()
+        clone = instance.clonar(commit=False)
+        serializer = self.get_serializer(clone, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
         self.modify_unique_fields(clone)
-        clone.save()
-        serializer = self.get_serializer(clone)
+        serializer.save()
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-    @action(detail=False, methods=["get"])
-    def values(self, request):
-        values = request.query_params.get("values", None)
-        if values is None:
-            return Response({"values": "Essa query é obrigatória"}, status=status.HTTP_400_BAD_REQUEST)
 
-        values = values.split(",")
-        queryset = self.filter_queryset(self.get_queryset()).values(*values)
-        page = self.paginate_queryset(queryset)
-        return self.get_paginated_response(page)
-
-    @action(detail=True, methods=["get"])
-    def lookup(self, request, pk=None):
-        return Response(status=status.HTTP_503_SERVICE_UNAVAILABLE)
+class CacheInvalidationViewSetMixin(CacheViewSetMixin):
+    """Mixin responsável pela invalidação do cache versionado do recurso."""
 
     @action(methods=["post"], detail=False)
     def invalidate_cache(self, request, *args, **kwargs):
@@ -270,16 +279,34 @@ class BaseModelViewSet(UtilsViewSetMixin, ModelViewSet):
         self.bump_cache_version()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-    if has_is_active_field:
 
-        @action(methods=["get"], detail=True)
-        def ativar(self, request, *args, **kwargs):
-            instance = self.get_object()
-            ativar_registro(instance)
-            return Response()
+class GenericBaseViewSet(UtilsViewSetMixin, GenericViewSet):
+    pass
 
-        @action(methods=["get"], detail=True)
-        def inativar(self, request, *args, **kwargs):
+
+class BaseModelViewSet(UtilsViewSetMixin, ModelViewSet):
+    queryset = None
+    serializer_class = None
+    serializer_classes = {}
+    filterset_fields = {}
+    search_fields = []
+    ordering_fields = []
+    extra_permissions = {}
+
+    def perform_create(self, serializer, **overwrite):
+        return serializer.save(**overwrite)
+
+    def perform_update(self, serializer, **overwrite):
+        return serializer.save(**overwrite)
+
+    def destroy(self, request, *args, **kwargs):
+        try:
             instance = self.get_object()
-            inativar_registro(instance)
-            return Response()
+            self.perform_destroy(instance)
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except ProtectedError as exc:
+            raise APIError(
+                CoreErrorCode.CONFLICT,
+                status_code=status.HTTP_409_CONFLICT,
+                message="Esse registro já foi utilizado pelo sistema.",
+            ) from exc

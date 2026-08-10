@@ -37,13 +37,21 @@ class _SemRecursoViewSet(UtilsViewSetMixin, GenericViewSet):
     [
         ("list", "users:read"),
         ("retrieve", "users:read"),
+        ("grid", "users:read"),
+        ("form", "users:read"),
         ("create", "users:create"),
+        ("bulk_create", "users:create"),
+        ("clonar", "users:create"),
         ("update", "users:update"),
         ("partial_update", "users:update"),
+        ("bulk_update", "users:update"),
+        ("ativar", "users:update"),
+        ("inativar", "users:update"),
+        ("invalidate_cache", "users:update"),
         ("destroy", "users:delete"),
     ],
 )
-def test_viewset_deriva_scope_crud(action, scope):
+def test_viewset_deriva_scope_por_action(action, scope):
     view = _RecursoViewSet()
     view.action = action
 
