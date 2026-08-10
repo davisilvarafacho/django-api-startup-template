@@ -52,8 +52,14 @@ def normalizar_request_id(valor):
     """Valida o id recebido do cliente.
 
     Um header vindo de fora não pode ser confiado cegamente: ele vira campo de
-    log e tag do Sentry, então valores gigantes ou com caracteres de controle
-    poluiriam (ou quebrariam) o pipeline. Só aceita hexadecimal/UUID.
+    log, tag do Sentry e atributo de span, então valores gigantes ou com
+    caracteres de controle poluiriam (ou quebrariam) o pipeline.
+
+    Aceita até 64 caracteres alfanuméricos ASCII, com hífens opcionais — o
+    formato do `$request_id` do nginx (32 hex) e de um UUID. A restrição a ASCII
+    é deliberada: `str.isalnum()` sozinho aprova dígitos e letras de qualquer
+    alfabeto Unicode, que não quebram nada mas viram ids irreconhecíveis no log.
+    Ids de outros gateways em base36/base62 continuam passando.
     """
     if not valor:
         return None
@@ -64,7 +70,7 @@ def normalizar_request_id(valor):
         return None
 
     candidato = valor.replace("-", "")
-    if not candidato.isalnum():
+    if not candidato.isascii() or not candidato.isalnum():
         return None
 
     return valor

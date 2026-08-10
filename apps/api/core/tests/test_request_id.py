@@ -83,6 +83,8 @@ def test_nao_libera_o_contexto_no_process_exception():
         "x" * 65,  # comprimento absurdo
         "nao-eh-hex!",  # caractere de controle/pontuação
         "com espaco",
+        "٣٢١٤",  # dígitos árabe-índicos: `isalnum()` aprova, ASCII não
+        "café1234",  # letra acentuada
     ],
 )
 def test_rejeita_id_invalido_do_cliente(valor):
