@@ -116,3 +116,10 @@ make dev-obs-down   # devcontainer
 
 Os volumes são preservados; para descartar os dados, acrescente `-v` ao
 `docker compose down`.
+
+## 7. Alertas
+
+Métricas sem alerta só servem para autópsia. Os contact points de Discord e
+Telegram e três regras de exemplo já vêm provisionados em
+`observability/grafana/provisioning/alerting/` — falta só preencher as
+credenciais. Ver [alertas do Grafana](alertas-grafana.md).

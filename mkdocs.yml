@@ -29,6 +29,7 @@ nav:
       - Proteção contra força bruta: how-to/protecao-forca-bruta.md
       - Observabilidade local: how-to/observabilidade-local.md
       - Monitoramento e alertas com Uptime Kuma: how-to/uptime-kuma.md
+      - Alertas do Grafana no Discord e Telegram: how-to/alertas-grafana.md
       - Analytics com PostHog: how-to/analytics-posthog.md
       - Publicar uma versão: how-to/publicar-versao.md
   - Referência:

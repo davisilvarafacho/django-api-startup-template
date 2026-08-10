@@ -3,7 +3,9 @@
 O [Uptime Kuma](https://github.com/louislam/uptime-kuma) é a camada de
 monitoramento sintético: ele consulta a API periodicamente e avisa quando ela
 cai ou volta. Para métricas, logs e traces, continue usando a
-[stack de observabilidade local](observabilidade-local.md).
+[stack de observabilidade local](observabilidade-local.md); para alertar sobre
+taxa de erro e latência, veja os
+[alertas do Grafana](alertas-grafana.md).
 
 Nesta base, monitore `GET /health/`. É o endpoint de *liveness*: responde 200
 sem depender de banco, Redis ou storage. Assim, o alerta significa que a API ou
