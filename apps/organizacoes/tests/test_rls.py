@@ -74,6 +74,24 @@ def ambiente_rls(django_db_setup, django_db_blocker):
             cursor.execute(f"DROP ROLE IF EXISTS {PAPEL_TESTE}")
 
 
+@pytest.fixture
+def tabela_metadata(django_db_setup, django_db_blocker):
+    from apps.api.metadata.models import Metadata
+
+    table = Metadata._meta.db_table
+    with django_db_blocker.unblock():
+        created = table not in connection.introspection.table_names()
+        if created:
+            with connection.schema_editor() as editor:
+                editor.create_model(Metadata)
+
+    yield
+
+    if created:
+        with django_db_blocker.unblock(), connection.schema_editor() as editor:
+            editor.delete_model(Metadata)
+
+
 def consultar_como_papel_comum(organizacao_id):
     """Lê a tabela por um papel sujeito ao RLS, sob o tenant informado.
 
@@ -158,3 +176,35 @@ def test_orm_com_contexto_enxerga_a_propria_organizacao(cenario):
 
     with organizacao_atual_privilegiada(org_a.id):
         assert RegistroRLS.objects.count() >= 1
+
+
+@pytest.mark.django_db(transaction=True)
+def test_base_preenche_organizacao_do_contexto_rls(ambiente_rls):
+    organizacao = Organizacao.objects.create(nome="Org", slug="org-auto")
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        registro = RegistroRLS.objects.create(descricao="automático")
+
+    assert registro.organizacao_id == organizacao.pk
+
+
+@pytest.mark.django_db(transaction=True)
+def test_base_sem_contexto_nao_escolhe_organizacao(ambiente_rls):
+    from django_rls.exceptions import RLSError
+
+    with pytest.raises(RLSError):
+        RegistroRLS.objects.create(descricao="sem tenant")
+
+
+@pytest.mark.django_db(transaction=True)
+def test_metadata_mixin_resolve_modelo_pelo_caminho_canonico(ambiente_rls, tabela_metadata):
+    from apps.api.metadata.models import Metadata
+
+    organizacao = Organizacao.objects.create(nome="Meta", slug="meta")
+    with organizacao_atual_privilegiada(organizacao.pk):
+        registro = RegistroRLS.objects.create(descricao="com metadata")
+        metadata = registro.metadata
+
+    assert isinstance(metadata, Metadata)
+    assert metadata.content_type == registro.content_type
+    assert metadata.object_id == registro.pk

@@ -27,7 +27,7 @@ class _RecursoDoModelViewSet(UtilsViewSetMixin, GenericViewSet):
 
 
 class _SemRecursoViewSet(UtilsViewSetMixin, GenericViewSet):
-    # `TokenMetaData` não herda de `BaseGlobal`: não tem `api_scope_resource`.
+    # `TokenMetaData` não herda de `BaseTenantless`: não tem `api_scope_resource`.
     queryset = TokenMetaData.objects.all()
     permission_classes = [AllowAny]
 

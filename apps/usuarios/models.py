@@ -2,7 +2,7 @@ from django.contrib.auth.models import AbstractUser, UserManager
 from django.db import models, transaction
 from django.utils.translation import gettext_lazy as _
 
-from apps.api.base.models import BaseGlobal, BaseQuerySet
+from apps.api.base.models import BaseQuerySet, BaseTenantless
 from apps.usuarios import passwords
 from internal_frameworks.sensitive_fields.fields import encrypt
 from utils.logs import register
@@ -38,7 +38,7 @@ class UsuarioManager(UserManager.from_queryset(BaseQuerySet)):
         return self._create_user(email, password, validate=False, **extra_fields)
 
 
-class Usuario(BaseGlobal, AbstractUser):
+class Usuario(BaseTenantless, AbstractUser):
     username = None
     api_scope_resource = "users"
 

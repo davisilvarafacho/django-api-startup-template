@@ -6,8 +6,9 @@ import pytest
 from auditlog.registry import auditlog
 from threadlocals.threadlocals import set_current_user
 
+import apps.api.base.models as base_models
 from apps.api.autenticacao.models import MFAChallenge, MFAFactor, MFARecoveryCode, MFAResetAudit, TokenMetaData, TrustedDevice
-from apps.api.base.models import BaseGlobal
+from apps.api.base.models import Base, BaseTenantless
 from apps.organizacoes.models import Convite, Organizacao, Time, Vinculo
 from apps.usuarios.models import Usuario
 from tests.support.usuarios import criar_usuario
@@ -49,14 +50,17 @@ def test_exclui_campos_tecnicos_e_credenciais_sem_mutar_a_configuracao_global():
     assert auditlog.get_model_fields(TokenMetaData)["exclude_fields"] == campos_base
 
 
-def test_base_global_define_campos_de_auditoria():
-    assert BaseGlobal._meta.get_field("created_by").remote_field.on_delete is models.PROTECT
-    assert BaseGlobal._meta.get_field("created_at").auto_now_add is True
-    assert BaseGlobal._meta.get_field("last_modified_at").auto_now is True
+def test_base_tenantless_define_campos_comuns_sem_organizacao():
+    assert BaseTenantless._meta.get_field("created_by").remote_field.on_delete is models.PROTECT
+    assert BaseTenantless._meta.get_field("created_at").auto_now_add is True
+    assert BaseTenantless._meta.get_field("last_modified_at").auto_now is True
+    with pytest.raises(FieldDoesNotExist):
+        BaseTenantless._meta.get_field("organizacao")
 
-    for antigo in ("owner", "data_criacao", "hora_criacao", "data_ultima_alteracao", "hora_ultima_alteracao"):
-        with pytest.raises(FieldDoesNotExist):
-            BaseGlobal._meta.get_field(antigo)
+
+def test_base_adiciona_organizacao_ao_contrato_tenantless():
+    assert Base._meta.get_field("organizacao").remote_field.model == "organizacoes.Organizacao"
+    assert not hasattr(base_models, "BaseGlobal")
 
 
 def test_modelos_de_control_plane_mantem_created_by_padrao():
@@ -66,8 +70,8 @@ def test_modelos_de_control_plane_mantem_created_by_padrao():
 
 
 def test_internal_e_read_only_fields_usam_os_novos_nomes():
-    assert BaseGlobal.get_internal_fields() == ["last_modified_at", "is_deleted"]
-    assert BaseGlobal.get_read_only_fields() == ["is_active", "is_deleted", "created_at", "created_by"]
+    assert BaseTenantless.get_internal_fields() == ["last_modified_at", "is_deleted"]
+    assert BaseTenantless.get_read_only_fields() == ["is_active", "is_deleted", "created_at", "created_by"]
 
 
 @pytest.fixture(autouse=True)

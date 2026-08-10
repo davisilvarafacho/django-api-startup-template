@@ -43,65 +43,50 @@ class Estados(models.IntegerChoices):
     EXTERIOR = 28, "Exterior"
 
 
-class BaseQuerySet(RLSQuerySet):
-    """QuerySet com o guard de contexto do django-rls.
-
-    Sem isso o `REQUIRE_CONTEXT` não tem efeito: o manager do `BaseGlobal` vence
-    o `RLSManager` no MRO, e consultar um modelo isolado fora de um contexto de
-    organização passaria batido — devolvendo silenciosamente zero linhas (ou
-    todas, se a conexão for de um superusuário, que ignora RLS).
-
-    O guard só atua em modelos que têm policies; os que herdam apenas de
-    `BaseGlobal` não são afetados.
-    """
-
+class SoftDeleteQuerySet(models.QuerySet):
     def delete(self):
         queryset = self.filter(is_deleted=False)
         deleted_count = queryset.update(is_deleted=True)
         return deleted_count, {self.model._meta.label: deleted_count}
 
 
-class BaseManager(models.Manager.from_queryset(BaseQuerySet)):
-    include_deleted = False
+class BaseQuerySet(SoftDeleteQuerySet, RLSQuerySet):
+    """Queryset com exclusão lógica e o guard de contexto do django-rls."""
 
+
+class DeferredFieldsManagerMixin:
     def get_queryset(self):
         queryset = super().get_queryset()
-        deferred_fields = self.model.get_queryset_deferred_fields()
-        if deferred_fields:
-            queryset = queryset.defer(*deferred_fields)
-        if not self.include_deleted:
-            queryset = queryset.filter(is_deleted=False)
-        return queryset
+        fields = self.model.get_queryset_deferred_fields()
+        return queryset.defer(*fields) if fields else queryset
 
 
-class CustomManager(BaseManager):
-    pass
+class ExcludeDeletedManagerMixin:
+    def get_queryset(self):
+        return super().get_queryset().filter(is_deleted=False)
 
 
-class AllObjectsManager(BaseManager):
-    include_deleted = True
-
-
-class AtivosManager(BaseManager):
+class ActiveManagerMixin:
     def get_queryset(self):
         return super().get_queryset().filter(is_active=True)
 
 
-class CreationAuditMixin(models.Model):
-    """Autoria e timestamps comuns a todo modelo de negócio.
+BaseQuerySetManager = models.Manager.from_queryset(BaseQuerySet)
 
-    Não existe `last_modified_by`: só a criação é atribuída a um usuário: quem
-    fez a última alteração vive no `AuditlogHistoryField`, não num FK aqui.
-    """
 
-    created_by = models.ForeignKey(
-        verbose_name=_("criado por"),
-        to=settings.AUTH_USER_MODEL,
-        on_delete=models.PROTECT,
-        related_name="+",
-        blank=True,
-        null=True,
-    )
+class ObjectsManager(ExcludeDeletedManagerMixin, DeferredFieldsManagerMixin, BaseQuerySetManager):
+    pass
+
+
+class AllObjectsManager(DeferredFieldsManagerMixin, BaseQuerySetManager):
+    pass
+
+
+class ActiveObjectsManager(ActiveManagerMixin, ExcludeDeletedManagerMixin, DeferredFieldsManagerMixin, BaseQuerySetManager):
+    pass
+
+
+class CreationTimestampMixin(models.Model):
     created_at = models.DateTimeField(_("criado em"), auto_now_add=True)
     last_modified_at = models.DateTimeField(_("última alteração em"), auto_now=True)
 
@@ -109,63 +94,61 @@ class CreationAuditMixin(models.Model):
         abstract = True
 
 
-class BaseGlobal(CreationAuditMixin):
-    """Campos comuns **sem** isolamento por organização.
-
-    Use somente nos modelos de identidade/bootstrap, que precisam ser lidos
-    antes de existir contexto de tenant: `Organizacao`, `Vinculo`, `Convite` e
-    `Usuario`. Todo o resto deve herdar de `Base`.
-    """
-
-    is_active = models.BooleanField(_("ativo"), default=True)
-    is_deleted = models.BooleanField(_("excluído"), default=False)
-
-    # Interface pública e estável de scopes/permissions (`resource:action`).
-    # `None` significa que o model não é exposto pelo registry de scopes.
-    api_scope_resource = None
-
-    objects = CustomManager()
-    all_objects = AllObjectsManager()
-    ativos = AtivosManager()
-
-    history = AuditlogHistoryField()
-
-    internal_fields = [
-        "last_modified_at",
-        "is_deleted",
-    ]
-    extra_internal_fields = []
-
-    read_only_fields = [
-        "is_active",
-        "is_deleted",
-        "created_at",
-        "created_by",
-    ]
-    extra_read_only_fields = []
-
-    extra_write_only_fields = []
-
-    queryset_deferred_fields = []
-
-    clone_reset_fields = ("created_at", "last_modified_at")
-    extra_clone_reset_fields = []
+class CreatedByMixin(models.Model):
+    created_by = models.ForeignKey(
+        to=settings.AUTH_USER_MODEL,
+        verbose_name=_("criado por"),
+        on_delete=models.PROTECT,
+        related_name="+",
+        blank=True,
+        null=True,
+    )
 
     def save(self, *args, **kwargs):
-        # setando o created_by automaticamente
-        model_fields = self.get_fields()
-        if "created_by" in model_fields:
-            if self.pk is None and self.created_by is None:
-                current_user = get_current_user()
-                if current_user and current_user.is_authenticated:
-                    self.created_by = current_user
+        if self._state.adding and self.created_by_id is None:
+            current_user = get_current_user()
+            if current_user and current_user.is_authenticated:
+                self.created_by = current_user
 
         return super().save(*args, **kwargs)
+
+    class Meta:
+        abstract = True
+
+
+class CreationAuditMixin(CreatedByMixin, CreationTimestampMixin):
+    """Compatibilidade para modelos que usam apenas autoria e timestamps."""
+
+    class Meta:
+        abstract = True
+
+
+class AuditHistoryMixin(models.Model):
+    history = AuditlogHistoryField()
+
+    class Meta:
+        abstract = True
+
+
+class ActivityMixin(models.Model):
+    is_active = models.BooleanField(_("ativo"), default=True)
+
+    class Meta:
+        abstract = True
+
+
+class SoftDeleteMixin(models.Model):
+    is_deleted = models.BooleanField(_("excluído"), default=False)
 
     def delete(self, using=None, keep_parents=False):
         self.is_deleted = True
         self.save(using=using, update_fields=["is_deleted"])
 
+    class Meta:
+        abstract = True
+
+
+class FieldIntrospectionMixin(models.Model):
     def as_dict(self, additional_exclude_fields=None, ignore_excluded_fields=None):
         excluded = set(self.get_excluded_fields())
 
@@ -176,32 +159,6 @@ class BaseGlobal(CreationAuditMixin):
             excluded.difference_update(ignore_excluded_fields)
 
         return {field.name: getattr(self, field.name) for field in self._meta.get_fields() if field.concrete and field.name not in excluded}
-
-    def clonar(self, commit=True, **fields):
-        clone = copy.copy(self)
-        clone.pk = None
-        clone._state.adding = True
-
-        model_fields = self.get_fields()
-        control_fields = list(self.clone_reset_fields) + list(self.extra_clone_reset_fields)
-        for field in control_fields:
-            if field in model_fields:
-                setattr(clone, field, None)
-
-        for chave, valor in fields.items():
-            setattr(clone, chave, valor)
-
-        clone.created_by = get_current_user()
-
-        clone.modify_before_cloning()
-
-        if commit:
-            clone.save()
-
-        return clone
-
-    def modify_before_cloning(self):
-        pass
 
     @classmethod
     def get_fields(cls):
@@ -218,6 +175,32 @@ class BaseGlobal(CreationAuditMixin):
         return cls.get_internal_fields()
 
     @classmethod
+    def get_relational_fields(cls):
+        return [field.name for field in cls._meta.get_fields() if field.concrete and field.is_relation]
+
+    def __int__(self):
+        return self.pk
+
+    class Meta:
+        abstract = True
+
+
+class FieldPolicyMixin(models.Model):
+    read_only_fields = ["is_active", "is_deleted", "created_at", "created_by"]
+    extra_read_only_fields = []
+
+    write_only_fields = []
+    extra_write_only_fields = []
+
+    internal_fields = ["last_modified_at", "is_deleted"]
+    extra_internal_fields = []
+
+    queryset_deferred_fields = []
+
+    forbidden_internal_write_fields = ["created_by", "last_modified_at", "organizacao"]
+    extra_forbidden_internal_write_fields = []
+
+    @classmethod
     def get_internal_fields(cls):
         return cls.internal_fields + cls.extra_internal_fields
 
@@ -227,42 +210,217 @@ class BaseGlobal(CreationAuditMixin):
 
     @classmethod
     def get_write_only_fields(cls):
-        return list(cls.extra_write_only_fields)
+        return cls.write_only_fields + cls.extra_write_only_fields
 
     @classmethod
     def get_queryset_deferred_fields(cls):
         return cls.queryset_deferred_fields
 
     @classmethod
-    def get_relational_fields(cls):
-        return [field.name for field in cls._meta.get_fields() if field.concrete and field.is_relation]
-
-    @classmethod
-    def get_content_type(cls):
-        return ContentType.objects.get_for_model(cls)
-
-    def __int__(self):
-        return self.pk
+    def get_forbidden_internal_write_fields(cls):
+        return cls.forbidden_internal_write_fields + cls.extra_forbidden_internal_write_fields
 
     class Meta:
         abstract = True
 
 
-class Base(BaseGlobal, RLSModel):
-    """Base padrão: todo modelo de negócio é isolado por organização.
+class CloneMixin(models.Model):
+    clone_reset_fields = ["created_at", "last_modified_at"]
+    extra_clone_reset_fields = []
 
-    O FK `organizacao` e a policy de RLS são herdados por toda subclasse
-    concreta — o metaclass do django-rls propaga `rls_policies`. Multi-tenancy é
-    o **default**: esquecer de configurar algo resulta em ficar protegido, não
-    em vazar dados entre clientes.
-    """
+    def clonar(self, commit=True, **fields):
+        clone = copy.copy(self)
+        clone.pk = None
+        clone._state.adding = True
 
+        model_fields = self.get_fields()
+        control_fields = list(self.clone_reset_fields) + list(self.extra_clone_reset_fields)
+        for field in control_fields:
+            if field in model_fields:
+                setattr(clone, field, None)
+
+        for chave, valor in fields.items():
+            setattr(clone, chave, valor)
+
+        clone.created_by = get_current_user()
+        clone.modify_before_cloning()
+
+        if commit:
+            clone.save()
+
+        return clone
+
+    def modify_before_cloning(self):
+        pass
+
+    class Meta:
+        abstract = True
+
+
+class CapabilityMixin(models.Model):
+    @property
+    def is_clonable(self):
+        return True
+
+    @property
+    def is_deletable(self):
+        return True
+
+    @property
+    def is_editable(self):
+        return True
+
+    @property
+    def is_viewable(self):
+        return True
+
+    class Meta:
+        abstract = True
+
+
+class ApiScopeMixin(models.Model):
+    # Interface pública e estável de scopes/permissions (`resource:action`).
+    # `None` significa que o model não é exposto pelo registry de scopes.
+    api_scope_resource = None
+
+    class Meta:
+        abstract = True
+
+
+class MetadataMixin(models.Model):
+    @property
+    def content_type(self):
+        return ContentType.objects.get_for_model(self)
+
+    @property
+    def metadata(self):
+        from apps.api.metadata.models import Metadata
+
+        if not hasattr(self, "_metadata"):
+            self._metadata = Metadata.objects.get_or_create(content_type=self.content_type, object_id=self.pk)[0]
+        return self._metadata
+
+    @property
+    def raw_metadata(self):
+        return self.metadata.dados
+
+    class Meta:
+        abstract = True
+
+
+class ChangeTrackingMixin(models.Model):
+    _original_field_values: dict[str, object]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._original_field_values = {}
+        self._reset_original_field_values()
+
+    def _loaded_concrete_fields(self):
+        deferred = self.get_deferred_fields()
+        return [field for field in self._meta.concrete_fields if field.attname not in deferred]
+
+    def _reset_original_field_values(self, fields=None):
+        loaded_fields = self._loaded_concrete_fields()
+        if fields is None:
+            self._original_field_values = {field.name: copy.deepcopy(getattr(self, field.attname)) for field in loaded_fields}
+            return
+
+        field_names = set(fields)
+        for field in loaded_fields:
+            if field.name in field_names or field.attname in field_names:
+                self._original_field_values[field.name] = copy.deepcopy(getattr(self, field.attname))
+
+    def _changed_loaded_field_names(self):
+        return [
+            field.name
+            for field in self._loaded_concrete_fields()
+            if field.name not in self._original_field_values or self._original_field_values[field.name] != getattr(self, field.attname)
+        ]
+
+    def save(self, *args, **kwargs):
+        if self._state.adding:
+            result = super().save(*args, **kwargs)
+            self._reset_original_field_values()
+            return result
+
+        explicit_update_fields = kwargs.get("update_fields")
+        if explicit_update_fields is None:
+            update_fields = self._changed_loaded_field_names()
+            if not update_fields:
+                return None
+
+            auto_now_fields = [
+                field.name for field in self._meta.concrete_fields if getattr(field, "auto_now", False) and field.name not in update_fields
+            ]
+            kwargs["update_fields"] = [*update_fields, *auto_now_fields]
+        else:
+            explicit_update_fields = tuple(explicit_update_fields)
+            kwargs["update_fields"] = explicit_update_fields
+
+        result = super().save(*args, **kwargs)
+        self._reset_original_field_values(explicit_update_fields)
+        return result
+
+    def refresh_from_db(self, using=None, fields=None, from_queryset=None):
+        refreshed_fields = tuple(fields) if fields is not None else None
+        result = super().refresh_from_db(using=using, fields=refreshed_fields, from_queryset=from_queryset)
+        self._reset_original_field_values(refreshed_fields)
+        return result
+
+    class Meta:
+        abstract = True
+
+
+class BaseTenantless(
+    MetadataMixin,
+    ApiScopeMixin,
+    CapabilityMixin,
+    CloneMixin,
+    FieldPolicyMixin,
+    FieldIntrospectionMixin,
+    SoftDeleteMixin,
+    ActivityMixin,
+    AuditHistoryMixin,
+    ChangeTrackingMixin,
+    CreatedByMixin,
+    CreationTimestampMixin,
+):
+    """Base para modelos sem isolamento por organização."""
+
+    objects = ObjectsManager()
+    all_objects = AllObjectsManager()
+    ativos = ActiveObjectsManager()
+
+    class Meta:
+        abstract = True
+
+
+class TenantMixin(models.Model):
     organizacao = models.ForeignKey(
         "organizacoes.Organizacao",
         verbose_name=_("organização"),
         on_delete=models.PROTECT,
         related_name="+",
     )
+
+    def save(self, *args, **kwargs):
+        if self._state.adding and self.organizacao_id is None:
+            from django_rls.context import get_active_rls_context
+
+            organizacao_id = get_active_rls_context().get("tenant_id")
+            if organizacao_id is not None:
+                field = self._meta.get_field("organizacao")
+                self.organizacao_id = field.target_field.to_python(organizacao_id)
+
+        return super().save(*args, **kwargs)
+
+    class Meta:
+        abstract = True
+
+
+class Base(TenantMixin, BaseTenantless, RLSModel):
+    """Base padrão para modelos de negócio isolados por organização."""
 
     class Meta:
         abstract = True

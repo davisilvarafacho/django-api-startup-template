@@ -1,7 +1,7 @@
 """Multi-tenancy: organização, times, vínculos e convites.
 
 A `Organizacao` é a raiz do isolamento (o tenant). Os modelos deste app são o
-*control plane* da tenancy e por isso herdam de `BaseGlobal`, **sem** RLS: o
+*control plane* da tenancy e por isso herdam de `BaseTenantless`, **sem** RLS: o
 middleware precisa consultá-los para descobrir e validar o tenant antes de
 existir qualquer contexto. Os modelos de negócio herdam de `Base`, esses sim
 isolados por RLS no banco.
@@ -16,7 +16,7 @@ from django.db import models, transaction
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
-from apps.api.base.models import BaseGlobal
+from apps.api.base.models import BaseTenantless
 from utils.logs import register
 
 
@@ -42,7 +42,7 @@ class Papel(models.IntegerChoices):
     PROPRIETARIO = 50, _("Proprietário")
 
 
-class Organizacao(BaseGlobal):
+class Organizacao(BaseTenantless):
     api_scope_resource = "organizations"
 
     nome = models.CharField(_("nome"), max_length=150)
@@ -65,7 +65,7 @@ class Organizacao(BaseGlobal):
         verbose_name_plural = _("Organizações")
 
 
-class Time(BaseGlobal):
+class Time(BaseTenantless):
     api_scope_resource = "teams"
 
     organizacao = models.ForeignKey(
@@ -93,7 +93,7 @@ class Time(BaseGlobal):
         verbose_name_plural = _("Times")
 
 
-class Vinculo(BaseGlobal):
+class Vinculo(BaseTenantless):
     """Liga um usuário a uma organização com um papel.
 
     É o modelo consultado para validar o header `X-Organization`, portanto não
@@ -139,7 +139,7 @@ class Vinculo(BaseGlobal):
         verbose_name_plural = _("Vínculos")
 
 
-class Convite(BaseGlobal):
+class Convite(BaseTenantless):
     """Convite para um e-mail entrar numa organização com um papel."""
 
     api_scope_resource = "invitations"

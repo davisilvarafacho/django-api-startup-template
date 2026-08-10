@@ -2,11 +2,11 @@
 
 from django.db import models
 
-from apps.api.base.models import BaseGlobal
+from apps.api.base.models import BaseTenantless
 from internal_frameworks.sensitive_fields.fields import encrypt
 
 
-class RegistroSensivel(BaseGlobal):
+class RegistroSensivel(BaseTenantless):
     """Modelo efêmero para testar o contrato de campos cifrados."""
 
     documento = encrypt(models.CharField(max_length=14))
