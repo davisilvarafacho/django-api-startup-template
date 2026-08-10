@@ -46,7 +46,7 @@ class Usuario(BaseTenantless, AbstractUser):
 
     first_name = models.CharField(_("nome"), max_length=30)
     last_name = models.CharField(_("sobrenome"), max_length=40)
-    email = models.EmailField(_("email"))
+    email = models.EmailField(_("email"), unique=True, help_text=_("email do usuário"), db_comment="email do usuário")
     phone_number = encrypt(
         models.CharField(
             _("telefone"),
