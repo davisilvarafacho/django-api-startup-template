@@ -8,6 +8,8 @@ from django.conf import settings
 
 from rest_framework import serializers
 
+from apps.api.metadata.models import Metadata
+
 
 def mesclar_dados(atuais, alteracoes):
     """Funde as alterações no documento atual, aplicando os limites.
@@ -44,3 +46,33 @@ def mesclar_dados(atuais, alteracoes):
         raise serializers.ValidationError(f"O objeto não pode ter mais de {settings.METADATA_MAX_KEYS} chaves de metadata.")
 
     return resultado
+
+
+def aplicar_metadata(objeto, alteracoes):
+    """Aplica alterações ao documento de metadata de um objeto e persiste.
+
+    É o único ponto do sistema que cria linha de `Metadata`. A validação roda
+    antes de qualquer escrita, para que um payload inválido não deixe registro
+    vazio para trás. A organização não é passada explicitamente: `TenantMixin`
+    a preenche a partir do contexto RLS ativo.
+
+    Args:
+        objeto: Instância de qualquer model que herde de `BaseTenantless`.
+        alteracoes: Chaves a gravar; valor `None` remove a chave.
+
+    Returns:
+        O registro de `Metadata` persistido.
+
+    Raises:
+        rest_framework.serializers.ValidationError: Propagada de `mesclar_dados`.
+    """
+    content_type = objeto.get_content_type()
+    registro = Metadata.objects.filter(content_type=content_type, object_id=objeto.pk).first()
+    dados = mesclar_dados(registro.dados if registro is not None else {}, alteracoes)
+
+    if registro is None:
+        return Metadata.objects.create(content_type=content_type, object_id=objeto.pk, dados=dados)
+
+    registro.dados = dados
+    registro.save(update_fields=["dados"])
+    return registro
