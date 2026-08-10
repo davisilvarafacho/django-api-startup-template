@@ -46,9 +46,24 @@ def test_utils_viewset_mixin_compoe_comportamentos_compartilhados():
     assert all(issubclass(views.UtilsViewSetMixin, mixin) for mixin in expected_mixins)
 
 
-def test_base_model_viewset_expoe_apenas_crud_padrao():
-    assert views.BaseModelViewSet.get_extra_actions() == []
+def test_base_model_viewset_expoe_apenas_crud_e_metadata():
+    """Metadata é a única action ligada por padrão; as demais são opt-in.
+
+    A exceção é deliberada: metadata é ponto de extensão do consumidor da API e
+    precisa existir em todo recurso sem cerimônia. Quem não deve aceitar
+    escrita livre de chaves declara `metadata_habilitado = False`.
+    """
+    action_names = {action.__name__ for action in views.BaseModelViewSet.get_extra_actions()}
+
+    assert action_names == {"metadata"}
     assert not hasattr(views.BaseModelViewSet, "has_is_active_field")
+
+
+def test_metadata_pode_ser_desligada_no_viewset():
+    class ViewSetSemMetadata(views.BaseModelViewSet):
+        metadata_habilitado = False
+
+    assert ViewSetSemMetadata.get_extra_actions() == []
 
 
 def test_actions_de_modelo_sao_opt_in():
@@ -74,6 +89,8 @@ def test_actions_de_modelo_sao_opt_in():
         "grid",
         "inativar",
         "invalidate_cache",
+        # Única action não opt-in; ver `test_base_model_viewset_expoe_apenas_crud_e_metadata`.
+        "metadata",
     }
 
 

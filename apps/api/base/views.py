@@ -14,6 +14,8 @@ from threadlocals.threadlocals import get_request_variable
 
 from apps.api.core.errors import APIError, CoreErrorCode
 from apps.api.core.scope_mixins import ScopeResourceMixin
+from apps.api.metadata.handlers import aplicar_metadata
+from apps.api.metadata.serializers import MetadataAlteracaoSerializer
 
 from .handlers import ativar_registro, inativar_registro
 
@@ -266,6 +268,43 @@ class ClonarViewSetMixin:
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
+class MetadataViewSetMixin:
+    """Action de metadata genérico do objeto.
+
+    Ligada por padrão em `BaseModelViewSet`. Uma view que não deva aceitar
+    escrita livre de chaves declara `metadata_habilitado = False`, e a action
+    deixa de ser coletada pelo router — a rota não passa a existir.
+    """
+
+    metadata_habilitado = True
+
+    @classmethod
+    def get_extra_actions(cls):
+        actions = super().get_extra_actions()
+        if cls.metadata_habilitado:
+            return actions
+
+        return [action for action in actions if action.__name__ != "metadata"]
+
+    @action(methods=["get", "patch"], detail=True)
+    def metadata(self, request, *args, **kwargs):
+        """Lê ou altera o documento de metadata do objeto.
+
+        `PATCH` funde as chaves enviadas com as existentes; valor `null` remove
+        a chave. As permissões vêm do método HTTP: `view_<model>` no `GET` e
+        `change_<model>` no `PATCH`.
+        """
+        instance = self.get_object()
+
+        if request.method == "GET":
+            return Response({"dados": instance.raw_metadata})
+
+        serializer = MetadataAlteracaoSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        registro = aplicar_metadata(instance, serializer.validated_data["dados"])
+        return Response({"dados": registro.dados})
+
+
 class CacheInvalidationViewSetMixin(CacheViewSetMixin):
     """Mixin responsável pela invalidação do cache versionado do recurso."""
 
@@ -284,7 +323,7 @@ class GenericBaseViewSet(UtilsViewSetMixin, GenericViewSet):
     pass
 
 
-class BaseModelViewSet(UtilsViewSetMixin, ModelViewSet):
+class BaseModelViewSet(UtilsViewSetMixin, MetadataViewSetMixin, ModelViewSet):
     queryset = None
     serializer_class = None
     serializer_classes = {}
