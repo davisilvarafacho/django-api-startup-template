@@ -197,7 +197,7 @@ class FieldPolicyMixin(models.Model):
 
     queryset_deferred_fields = []
 
-    forbidden_internal_write_fields = ["created_by", "last_modified_at", "organizacao"]
+    forbidden_internal_write_fields = ["created_at", "created_by", "last_modified_at", "organizacao"]
     extra_forbidden_internal_write_fields = []
 
     @classmethod
