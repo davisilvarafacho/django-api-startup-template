@@ -137,6 +137,7 @@ BUSINESS_APPS = [
     "apps.api.core",
     "apps.logs",
     "apps.organizacoes",
+    "apps.api.metadata",
     "apps.usuarios",
 ]
 
