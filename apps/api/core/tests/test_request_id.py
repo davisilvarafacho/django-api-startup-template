@@ -64,6 +64,17 @@ def test_contexto_e_liberado_ao_fim_da_request():
     assert get_request_id() is None
 
 
+def test_nao_libera_o_contexto_no_process_exception():
+    """Um 500 precisa chegar ao log ainda carregando o id.
+
+    O Django chama `process_exception` **antes** de converter a exceção em
+    resposta e, só depois, o `process_response` de todo middleware já iniciado.
+    Liberar o contexto no primeiro hook apagaria o id tanto do log de erro do
+    `django.request` quanto do log de acesso do 500.
+    """
+    assert not hasattr(RequestIDMiddleware, "process_exception")
+
+
 @pytest.mark.parametrize(
     "valor",
     [

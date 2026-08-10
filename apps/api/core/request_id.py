@@ -97,11 +97,11 @@ class RequestIDMiddleware(MiddlewareMixin):
 
         return response
 
-    def process_exception(self, request, exception):
-        # A exceção sobe para o handler do Django; aqui só liberamos o contexto,
-        # já que nesse fluxo o `process_response` pode não ser chamado.
-        self._limpar_contexto(request)
-        return
+    # Não existe `process_exception` aqui de propósito. O Django converte a
+    # exceção da view em resposta (`response_for_exception`) e o `process_response`
+    # de todo middleware já iniciado roda em seguida — liberar o contexto no
+    # `process_exception` só faria o log de erro e o log de acesso do 500 saírem
+    # sem `request_id`, justamente nas requests em que ele mais importa.
 
     def _marcar_no_sentry(self, request_id):
         # Import local: o SDK só é inicializado em produção, mas `set_tag` é
