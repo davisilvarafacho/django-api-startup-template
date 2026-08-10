@@ -187,7 +187,7 @@ force-exclude = true
   [tool.ruff.lint.per-file-ignores]
   # Testes legados em estilo unittest.
   "apps/api/core/tests/test_b2_storage.py" = ["PT009", "PT027"]
-  "apps/api/core/tests/test_email_backends.py" = ["PT009", "PT027"]
+  "api/tests/test_email_backends.py" = ["PT009", "PT027"]
   # Scripts de linha de comando se comunicam pelo stdout.
   "scripts/*" = ["T201"]
 
