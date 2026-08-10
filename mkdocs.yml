@@ -52,3 +52,5 @@ nav:
       - '0004 — Depreciação de API': adr/0004-politica-de-deprecacao-de-api.md
       - '0005 — Cache semântico de autorização': adr/0005-cache-semantico-de-autorizacao.md
       - '0006 — Importações entre módulos': adr/0006-importacoes-entre-modulos.md
+      - '0007 — Índices e constraints por organização': adr/0007-indices-e-constraints-por-organizacao.md
+      - '0008 — Unicidade por organização': adr/0008-unicidade-por-organizacao.md
