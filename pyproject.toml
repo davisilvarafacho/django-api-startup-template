@@ -194,9 +194,15 @@ force-exclude = true
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "api.settings"
 python_files = ["test_*.py", "*_test.py", "testing/python/*.py"]
-# O projeto de referência em examples/ tem a própria suíte e os próprios módulos;
+testpaths = ["api/tests", "apps", "internal_frameworks", "utils", "tests"]
+# O projeto de referência em .examples/ tem a própria suíte e os próprios módulos;
 # coletá-la aqui só gera ModuleNotFoundError.
-norecursedirs = ["examples", ".git", ".venv", "node_modules", "site", "staticfiles"]
+norecursedirs = [".examples", ".git", ".venv", "node_modules", "site", "staticfiles"]
+markers = [
+  "architecture: verifica invariantes estáticos no código do repositório",
+  "integration: requer infraestrutura externa ou coordenação entre processos",
+  "redis: requer uma instância Redis real",
+]
 addopts = "--cov --cov-report=term-missing --cov-report=xml"
 
 [tool.coverage.run]
