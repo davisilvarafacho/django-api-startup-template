@@ -418,6 +418,12 @@ LOGGING = build_logging(
 
 
 # base
+# O auditlog escreve no model apontado por esta setting. Sem ela os signals
+# gravariam em `auditlog.LogEntry` e a tabela `log_alteracao` — que a API expõe
+# em `GET /<recurso>/<id>/logs/` — ficaria permanentemente vazia. O model
+# apontado é excluído do próprio registro pelo auditlog, então não há recursão.
+AUDITLOG_LOGENTRY_MODEL = "logs.LogAlteracao"
+
 BASE_AUDITLOG_EXCLUDE_FIELDS = [
     "created_at",
     "last_modified_at",

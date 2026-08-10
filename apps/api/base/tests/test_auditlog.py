@@ -3,12 +3,14 @@ from django.core.exceptions import FieldDoesNotExist
 from django.db import models
 
 import pytest
+from auditlog import get_logentry_model
 from auditlog.registry import auditlog
 from threadlocals.threadlocals import set_current_user
 
 import apps.api.base.models as base_models
 from apps.api.autenticacao.models import MFAChallenge, MFAFactor, MFARecoveryCode, MFAResetAudit, TokenMetaData, TrustedDevice
 from apps.api.base.models import Base, BaseTenantless
+from apps.logs.models import LogAlteracao
 from apps.organizacoes.models import Convite, Organizacao, Time, Vinculo
 from apps.usuarios.models import Usuario
 from tests.support.usuarios import criar_usuario
@@ -114,3 +116,22 @@ def test_clonar_atribui_created_by_do_usuario_atual_e_reseta_timestamps():
 
     assert clone.pk != time.pk
     assert clone.created_by == clonador
+
+
+def test_auditlog_grava_no_model_de_log_do_projeto():
+    assert get_logentry_model() is LogAlteracao
+
+
+@pytest.mark.django_db
+def test_criacao_e_alteracao_de_registro_geram_linhas_em_log_alteracao():
+    usuario = criar_usuario(email="auditoria@exemplo.com", first_name="Antes")
+    usuario.first_name = "Depois"
+    usuario.save()
+
+    registros = LogAlteracao.objects.get_for_object(usuario).order_by("timestamp")
+
+    assert [registro.action for registro in registros] == [
+        LogAlteracao.Action.CREATE,
+        LogAlteracao.Action.UPDATE,
+    ]
+    assert registros[1].changes["first_name"] == ["Antes", "Depois"]
