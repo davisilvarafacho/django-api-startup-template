@@ -116,9 +116,11 @@ O mixin em `apps/api/base/models.py` passa a ser somente leitura:
 
 - `raw_metadata` devolve o dict existente ou `{}`, **sem** `get_or_create`. Hoje
   uma leitura grava: numa listagem de 30 itens são até 30 `INSERT`, cada um
-  registrado pelo `AuditlogHistoryField`, cada um herdando a organização do
-  contexto RLS vigente — e, fora do ciclo de request, a mesma leitura levanta
-  `RLSContextRequiredError` em vez de devolver um dict.
+  registrado pelo `AuditlogHistoryField` e cada um herdando a organização do
+  contexto RLS vigente — inclusive quando esse contexto é privilegiado e
+  atravessa organizações. Ler continua exigindo contexto de tenant, porque
+  `Metadata` é um model sob RLS como qualquer outro; o que muda é a leitura
+  deixar de escrever.
 - Ganha uma `GenericRelation` para o `Metadata`, o que torna
   `prefetch_related` possível e elimina o N+1 acima.
 - A property `content_type` vira o método `get_content_type()`. Como property
