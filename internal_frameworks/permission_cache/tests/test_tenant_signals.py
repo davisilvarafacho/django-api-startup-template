@@ -5,10 +5,10 @@ from django.db import transaction
 import pytest
 
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
-from apps.usuarios.factories import UsuarioFactory
 from internal_frameworks.permission_cache.invalidation import bump_epoch_scopes
 from internal_frameworks.permission_cache.resolvers.tenant import TenantAccessResolver
 from internal_frameworks.permission_cache.types import TenantAccess
+from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -26,7 +26,7 @@ def assert_user_bump(bump, *users):
 
 
 def test_membership_role_change_bumps_user_scope_after_commit():
-    user = UsuarioFactory()
+    user = criar_usuario()
     organization = Organizacao.objects.create(nome="Acme", slug="acme")
     membership = Vinculo.objects.create(usuario=user, organizacao=organization, papel=Papel.MEMBRO)
 
@@ -45,7 +45,7 @@ def test_membership_role_change_bumps_user_scope_after_commit():
 
 def test_membership_create_and_delete_bump_user_scope():
     organization = Organizacao.objects.create(nome="Acme", slug="acme")
-    created_user = UsuarioFactory()
+    created_user = criar_usuario()
 
     with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with transaction.atomic():
@@ -53,7 +53,7 @@ def test_membership_create_and_delete_bump_user_scope():
             bump.assert_not_called()
         assert_user_bump(bump, created_user)
 
-    deleted_user = UsuarioFactory()
+    deleted_user = criar_usuario()
     membership = Vinculo.objects.create(usuario=deleted_user, organizacao=organization, papel=Papel.MEMBRO)
     with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with transaction.atomic():
@@ -63,8 +63,8 @@ def test_membership_create_and_delete_bump_user_scope():
 
 
 def test_membership_user_change_bumps_old_and_new_users():
-    old_user = UsuarioFactory()
-    new_user = UsuarioFactory()
+    old_user = criar_usuario()
+    new_user = criar_usuario()
     organization = Organizacao.objects.create(nome="Acme", slug="acme")
     membership = Vinculo.objects.create(usuario=old_user, organizacao=organization, papel=Papel.MEMBRO)
 
@@ -77,8 +77,8 @@ def test_membership_user_change_bumps_old_and_new_users():
 
 
 def test_membership_user_id_change_bumps_old_and_new_users():
-    old_user = UsuarioFactory()
-    new_user = UsuarioFactory()
+    old_user = criar_usuario()
+    new_user = criar_usuario()
     organization = Organizacao.objects.create(nome="Acme", slug="acme")
     membership = Vinculo.objects.create(usuario=old_user, organizacao=organization, papel=Papel.MEMBRO)
 
@@ -91,7 +91,7 @@ def test_membership_user_id_change_bumps_old_and_new_users():
 
 
 def test_membership_organization_change_keeps_user_invalidation():
-    user = UsuarioFactory()
+    user = criar_usuario()
     old_organization = Organizacao.objects.create(nome="Acme", slug="acme")
     new_organization = Organizacao.objects.create(nome="Beta", slug="beta")
     membership = Vinculo.objects.create(usuario=user, organizacao=old_organization, papel=Papel.MEMBRO)
@@ -105,7 +105,7 @@ def test_membership_organization_change_keeps_user_invalidation():
 
 
 def test_membership_organization_id_change_keeps_user_invalidation():
-    user = UsuarioFactory()
+    user = criar_usuario()
     old_organization = Organizacao.objects.create(nome="Acme", slug="acme")
     new_organization = Organizacao.objects.create(nome="Beta", slug="beta")
     membership = Vinculo.objects.create(usuario=user, organizacao=old_organization, papel=Papel.MEMBRO)
@@ -119,7 +119,7 @@ def test_membership_organization_id_change_keeps_user_invalidation():
 
 
 def test_membership_active_change_invalidates_positive_and_negative_snapshots():
-    user = UsuarioFactory()
+    user = criar_usuario()
     organization = Organizacao.objects.create(nome="Acme", slug="acme")
     membership = Vinculo.objects.create(usuario=user, organizacao=organization, papel=Papel.GESTOR)
     resolver = TenantAccessResolver()
@@ -176,7 +176,7 @@ def test_organization_create_bumps_tenant_global():
 
 
 def test_nested_atomic_rollback_does_not_invalidate():
-    user = UsuarioFactory()
+    user = criar_usuario()
     organization = Organizacao.objects.create(nome="Acme", slug="acme")
     membership = Vinculo.objects.create(usuario=user, organizacao=organization, papel=Papel.MEMBRO)
 

@@ -8,8 +8,8 @@ from guardian.ctypes import get_content_type
 from guardian.utils import get_group_obj_perms_model, get_user_obj_perms_model
 
 from apps.organizacoes.models import Organizacao
-from apps.usuarios.factories import UsuarioFactory
 from internal_frameworks.permission_cache.signals.guardian import connect_guardian_signals
+from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -26,7 +26,7 @@ def organization_permission(organization: Organizacao) -> tuple[object, Permissi
 
 def test_user_object_permission_create_bumps_object_after_commit():
     connect_guardian_signals()
-    user = UsuarioFactory()
+    user = criar_usuario()
     organization = create_organization("acme")
     content_type, permission = organization_permission(organization)
     model = get_user_obj_perms_model(organization)
@@ -50,7 +50,7 @@ def test_user_object_permission_create_bumps_object_after_commit():
 
 def test_user_object_permission_update_bumps_old_and_new_objects():
     connect_guardian_signals()
-    user = UsuarioFactory()
+    user = criar_usuario()
     first = create_organization("first")
     second = create_organization("second")
     content_type, permission = organization_permission(first)
@@ -77,7 +77,7 @@ def test_user_object_permission_update_bumps_old_and_new_objects():
 
 def test_user_object_permission_delete_bumps_old_object():
     connect_guardian_signals()
-    user = UsuarioFactory()
+    user = criar_usuario()
     organization = create_organization("delete-user-permission")
     content_type, permission = organization_permission(organization)
     model = get_user_obj_perms_model(organization)
@@ -147,7 +147,7 @@ def test_group_object_permission_create_update_delete_has_same_matrix():
 
 def test_guardian_signal_canonicalizes_string_pk():
     connect_guardian_signals()
-    user = UsuarioFactory()
+    user = criar_usuario()
     organization = create_organization("canonical-pk")
     content_type, permission = organization_permission(organization)
     model = get_user_obj_perms_model(organization)
@@ -169,7 +169,7 @@ def test_guardian_signal_canonicalizes_string_pk():
 
 def test_guardian_signal_ignores_rollback():
     connect_guardian_signals()
-    user = UsuarioFactory()
+    user = criar_usuario()
     organization = create_organization("rollback")
     content_type, permission = organization_permission(organization)
     model = get_user_obj_perms_model(organization)

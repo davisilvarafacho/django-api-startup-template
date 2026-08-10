@@ -7,11 +7,11 @@ from django.core.cache.backends.locmem import LocMemCache
 import pytest
 
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
-from apps.usuarios.factories import UsuarioFactory
 from internal_frameworks.permission_cache.epochs import EpochStore
 from internal_frameworks.permission_cache.resolvers.tenant import TenantAccessResolver
 from internal_frameworks.permission_cache.store import PermissionCacheStore
 from internal_frameworks.permission_cache.types import TenantAccess
+from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
 
@@ -22,7 +22,7 @@ def clean_permission_cache():
 
 
 def test_by_slug_returns_primitives_and_second_read_has_no_query(django_assert_num_queries):
-    user = UsuarioFactory()
+    user = criar_usuario()
     organization = Organizacao.objects.create(nome="Acme", slug="acme")
     membership = Vinculo.objects.create(usuario=user, organizacao=organization, papel=Papel.GESTOR)
     resolver = TenantAccessResolver()
@@ -35,7 +35,7 @@ def test_by_slug_returns_primitives_and_second_read_has_no_query(django_assert_n
 
 
 def test_by_id_returns_the_same_tenant_fact():
-    user = UsuarioFactory()
+    user = criar_usuario()
     organization = Organizacao.objects.create(nome="Acme", slug="acme")
     membership = Vinculo.objects.create(usuario=user, organizacao=organization, papel=Papel.MEMBRO)
 
@@ -43,7 +43,7 @@ def test_by_id_returns_the_same_tenant_fact():
 
 
 def test_missing_membership_is_a_negative_hit(django_assert_num_queries):
-    user = UsuarioFactory()
+    user = criar_usuario()
     resolver = TenantAccessResolver()
 
     assert resolver.by_slug(user.pk, "missing") is None
@@ -60,7 +60,7 @@ def test_loader_disables_cachalot_for_all_queries(monkeypatch):
         yield
 
     monkeypatch.setattr("internal_frameworks.permission_cache.resolvers.tenant.cachalot_disabled", recording_context)
-    user = UsuarioFactory()
+    user = criar_usuario()
 
     assert TenantAccessResolver().by_slug(user.pk, "missing") is None
     assert calls == [True]
@@ -68,7 +68,7 @@ def test_loader_disables_cachalot_for_all_queries(monkeypatch):
 
 @pytest.mark.parametrize(("target", "attribute"), [("membership", "is_active"), ("organization", "is_active")])
 def test_inactive_membership_or_organization_is_not_accessible(target, attribute):
-    user = UsuarioFactory()
+    user = criar_usuario()
     organization = Organizacao.objects.create(nome="Acme", slug="acme")
     membership = Vinculo.objects.create(usuario=user, organizacao=organization, papel=Papel.MEMBRO)
     instance = membership if target == "membership" else organization
@@ -97,7 +97,7 @@ def test_database_aliases_use_distinct_cache_keys(monkeypatch):
 
 def test_disabled_cache_loads_from_database_each_time(settings, django_assert_num_queries):
     settings.AUTHORIZATION_CACHE = {**settings.AUTHORIZATION_CACHE, "ENABLED": False}
-    user = UsuarioFactory()
+    user = criar_usuario()
     organization = Organizacao.objects.create(nome="Acme", slug="acme")
     Vinculo.objects.create(usuario=user, organizacao=organization, papel=Papel.MEMBRO)
     resolver = TenantAccessResolver()

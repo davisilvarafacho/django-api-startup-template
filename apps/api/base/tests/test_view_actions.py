@@ -6,8 +6,8 @@ import pytest
 
 from apps.api.base.serializers import BaseModelSerializer
 from apps.api.base.views import BaseModelViewSet, ClonarViewSetMixin
-from apps.usuarios.factories import UsuarioFactory
 from apps.usuarios.models import Usuario
+from tests.support.usuarios import criar_usuario
 
 
 class _UsuarioSerializer(BaseModelSerializer):
@@ -45,7 +45,7 @@ class _UsuarioReadViewSet(BaseModelViewSet):
 
 @pytest.mark.django_db
 def test_clonar_aplica_body_validado_antes_da_primeira_gravacao():
-    usuario = UsuarioFactory(email="original@example.com", first_name="Original")
+    usuario = criar_usuario(email="original@example.com", first_name="Original")
     request = APIRequestFactory().post(
         f"/usuarios/{usuario.pk}/clonar/",
         {"email": "clone@example.com", "first_name": "Clone"},
@@ -64,7 +64,7 @@ def test_clonar_aplica_body_validado_antes_da_primeira_gravacao():
 
 @pytest.mark.django_db
 def test_clonar_nao_persiste_quando_body_e_invalido():
-    usuario = UsuarioFactory(email="original@example.com")
+    usuario = criar_usuario(email="original@example.com")
     request = APIRequestFactory().post(
         f"/usuarios/{usuario.pk}/clonar/",
         {"email": "email-invalido"},
@@ -80,7 +80,7 @@ def test_clonar_nao_persiste_quando_body_e_invalido():
 
 @pytest.mark.django_db
 def test_list_usa_representacao_do_serializer():
-    UsuarioFactory(first_name="Maria", last_name="Silva")
+    criar_usuario(first_name="Maria", last_name="Silva")
     request = APIRequestFactory().get("/usuarios/")
     view = _UsuarioReadViewSet.as_view({"get": "list"})
 
@@ -92,7 +92,7 @@ def test_list_usa_representacao_do_serializer():
 
 @pytest.mark.django_db
 def test_retrieve_usa_representacao_do_serializer():
-    usuario = UsuarioFactory(first_name="Maria", last_name="Silva")
+    usuario = criar_usuario(first_name="Maria", last_name="Silva")
     request = APIRequestFactory().get(f"/usuarios/{usuario.pk}/")
     view = _UsuarioReadViewSet.as_view({"get": "retrieve"})
 

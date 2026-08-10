@@ -8,12 +8,12 @@ import pytest
 
 from apps.api.autenticacao.models import AuthToken, TokenType
 from apps.organizacoes.models import Organizacao, Vinculo
-from apps.usuarios.factories import UsuarioFactory
+from tests.support.usuarios import criar_usuario
 
 
 @pytest.fixture
 def usuario():
-    return UsuarioFactory()
+    return criar_usuario()
 
 
 def test_settings_aponta_para_token_proprio(settings):
@@ -212,7 +212,7 @@ def test_str_do_token_nao_expoe_digest_nem_token_key(usuario):
 
 @pytest.mark.django_db
 def test_created_by_vem_do_mixin_de_auditoria(usuario):
-    criador = UsuarioFactory()
+    criador = criar_usuario()
     instance, _ = AuthToken.objects.create(user=usuario, created_by=criador)
 
     assert instance.created_by == criador

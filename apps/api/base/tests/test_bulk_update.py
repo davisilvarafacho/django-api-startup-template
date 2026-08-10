@@ -11,8 +11,8 @@ import pytest
 
 from apps.api.base.serializers import BaseModelSerializer
 from apps.api.base.views import BaseModelViewSet, BulkUpdateViewSetMixin
-from apps.usuarios.factories import UsuarioFactory
 from apps.usuarios.models import Usuario
+from tests.support.usuarios import criar_usuario
 
 
 class _UsuarioWriteSerializer(BaseModelSerializer):
@@ -37,8 +37,8 @@ def _bulk_update(payload):
 
 @pytest.mark.django_db
 def test_bulk_update_atualiza_multiplos_registros():
-    u1 = UsuarioFactory(first_name="Antigo1")
-    u2 = UsuarioFactory(first_name="Antigo2")
+    u1 = criar_usuario(first_name="Antigo1")
+    u2 = criar_usuario(first_name="Antigo2")
 
     response = _bulk_update(
         [
@@ -63,7 +63,7 @@ def test_bulk_update_exige_lista():
 
 @pytest.mark.django_db
 def test_bulk_update_exige_id_em_cada_item():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     response = _bulk_update([{"first_name": "SemId"}, {"id": usuario.id, "first_name": "Ok"}])
     assert response.status_code == 400
     assert response.data["errors"][0]["code"] == "core.bad_request"
@@ -78,7 +78,7 @@ def test_bulk_update_registro_inexistente_retorna_404():
 
 @pytest.mark.django_db
 def test_bulk_update_e_atomico_em_erro_de_validacao():
-    usuario = UsuarioFactory(first_name="Preservado")
+    usuario = criar_usuario(first_name="Preservado")
 
     # `first_name` tem max_length=30; o item inválido deve impedir qualquer escrita.
     response = _bulk_update(

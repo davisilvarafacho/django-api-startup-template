@@ -5,7 +5,7 @@ from rest_framework import status
 import pytest
 from axes.models import AccessAttempt
 
-from apps.usuarios.factories import UsuarioFactory
+from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
 
@@ -16,7 +16,7 @@ IP_B = "198.51.100.20"
 
 
 def test_bloqueio_nao_alcanca_o_mesmo_usuario_em_outro_ip(esgotar_tentativas, tentar_login):
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     esgotar_tentativas(usuario.email, ip=IP_A)
 
     resposta = tentar_login(usuario.email, SENHA, ip=IP_B)
@@ -25,8 +25,8 @@ def test_bloqueio_nao_alcanca_o_mesmo_usuario_em_outro_ip(esgotar_tentativas, te
 
 
 def test_bloqueio_nao_alcanca_outro_usuario_no_mesmo_ip(esgotar_tentativas, tentar_login):
-    vitima = UsuarioFactory()
-    outro = UsuarioFactory()
+    vitima = criar_usuario()
+    outro = criar_usuario()
     esgotar_tentativas(vitima.email, ip=IP_A)
 
     resposta = tentar_login(outro.email, SENHA, ip=IP_A)
@@ -35,7 +35,7 @@ def test_bloqueio_nao_alcanca_outro_usuario_no_mesmo_ip(esgotar_tentativas, tent
 
 
 def test_login_bem_sucedido_zera_o_contador(settings, tentar_login):
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     for _ in range(settings.AXES_FAILURE_LIMIT - 1):
         tentar_login(usuario.email, "senha-errada")
 
@@ -45,7 +45,7 @@ def test_login_bem_sucedido_zera_o_contador(settings, tentar_login):
 
 
 def test_tentativa_durante_o_bloqueio_nao_estende_o_cooloff(esgotar_tentativas, tentar_login):
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     esgotar_tentativas(usuario.email)
     momento_do_bloqueio = AccessAttempt.objects.get(username=usuario.email).attempt_time
 

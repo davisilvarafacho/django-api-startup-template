@@ -13,7 +13,7 @@ from threadlocals.threadlocals import set_current_user, set_thread_variable
 from apps.api.autenticacao.models import TokenMetaData, TokenType
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
 from apps.organizacoes.models import Convite, Organizacao, Papel, Vinculo
-from apps.usuarios.factories import UsuarioFactory
+from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
 
@@ -55,7 +55,7 @@ def _organizacao(slug="org-tenancy"):
 
 
 def test_api_key_ativa_autentica_sem_precisar_do_header():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     organizacao = _organizacao()
     _vincular(usuario, organizacao)
 
@@ -65,7 +65,7 @@ def test_api_key_ativa_autentica_sem_precisar_do_header():
 
 
 def test_api_key_com_header_coincidente_autentica():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     organizacao = _organizacao("org-tenancy-coincidente")
     _vincular(usuario, organizacao)
 
@@ -75,7 +75,7 @@ def test_api_key_com_header_coincidente_autentica():
 
 
 def test_api_key_com_header_conflitante_e_recusada():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     organizacao = _organizacao("org-tenancy-a")
     outra_organizacao = _organizacao("org-tenancy-b")
     _vincular(usuario, organizacao)
@@ -87,7 +87,7 @@ def test_api_key_com_header_conflitante_e_recusada():
 
 
 def test_api_key_expirada_e_recusada():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     organizacao = _organizacao("org-tenancy-expirada")
     _vincular(usuario, organizacao)
 
@@ -100,7 +100,7 @@ def test_api_key_expirada_e_recusada():
 
 
 def test_api_key_revogada_e_recusada_mas_permanece_no_banco():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     organizacao = _organizacao("org-tenancy-revogada")
     _vincular(usuario, organizacao)
 
@@ -115,7 +115,7 @@ def test_api_key_revogada_e_recusada_mas_permanece_no_banco():
 
 
 def test_api_key_suspensa_e_recusada():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     organizacao = _organizacao("org-tenancy-suspensa")
     _vincular(usuario, organizacao)
 
@@ -128,7 +128,7 @@ def test_api_key_suspensa_e_recusada():
 
 
 def test_api_key_com_responsavel_inativo_e_recusada():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     organizacao = _organizacao("org-tenancy-inativo")
     _vincular(usuario, organizacao)
 
@@ -143,7 +143,7 @@ def test_api_key_com_responsavel_inativo_e_recusada():
 
 
 def test_api_key_com_responsavel_sem_vinculo_na_organizacao_e_recusada():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     organizacao = _organizacao("org-tenancy-sem-vinculo")
     vinculo = _vincular(usuario, organizacao)
 
@@ -162,7 +162,7 @@ def test_api_key_com_responsavel_sem_vinculo_na_organizacao_e_recusada():
 
 def test_api_key_ignora_permissions_pessoais_do_responsavel():
     """Sem scope de create, uma API key não cria Time mesmo que o responsável tenha papel de gestor."""
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     organizacao = _organizacao("org-tenancy-scopes")
     _vincular(usuario, organizacao, Papel.GESTOR)
 
@@ -174,7 +174,7 @@ def test_api_key_ignora_permissions_pessoais_do_responsavel():
 
 
 def test_api_key_lista_somente_a_organizacao_da_propria_credencial():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     organizacao = _organizacao("org-da-api-key")
     outra_organizacao = _organizacao("org-pessoal-do-responsavel")
     _vincular(usuario, organizacao)
@@ -191,7 +191,7 @@ def test_api_key_lista_somente_a_organizacao_da_propria_credencial():
 
 
 def test_api_key_nao_cria_outra_organizacao():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     organizacao = _organizacao("org-da-api-key-criacao")
     _vincular(usuario, organizacao)
 
@@ -211,7 +211,7 @@ def test_api_key_nao_cria_outra_organizacao():
 
 
 def test_api_key_nao_aceita_convite_de_outra_organizacao():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     organizacao = _organizacao("org-da-api-key-convite")
     outra_organizacao = _organizacao("org-do-convite")
     _vincular(usuario, organizacao)
@@ -219,7 +219,7 @@ def test_api_key_nao_aceita_convite_de_outra_organizacao():
         organizacao=outra_organizacao,
         email=usuario.email,
         papel=Papel.MEMBRO,
-        convidado_por=UsuarioFactory(),
+        convidado_por=criar_usuario(),
     )
 
     response = _client_com_api_key(

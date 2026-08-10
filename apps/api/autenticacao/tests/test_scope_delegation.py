@@ -6,8 +6,8 @@ from apps.api.autenticacao.scope_delegation import validate_scope_delegation
 from apps.api.core.errors import APIError
 from apps.api.core.scope_registry import ScopeRegistry
 from apps.organizacoes.models import Convite, Time
-from apps.usuarios.factories import UsuarioFactory
 from apps.usuarios.models import Usuario
+from tests.support.usuarios import criar_usuario
 
 
 @pytest.fixture
@@ -41,7 +41,7 @@ def _com_permissao(usuario, app_label, codename, capturar_on_commit=None):
 
 @pytest.mark.django_db
 def test_usuario_nao_delega_scope_sem_permission(registro_isolado):
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
 
     with pytest.raises(APIError) as exc:
         validate_scope_delegation(usuario, ["users:delete"])
@@ -51,7 +51,7 @@ def test_usuario_nao_delega_scope_sem_permission(registro_isolado):
 
 @pytest.mark.django_db
 def test_usuario_delega_scope_que_possui(registro_isolado):
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     usuario = _com_permissao(usuario, "organizacoes", "view_time")
 
     assert validate_scope_delegation(usuario, ["teams:read"]) == ("teams:read",)
@@ -59,7 +59,7 @@ def test_usuario_delega_scope_que_possui(registro_isolado):
 
 @pytest.mark.django_db
 def test_usuario_delega_action_customizada_que_possui(registro_isolado):
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     usuario = _com_permissao(usuario, "organizacoes", "can_accept_convite")
 
     assert validate_scope_delegation(usuario, ["invitations:accept"]) == ("invitations:accept",)
@@ -67,7 +67,7 @@ def test_usuario_delega_action_customizada_que_possui(registro_isolado):
 
 @pytest.mark.django_db
 def test_resource_wildcard_exige_todas_as_permissions(registro_isolado, django_capture_on_commit_callbacks):
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     usuario = _com_permissao(usuario, "organizacoes", "view_time")
 
     with pytest.raises(APIError):
@@ -81,7 +81,7 @@ def test_resource_wildcard_exige_todas_as_permissions(registro_isolado, django_c
 
 @pytest.mark.django_db
 def test_global_wildcard_exige_permission_especial_ou_superuser(registro_isolado, django_capture_on_commit_callbacks):
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
 
     with pytest.raises(APIError) as exc:
         validate_scope_delegation(usuario, ["*"])
@@ -94,7 +94,7 @@ def test_global_wildcard_exige_permission_especial_ou_superuser(registro_isolado
 
 @pytest.mark.django_db
 def test_superuser_sempre_pode_delegar_qualquer_scope(registro_isolado):
-    usuario = UsuarioFactory(is_superuser=True, is_staff=True)
+    usuario = criar_usuario(is_superuser=True, is_staff=True)
 
     assert validate_scope_delegation(usuario, ["*", "teams:delete", "users:read"]) == (
         "*",
@@ -105,7 +105,7 @@ def test_superuser_sempre_pode_delegar_qualquer_scope(registro_isolado):
 
 @pytest.mark.django_db
 def test_recurso_desconhecido_nao_e_delegavel(registro_isolado):
-    usuario = UsuarioFactory(is_superuser=True, is_staff=True)
+    usuario = criar_usuario(is_superuser=True, is_staff=True)
 
     with pytest.raises(APIError) as exc:
         validate_scope_delegation(usuario, ["desconhecido:read"])

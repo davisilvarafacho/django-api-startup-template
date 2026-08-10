@@ -16,7 +16,7 @@ from apps.api.autenticacao.models import TokenMetaData, TokenType
 from apps.api.autenticacao.recent_auth import RecentAuthenticationPermission, require_recent_auth
 from apps.api.autenticacao.views import ReauthenticateView
 from apps.api.core.errors import APIError
-from apps.usuarios.factories import UsuarioFactory
+from tests.support.usuarios import criar_usuario
 
 AuthToken = get_token_model()
 
@@ -167,7 +167,7 @@ def test_require_mfa_forcado_sem_mfa_configurado_nunca_e_satisfeito():
 
 @pytest.fixture
 def usuario(db):
-    return UsuarioFactory(email="reauth@example.com", password="senha-forte-123")
+    return criar_usuario(email="reauth@example.com", password="senha-forte-123")
 
 
 def _client_com_sessao(usuario):

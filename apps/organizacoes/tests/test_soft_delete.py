@@ -3,7 +3,7 @@
 import pytest
 
 from apps.organizacoes.models import Convite, Organizacao, Papel, Time, Vinculo
-from apps.usuarios.factories import UsuarioFactory
+from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
 
@@ -34,7 +34,7 @@ def test_delete_do_queryset_marca_registros_em_lote():
 
 
 def test_chaves_unicas_podem_ser_reutilizadas_apos_exclusao_logica():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     organizacao = Organizacao.objects.create(nome="Acme", slug="acme")
     time = Time.objects.create(organizacao=organizacao, nome="Produto")
     vinculo = Vinculo.objects.create(organizacao=organizacao, usuario=usuario, papel=Papel.MEMBRO)
@@ -54,11 +54,11 @@ def test_chaves_unicas_podem_ser_reutilizadas_apos_exclusao_logica():
 
 
 def test_usuario_excluido_fica_fora_do_manager_padrao_e_email_pode_ser_reutilizado():
-    usuario = UsuarioFactory(email="pessoa@example.com")
+    usuario = criar_usuario(email="pessoa@example.com")
 
     usuario.delete()
 
     assert not usuario.__class__.objects.filter(pk=usuario.pk).exists()
     assert usuario.__class__.all_objects.get(pk=usuario.pk).is_deleted is True
-    novo_usuario = UsuarioFactory(email="pessoa@example.com")
+    novo_usuario = criar_usuario(email="pessoa@example.com")
     assert novo_usuario.pk != usuario.pk

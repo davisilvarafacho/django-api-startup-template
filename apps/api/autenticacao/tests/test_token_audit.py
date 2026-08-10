@@ -18,7 +18,7 @@ from apps.api.autenticacao.services import (
     update_api_key,
 )
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
-from apps.usuarios.factories import UsuarioFactory
+from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
 
@@ -41,14 +41,14 @@ def organizacao():
 
 @pytest.fixture
 def ator(organizacao):
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     Vinculo.objects.create(usuario=usuario, organizacao=organizacao, papel=Papel.ADMINISTRADOR)
     return usuario
 
 
 @pytest.fixture
 def responsavel(organizacao):
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     Vinculo.objects.create(usuario=usuario, organizacao=organizacao, papel=Papel.MEMBRO)
     return usuario
 
@@ -140,7 +140,7 @@ def test_revoke_emite_evento(ator, organizacao, responsavel):
 
 def test_update_responsavel_emite_responsible_changed(ator, organizacao, responsavel):
     instance, _token = _api_key(responsavel, organizacao)
-    outro_responsavel = UsuarioFactory()
+    outro_responsavel = criar_usuario()
     Vinculo.objects.create(usuario=outro_responsavel, organizacao=organizacao, papel=Papel.MEMBRO)
 
     with patch("apps.api.autenticacao.audit.capture") as capture_mock:
@@ -195,7 +195,7 @@ def test_update_nao_emite_evento_quando_persistencia_falha(
 def test_suspensao_automatica_emite_evento_sem_ator(organizacao):
     from apps.api.autenticacao.services import ensure_api_key_still_valid
 
-    responsavel_local = UsuarioFactory()
+    responsavel_local = criar_usuario()
     vinculo = Vinculo.objects.create(usuario=responsavel_local, organizacao=organizacao, papel=Papel.MEMBRO)
     instance, _token = _api_key(responsavel_local, organizacao)
 

@@ -403,7 +403,8 @@ Todo ViewSet herda, de graça:
 ## 9. Testes
 
 - Framework: **pytest** (`pytest-django`); testes ficam no pacote `tests/` de cada app.
-- Dados de teste via **`factory_boy`** — um factory por app (ex.: `UsuarioFactory`).
+- Construtores compartilhados de dados vivem em **`tests/support/`** e não fazem
+  parte da interface de produção (ex.: `criar_usuario`).
 - Tasks Celery rodam **eager** em teste (execução síncrona, sem broker).
 - Prefira testes **DB-less** quando o comportamento não depende do banco (ex.: lookup
   registry, helpers de env).
@@ -436,4 +437,4 @@ Todo ViewSet herda, de graça:
 | Lookup | `@lookup` + `setup_eager_loading` co-localizado; não registrado → 404 |
 | Estilo | Docstrings Google; `r = f(); g(r)` em vez de `g(f())` |
 | Config | Env via `get_env_var`/`get_list_from_env`; tuplas para coleções imutáveis |
-| Testes | pytest + `factory_boy`; Celery eager; DB-less quando possível |
+| Testes | pytest + helpers em `tests/support/`; Celery eager; DB-less quando possível |

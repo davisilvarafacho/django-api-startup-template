@@ -217,8 +217,9 @@ ou views. Os pontos mais fáceis de violar:
 - QuerySets: `select_related`/`prefetch_related` obrigatórios; `only()`/`values()` para
   limitar colunas.
 - Docstrings no padrão Google; prefira `r = f(); g(r)` a `g(f())`.
-- Testes com pytest + `factory_boy` (um factory por app); Celery roda eager em teste;
-  prefira testes DB-less quando o comportamento não depende do banco.
+- Testes com pytest; construtores compartilhados vivem em `tests/support/` e não
+  fazem parte da interface de produção. Celery roda eager em teste; prefira testes
+  DB-less quando o comportamento não depende do banco.
 
 ## Versionamento
 
@@ -229,7 +230,7 @@ divergir de `pyproject.toml`. Release automatizado por release-please. Ver
 
 ## Notas
 
-- `examples/` e `libs/` estão fora do ruff e da coleta do pytest (`norecursedirs`).
+- `.examples/` e `libs/` estão fora do ruff e da coleta do pytest (`norecursedirs`).
 - `manage.py seed_demo` cria dados locais idempotentes (organização `demo`, usuário
   `demo@example.com` / `demo123456`); é bloqueado em produção.
 - A documentação segue Diátaxis em `docs/` (tutorial / how-to / reference / explanation

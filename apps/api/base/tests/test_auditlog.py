@@ -9,8 +9,8 @@ from threadlocals.threadlocals import set_current_user
 from apps.api.autenticacao.models import MFAChallenge, MFAFactor, MFARecoveryCode, MFAResetAudit, TokenMetaData, TrustedDevice
 from apps.api.base.models import BaseGlobal
 from apps.organizacoes.models import Convite, Organizacao, Time, Vinculo
-from apps.usuarios.factories import UsuarioFactory
 from apps.usuarios.models import Usuario
+from tests.support.usuarios import criar_usuario
 
 
 def test_registra_todos_os_modelos_concretos_dos_apps():
@@ -78,7 +78,7 @@ def _limpar_usuario_atual():
 
 @pytest.mark.django_db
 def test_created_by_e_preenchido_automaticamente_pelo_usuario_atual():
-    autor = UsuarioFactory()
+    autor = criar_usuario()
     set_current_user(autor)
     organizacao = Organizacao.objects.create(nome="Org", slug="org-audit-autor")
     time = Time.objects.create(organizacao=organizacao, nome="Produto")
@@ -98,8 +98,8 @@ def test_created_by_fica_none_quando_criado_pelo_sistema():
 
 @pytest.mark.django_db
 def test_clonar_atribui_created_by_do_usuario_atual_e_reseta_timestamps():
-    criador = UsuarioFactory()
-    clonador = UsuarioFactory()
+    criador = criar_usuario()
+    clonador = criar_usuario()
     organizacao = Organizacao.objects.create(nome="Org", slug="org-audit-clone")
 
     set_current_user(criador)

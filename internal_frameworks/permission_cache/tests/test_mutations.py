@@ -11,7 +11,6 @@ from guardian.ctypes import get_content_type
 from guardian.utils import get_user_obj_perms_model
 
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
-from apps.usuarios.factories import UsuarioFactory
 from apps.usuarios.models import Usuario
 from internal_frameworks.permission_cache.mutations import (
     bulk_create_memberships,
@@ -25,6 +24,7 @@ from internal_frameworks.permission_cache.mutations import (
     update_memberships,
     update_user_authorization_state,
 )
+from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -94,8 +94,8 @@ def alias_content_type_lookup(replica_alias, divergent_content_type):
 
 
 def test_bulk_create_memberships_invalidates_every_user_after_commit():
-    first = UsuarioFactory()
-    second = UsuarioFactory()
+    first = criar_usuario()
+    second = criar_usuario()
     organization = create_organization("acme")
     memberships = [
         Vinculo(usuario=first, organizacao=organization, papel=Papel.MEMBRO),
@@ -116,9 +116,9 @@ def test_bulk_create_memberships_invalidates_every_user_after_commit():
 
 
 def test_bulk_update_memberships_invalidates_old_and_new_users():
-    first = UsuarioFactory()
-    second = UsuarioFactory()
-    replacement = UsuarioFactory()
+    first = criar_usuario()
+    second = criar_usuario()
+    replacement = criar_usuario()
     first_membership = Vinculo.objects.create(
         usuario=first,
         organizacao=create_organization("bulk-update-first"),
@@ -147,8 +147,8 @@ def test_bulk_update_memberships_invalidates_old_and_new_users():
 
 
 def test_update_memberships_reads_users_before_queryset_update():
-    first = UsuarioFactory()
-    second = UsuarioFactory()
+    first = criar_usuario()
+    second = criar_usuario()
     organization = create_organization("queryset-update")
     Vinculo.objects.create(usuario=first, organizacao=organization, papel=Papel.MEMBRO)
     Vinculo.objects.create(usuario=second, organizacao=organization, papel=Papel.MEMBRO)
@@ -168,7 +168,7 @@ def test_update_memberships_reads_users_before_queryset_update():
 
 
 def test_guardian_bulk_assign_and_remove_invalidate_every_object():
-    user = UsuarioFactory()
+    user = criar_usuario()
     first = create_organization("guardian-bulk-first")
     second = create_organization("guardian-bulk-second")
 
@@ -189,8 +189,8 @@ def test_guardian_bulk_assign_and_remove_invalidate_every_object():
 
 
 def test_guardian_assign_to_many_and_remove_from_many_invalidate_once():
-    first = UsuarioFactory()
-    second = UsuarioFactory()
+    first = criar_usuario()
+    second = criar_usuario()
     organization = create_organization("guardian-many")
 
     with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
@@ -211,7 +211,7 @@ def test_guardian_assign_to_many_and_remove_from_many_invalidate_once():
 
 @pytest.mark.django_db(transaction=True, databases="__all__")
 def test_guardian_bulk_assign_writes_on_object_database_alias(replica_alias):
-    user = UsuarioFactory()
+    user = criar_usuario()
     organization = create_organization("guardian-replica-bulk")
     user._state.db = replica_alias
     organization._state.db = replica_alias
@@ -237,8 +237,8 @@ def test_guardian_bulk_assign_writes_on_object_database_alias(replica_alias):
 
 @pytest.mark.django_db(transaction=True, databases="__all__")
 def test_guardian_assign_to_many_writes_on_object_database_alias(replica_alias):
-    first = UsuarioFactory()
-    second = UsuarioFactory()
+    first = criar_usuario()
+    second = criar_usuario()
     organization = create_organization("guardian-replica-many")
     for instance in (first, second, organization):
         instance._state.db = replica_alias
@@ -264,7 +264,7 @@ def test_guardian_assign_to_many_writes_on_object_database_alias(replica_alias):
 
 @pytest.mark.django_db(transaction=True, databases="__all__")
 def test_guardian_bulk_remove_uses_alias_content_type_when_ids_diverge(replica_alias):
-    user = UsuarioFactory()
+    user = criar_usuario()
     organization = create_organization("guardian-replica-remove-bulk")
     content_type, permission_model, rows = create_divergent_guardian_permission(replica_alias, [user], organization)
     user._state.db = replica_alias
@@ -286,8 +286,8 @@ def test_guardian_bulk_remove_uses_alias_content_type_when_ids_diverge(replica_a
 
 @pytest.mark.django_db(transaction=True, databases="__all__")
 def test_guardian_remove_from_many_uses_alias_content_type_when_ids_diverge(replica_alias):
-    first = UsuarioFactory()
-    second = UsuarioFactory()
+    first = criar_usuario()
+    second = criar_usuario()
     organization = create_organization("guardian-replica-remove-many")
     users = [first, second]
     content_type, permission_model, rows = create_divergent_guardian_permission(replica_alias, users, organization)
@@ -337,8 +337,8 @@ def test_permission_bulk_wrappers_bump_global_layers():
 
 
 def test_bulk_user_state_update_bumps_all_layers():
-    first = UsuarioFactory()
-    second = UsuarioFactory()
+    first = criar_usuario()
+    second = criar_usuario()
     expected = [
         call(
             tuple(f"{layer}:user:{user.pk}" for user in (first, second)),
@@ -359,7 +359,7 @@ def test_bulk_user_state_update_bumps_all_layers():
 
 
 def test_bulk_user_state_update_rejects_non_authorization_fields(django_assert_num_queries):
-    user = UsuarioFactory()
+    user = criar_usuario()
 
     with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
         with django_assert_num_queries(0):

@@ -69,7 +69,7 @@ _Atualizado em 2026-08-09._
 - **GitHub Actions** por cadência: `ci.yml` (lint + pytest com Postgres/Redis) e `security.yml` (pip-audit + bandit + trivy) + `dependabot.yml`; `makemigrations --check` está suspenso até o reset integral pré-lançamento.
 - **Codecov** + cobertura (`pytest-cov`), gate de patch 80% em código novo.
 - **Makefile** e arquivos padrão do GitHub (CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, templates).
-- **factory_boy** (`UsuarioFactory`) + testes DB-less (lookup, env).
+- Helper determinístico `criar_usuario` restrito a `tests/support/` + testes DB-less (lookup, env).
 - Extras: app `configuracoes` removido; dívida de lint zerada; fix do import de `debug_toolbar` (quebrava test/prod).
 
 ### Batch 4 — Documentação & convenções

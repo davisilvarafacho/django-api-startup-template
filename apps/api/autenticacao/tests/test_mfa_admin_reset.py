@@ -6,12 +6,12 @@ import pytest
 from apps.api.autenticacao.mfa import start_enrollment
 from apps.api.autenticacao.models import MFAFactorType, MFAResetAudit, TokenType
 from apps.api.autenticacao.services import issue_token
-from apps.usuarios.factories import UsuarioFactory
+from tests.support.usuarios import criar_usuario
 
 
 @pytest.mark.django_db
 def test_admin_reset_exige_permissao_reauth_e_justificativa(api_client, usuario, django_capture_on_commit_callbacks):
-    target = UsuarioFactory()
+    target = criar_usuario()
     start_enrollment(target, MFAFactorType.TOTP)
     issued = issue_token(responsavel=usuario, token_type=TokenType.TOKEN, created_by=usuario, expiry=None, metadata_input={})
     issued.instance.metadata.reauthenticated_at = timezone.now()

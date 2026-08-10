@@ -16,7 +16,7 @@ import pytest
 from knox.models import get_token_model
 
 from apps.api.autenticacao.models import MFAFactor, MFAFactorType, TokenType
-from apps.usuarios.factories import UsuarioFactory
+from tests.support.usuarios import criar_usuario
 
 AuthToken = get_token_model()
 
@@ -294,7 +294,7 @@ def test_rotas_de_reset_sao_publicas(api_client):
 
 @pytest.mark.django_db
 def test_reset_de_um_usuario_nao_afeta_o_outro(api_client, usuario, reset_token):
-    outro = UsuarioFactory(password="Senha123!")
+    outro = criar_usuario(password="Senha123!")
 
     api_client.post(URL_CONFIRM, payload_confirm(reset_token), format="json")
 

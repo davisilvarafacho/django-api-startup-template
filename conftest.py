@@ -14,7 +14,7 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 from threadlocals.threadlocals import set_current_user, set_thread_variable
 
-from apps.usuarios.factories import UsuarioFactory
+from tests.support.usuarios import criar_usuario
 
 
 @pytest.fixture(autouse=True)
@@ -36,7 +36,7 @@ def _isolar_usuario_da_thread():
 
 @pytest.fixture
 def usuario(db):
-    return UsuarioFactory(password="Senha123!")
+    return criar_usuario(password="Senha123!")
 
 
 @pytest.fixture

@@ -14,7 +14,7 @@ from threadlocals.threadlocals import set_current_user, set_thread_variable
 from apps.api.autenticacao.models import TokenMetaData, TokenType
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
 from apps.organizacoes.models import Convite, Organizacao, Papel, Time, Vinculo
-from apps.usuarios.factories import UsuarioFactory
+from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
 
@@ -61,8 +61,8 @@ def vincular(usuario, organizacao, papel=Papel.MEMBRO, times=()):
 
 
 def test_lista_apenas_organizacoes_do_usuario_sem_exigir_header():
-    usuario = UsuarioFactory()
-    outra_pessoa = UsuarioFactory()
+    usuario = criar_usuario()
+    outra_pessoa = criar_usuario()
     org_a = Organizacao.objects.create(nome="Org A", slug="org-a")
     org_b = Organizacao.objects.create(nome="Org B", slug="org-b")
     org_de_outra_pessoa = Organizacao.objects.create(nome="Org C", slug="org-c")
@@ -82,7 +82,7 @@ def test_lista_apenas_organizacoes_do_usuario_sem_exigir_header():
 
 
 def test_cria_organizacao_e_vincula_usuario_como_proprietario():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
 
     response = client_autenticado(usuario).post(
         "/organizacoes/",
@@ -98,7 +98,7 @@ def test_cria_organizacao_e_vincula_usuario_como_proprietario():
 
 
 def test_times_sao_filtrados_pela_organizacao_do_header():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     org_a = Organizacao.objects.create(nome="Org A", slug="org-a")
     org_b = Organizacao.objects.create(nome="Org B", slug="org-b")
     vincular(usuario, org_a, Papel.MEMBRO)
@@ -116,9 +116,9 @@ def test_times_sao_filtrados_pela_organizacao_do_header():
 
 
 def test_vinculos_sao_filtrados_pela_organizacao_do_header():
-    usuario = UsuarioFactory()
-    colega = UsuarioFactory(first_name="Colega")
-    pessoa_de_fora = UsuarioFactory(first_name="Fora")
+    usuario = criar_usuario()
+    colega = criar_usuario(first_name="Colega")
+    pessoa_de_fora = criar_usuario(first_name="Fora")
     org_a = Organizacao.objects.create(nome="Org A", slug="org-a")
     org_b = Organizacao.objects.create(nome="Org B", slug="org-b")
     vincular(usuario, org_a, Papel.ADMINISTRADOR)
@@ -139,7 +139,7 @@ def test_vinculos_sao_filtrados_pela_organizacao_do_header():
 
 
 def test_gestor_cria_convite_na_organizacao_do_header():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
     vincular(usuario, organizacao, Papel.GESTOR)
 
@@ -158,7 +158,7 @@ def test_gestor_cria_convite_na_organizacao_do_header():
 
 
 def test_header_de_organizacao_ausente_retorna_422():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     org_a = Organizacao.objects.create(nome="Org A", slug="org-a")
     vincular(usuario, org_a, Papel.MEMBRO)
 
@@ -170,7 +170,7 @@ def test_header_de_organizacao_ausente_retorna_422():
 
 
 def test_usuario_sem_vinculo_ativo_na_organizacao_retorna_403():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     Organizacao.objects.create(nome="Org A", slug="org-a")
 
     response = client_autenticado(usuario).get(
@@ -183,7 +183,7 @@ def test_usuario_sem_vinculo_ativo_na_organizacao_retorna_403():
 
 
 def test_papel_insuficiente_para_criar_time_retorna_403():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
     vincular(usuario, organizacao, Papel.MEMBRO)
 
@@ -199,7 +199,7 @@ def test_papel_insuficiente_para_criar_time_retorna_403():
 
 
 def test_convite_com_papel_acima_do_proprio_e_recusado():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
     vincular(usuario, organizacao, Papel.GESTOR)
 
@@ -216,7 +216,7 @@ def test_convite_com_papel_acima_do_proprio_e_recusado():
 
 
 def test_aceitar_convite_com_token_invalido_retorna_422():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
 
     response = client_autenticado(usuario).post(
         "/convites/aceitar/",
@@ -230,7 +230,7 @@ def test_aceitar_convite_com_token_invalido_retorna_422():
 
 
 def test_aceitar_convite_ja_utilizado_retorna_422():
-    usuario = UsuarioFactory(email="nova@example.com")
+    usuario = criar_usuario(email="nova@example.com")
     organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
     convite = Convite.objects.create(
         organizacao=organizacao,
@@ -251,7 +251,7 @@ def test_aceitar_convite_ja_utilizado_retorna_422():
 
 
 def test_aceitar_convite_de_outro_email_retorna_422():
-    usuario = UsuarioFactory(email="usuario@example.com")
+    usuario = criar_usuario(email="usuario@example.com")
     organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
     convite = Convite.objects.create(
         organizacao=organizacao,
@@ -271,7 +271,7 @@ def test_aceitar_convite_de_outro_email_retorna_422():
 
 
 def test_usuario_convidado_aceita_convite_sem_header_de_organizacao():
-    usuario = UsuarioFactory(email="nova@example.com")
+    usuario = criar_usuario(email="nova@example.com")
     organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
     convite = Convite.objects.create(
         organizacao=organizacao,
@@ -296,7 +296,7 @@ def test_usuario_convidado_aceita_convite_sem_header_de_organizacao():
 
 
 def test_api_key_com_scope_teams_read_pode_listar_times():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
     vincular(usuario, organizacao, Papel.MEMBRO)
 
@@ -309,7 +309,7 @@ def test_api_key_com_scope_teams_read_pode_listar_times():
 
 
 def test_api_key_sem_scope_teams_read_e_recusada():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
     vincular(usuario, organizacao, Papel.MEMBRO)
 
@@ -323,7 +323,7 @@ def test_api_key_sem_scope_teams_read_e_recusada():
 
 
 def test_api_key_precisa_do_scope_invitations_accept_para_aceitar_convite():
-    usuario = UsuarioFactory(email="precisa-scope@example.com")
+    usuario = criar_usuario(email="precisa-scope@example.com")
     organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
     vincular(usuario, organizacao)
     convite = Convite.objects.create(
@@ -344,7 +344,7 @@ def test_api_key_precisa_do_scope_invitations_accept_para_aceitar_convite():
 
 
 def test_api_key_com_scope_invitations_accept_aceita_convite():
-    usuario = UsuarioFactory(email="com-scope@example.com")
+    usuario = criar_usuario(email="com-scope@example.com")
     organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
     vincular(usuario, organizacao)
     convite = Convite.objects.create(
@@ -364,7 +364,7 @@ def test_api_key_com_scope_invitations_accept_aceita_convite():
 
 
 def test_delete_de_time_oculta_registro_sem_remover_linha():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
     vincular(usuario, organizacao, Papel.GESTOR)
     time = Time.objects.create(organizacao=organizacao, nome="Produto")
@@ -377,10 +377,10 @@ def test_delete_de_time_oculta_registro_sem_remover_linha():
 
 
 def test_delete_de_vinculo_oculta_registro_sem_remover_linha():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
     vincular(usuario, organizacao, Papel.ADMINISTRADOR)
-    alvo = vincular(UsuarioFactory(), organizacao)
+    alvo = vincular(criar_usuario(), organizacao)
 
     response = client_autenticado(usuario).delete(f"/vinculos/{alvo.pk}/", **{META_HEADER_ORGANIZACAO: "org-a"})
 
@@ -389,7 +389,7 @@ def test_delete_de_vinculo_oculta_registro_sem_remover_linha():
 
 
 def test_delete_de_convite_oculta_registro_sem_remover_linha():
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
     vincular(usuario, organizacao, Papel.GESTOR)
     convite = Convite.objects.create(organizacao=organizacao, email="nova@example.com", convidado_por=usuario)

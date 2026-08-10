@@ -8,12 +8,12 @@ import pytest
 
 from apps.api.autenticacao.models import AuthToken, TokenMetaData, TokenType
 from apps.api.autenticacao.services import issue_token
-from apps.usuarios.factories import UsuarioFactory
+from tests.support.usuarios import criar_usuario
 
 
 @pytest.fixture
 def usuario():
-    return UsuarioFactory()
+    return criar_usuario()
 
 
 @pytest.fixture

@@ -17,7 +17,7 @@ from apps.api.autenticacao.services import resume_api_key, rotate_api_key, suspe
 from apps.api.core.errors import APIError
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
-from apps.usuarios.factories import UsuarioFactory
+from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
 
@@ -42,7 +42,7 @@ def organizacao():
 
 @pytest.fixture
 def ator(organizacao):
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     Vinculo.objects.create(usuario=usuario, organizacao=organizacao, papel=Papel.ADMINISTRADOR)
     for codename in TODAS_AS_PERMISSIONS:
         permission = Permission.objects.get(content_type__app_label="autenticacao", codename=codename)
@@ -54,7 +54,7 @@ def ator(organizacao):
 
 @pytest.fixture
 def responsavel(organizacao):
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     Vinculo.objects.create(usuario=usuario, organizacao=organizacao, papel=Papel.MEMBRO)
     return usuario
 
@@ -123,7 +123,7 @@ def test_criacao_exige_autenticacao_recente(ator, organizacao, responsavel):
 
 
 def test_criacao_exige_responsavel_vinculado_a_organizacao(ator, organizacao):
-    usuario_sem_vinculo = UsuarioFactory()
+    usuario_sem_vinculo = criar_usuario()
     client = _com_header(_client_com_sessao(ator), organizacao)
 
     response = client.post("/auth/api_keys/", {"name": "Integração", "responsavel": usuario_sem_vinculo.pk}, format="json")
@@ -160,7 +160,7 @@ def test_criacao_com_expiracao_opcional(ator, organizacao, responsavel):
 
 
 def test_usuario_sem_permission_nao_cria_api_key(organizacao, responsavel):
-    usuario_sem_permissao = UsuarioFactory()
+    usuario_sem_permissao = criar_usuario()
     Vinculo.objects.create(usuario=usuario_sem_permissao, organizacao=organizacao, papel=Papel.ADMINISTRADOR)
     client = _com_header(_client_com_sessao(usuario_sem_permissao), organizacao)
 
@@ -252,7 +252,7 @@ def _client_api_key_do_token(token):
 
 
 def test_resume_recusa_quando_responsavel_perdeu_o_vinculo(organizacao):
-    responsavel_local = UsuarioFactory()
+    responsavel_local = criar_usuario()
     vinculo = Vinculo.objects.create(usuario=responsavel_local, organizacao=organizacao, papel=Papel.MEMBRO)
 
     instance, _token = AuthToken.objects.create(

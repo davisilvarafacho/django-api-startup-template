@@ -11,7 +11,7 @@ from apps.api.core.scope_registry import (
     scope_registry,
 )
 from apps.organizacoes.models import Convite, Time
-from apps.usuarios.factories import UsuarioFactory
+from tests.support.usuarios import criar_usuario
 
 
 def test_parse_scope_global_wildcard():
@@ -160,7 +160,7 @@ def test_discover_scope_resources_e_idempotente_e_sem_inconsistencias():
 def test_display_permissions_for_traduz_permissions_django_para_resource_action(registro_isolado):
     from django.contrib.auth.models import Permission
 
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     permission = Permission.objects.get(content_type__app_label="organizacoes", codename="view_time")
     usuario.user_permissions.add(permission)
     usuario = type(usuario).objects.get(pk=usuario.pk)

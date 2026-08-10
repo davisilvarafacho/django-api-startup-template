@@ -11,8 +11,8 @@ from django.db.models.signals import post_migrate
 
 import pytest
 
-from apps.usuarios.factories import UsuarioFactory
 from internal_frameworks.permission_cache.signals.django import _affected_user_ids, _capture_reverse_clear_user_ids
+from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -55,7 +55,7 @@ def assert_global_layer_bumps(bump, layers=("django", "guardian")):
 
 
 def test_direct_permission_bumps_only_after_commit():
-    user = UsuarioFactory()
+    user = criar_usuario()
     permission = Permission.objects.first()
 
     with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
@@ -71,7 +71,7 @@ def test_direct_permission_bumps_only_after_commit():
 
 
 def test_rollback_does_not_bump_user_epoch():
-    user = UsuarioFactory()
+    user = criar_usuario()
     permission = Permission.objects.first()
 
     def add_permission_then_rollback():
@@ -90,7 +90,7 @@ def test_user_group_add_remove_and_clear_bump_both_user_layers():
     group = Group.objects.create(name="membership changes")
 
     for operation in ("add", "remove", "clear"):
-        user = UsuarioFactory()
+        user = criar_usuario()
         if operation in {"remove", "clear"}:
             user.groups.add(group)
 
@@ -109,7 +109,7 @@ def test_user_group_add_remove_and_clear_bump_both_user_layers():
 
 def test_reverse_group_clear_captures_users_in_pre_clear():
     group = Group.objects.create(name="reverse clear")
-    users = (UsuarioFactory(), UsuarioFactory())
+    users = (criar_usuario(), criar_usuario())
     group.user_set.add(*users)
 
     with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
@@ -186,7 +186,7 @@ def test_group_delete_bumps_django_and_guardian_global():
 
 def test_user_active_or_superuser_change_bumps_all_user_layers():
     for field in ("is_active", "is_superuser"):
-        user = UsuarioFactory()
+        user = criar_usuario()
         setattr(user, field, not getattr(user, field))
 
         with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
@@ -198,7 +198,7 @@ def test_user_active_or_superuser_change_bumps_all_user_layers():
 
 
 def test_user_delete_bumps_all_user_layers():
-    user = UsuarioFactory()
+    user = criar_usuario()
     user_id = user.pk
 
     with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:

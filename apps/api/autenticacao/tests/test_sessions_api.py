@@ -8,7 +8,7 @@ from threadlocals.threadlocals import set_current_user, set_thread_variable
 
 from apps.api.autenticacao.models import TokenMetaData, TokenType
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
-from apps.usuarios.factories import UsuarioFactory
+from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
 
@@ -26,7 +26,7 @@ def _limpar_thread_locals():
 
 @pytest.fixture
 def usuario():
-    return UsuarioFactory()
+    return criar_usuario()
 
 
 def _sessao(usuario, device_name=""):
@@ -56,7 +56,7 @@ def _client_com(token):
 
 
 def test_lista_apenas_sessoes_do_usuario_autenticado(usuario):
-    outra_pessoa = UsuarioFactory()
+    outra_pessoa = criar_usuario()
     _, token = _sessao(usuario, device_name="Notebook do usuário")
     _sessao(outra_pessoa, device_name="Notebook de outra pessoa")
 

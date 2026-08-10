@@ -5,7 +5,7 @@ from rest_framework import status
 import pytest
 from axes.models import AccessAttempt
 
-from apps.usuarios.factories import UsuarioFactory
+from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
 
@@ -14,7 +14,7 @@ SENHA = "senha-de-teste"
 
 
 def test_login_valido_continua_funcionando_com_o_axes_ligado(tentar_login):
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
 
     resposta = tentar_login(usuario.email, SENHA)
 
@@ -22,7 +22,7 @@ def test_login_valido_continua_funcionando_com_o_axes_ligado(tentar_login):
 
 
 def test_falhas_abaixo_do_limite_retornam_401(settings, tentar_login):
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
 
     for _ in range(settings.AXES_FAILURE_LIMIT - 1):
         resposta = tentar_login(usuario.email, "senha-errada")
@@ -30,7 +30,7 @@ def test_falhas_abaixo_do_limite_retornam_401(settings, tentar_login):
 
 
 def test_falha_no_limite_bloqueia_com_429(settings, tentar_login):
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
 
     for _ in range(settings.AXES_FAILURE_LIMIT - 1):
         tentar_login(usuario.email, "senha-errada")
@@ -41,7 +41,7 @@ def test_falha_no_limite_bloqueia_com_429(settings, tentar_login):
 
 
 def test_bloqueio_registra_a_tentativa_no_banco(settings, tentar_login):
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
 
     for _ in range(settings.AXES_FAILURE_LIMIT):
         tentar_login(usuario.email, "senha-errada")

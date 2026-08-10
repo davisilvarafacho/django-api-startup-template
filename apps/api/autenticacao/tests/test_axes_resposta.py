@@ -13,7 +13,7 @@ import pytest
 from axes.models import AccessAttempt
 
 from apps.api.autenticacao.handlers import segundos_ate_o_desbloqueio
-from apps.usuarios.factories import UsuarioFactory
+from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
 
@@ -100,7 +100,7 @@ def test_prazo_busca_apenas_attempt_time_da_tentativa(settings, ambiente_axes):
 
 
 def test_bloqueio_responde_json_no_formato_do_projeto(bloquear):
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
 
     resposta = bloquear(usuario.email)
 
@@ -111,17 +111,17 @@ def test_bloqueio_responde_json_no_formato_do_projeto(bloquear):
 
 def test_bloqueio_nao_revela_o_prazo_no_corpo(settings, bloquear):
     settings.AXES_COOLOFF_TIME = timedelta(minutes=30)
-    resposta_30_minutos = bloquear(UsuarioFactory().email)
+    resposta_30_minutos = bloquear(criar_usuario().email)
 
     settings.AXES_COOLOFF_TIME = timedelta(minutes=45)
-    resposta_45_minutos = bloquear(UsuarioFactory().email)
+    resposta_45_minutos = bloquear(criar_usuario().email)
 
     assert resposta_30_minutos["Retry-After"] != resposta_45_minutos["Retry-After"]
     assert resposta_30_minutos.json() == resposta_45_minutos.json() == {"mensagem": "Muitas tentativas de login."}
 
 
 def test_bloqueio_informa_o_prazo_no_header_retry_after(settings, bloquear):
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
 
     resposta = bloquear(usuario.email)
 

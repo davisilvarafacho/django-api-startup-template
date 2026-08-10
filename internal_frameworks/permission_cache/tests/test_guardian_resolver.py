@@ -9,9 +9,9 @@ from guardian.exceptions import WrongAppError
 from guardian.shortcuts import assign_perm
 
 from apps.organizacoes.models import Organizacao
-from apps.usuarios.factories import UsuarioFactory
 from internal_frameworks.permission_cache.backends import CachedObjectPermissionBackend
 from internal_frameworks.permission_cache.resolvers.guardian import GuardianPermissionResolver
+from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
 
@@ -23,7 +23,7 @@ def test_cached_guardian_backend_replaces_upstream_backend():
 
 
 def test_guardian_snapshot_separates_direct_and_group_codenames():
-    user = UsuarioFactory()
+    user = criar_usuario()
     group = Group.objects.create(name="object-readers")
     user.groups.add(group)
     organization = Organizacao.objects.create(nome="Acme", slug="acme")
@@ -38,7 +38,7 @@ def test_guardian_snapshot_separates_direct_and_group_codenames():
 
 
 def test_guardian_empty_snapshot_is_negative_hit_without_second_query(django_assert_num_queries):
-    user = UsuarioFactory()
+    user = criar_usuario()
     organization = Organizacao.objects.create(nome="Acme", slug="acme")
     resolver = GuardianPermissionResolver()
 
@@ -50,7 +50,7 @@ def test_guardian_empty_snapshot_is_negative_hit_without_second_query(django_ass
 
 
 def test_guardian_superuser_matches_upstream():
-    user = UsuarioFactory(is_superuser=True, is_staff=True)
+    user = criar_usuario(is_superuser=True, is_staff=True)
     group = Group.objects.create(name="superuser-object-readers")
     user.groups.add(group)
     organization = Organizacao.objects.create(nome="Acme", slug="acme")
@@ -64,8 +64,8 @@ def test_guardian_superuser_matches_upstream():
 
 
 def test_guardian_unsupported_inputs_fail_closed_with_upstream_parity():
-    active_user = UsuarioFactory()
-    inactive_user = UsuarioFactory(is_active=False)
+    active_user = criar_usuario()
+    inactive_user = criar_usuario(is_active=False)
     organization = Organizacao.objects.create(nome="Acme", slug="acme")
     upstream = ObjectPermissionBackend()
     cached = CachedObjectPermissionBackend()
@@ -84,7 +84,7 @@ def test_guardian_unsupported_inputs_fail_closed_with_upstream_parity():
 
 
 def test_guardian_backend_accepts_prefixed_and_unprefixed_codename():
-    user = UsuarioFactory()
+    user = criar_usuario()
     organization = Organizacao.objects.create(nome="Acme", slug="acme")
     assign_perm("view_organizacao", user, organization)
     upstream = ObjectPermissionBackend()
@@ -98,7 +98,7 @@ def test_guardian_backend_accepts_prefixed_and_unprefixed_codename():
 
 
 def test_guardian_backend_raises_wrong_app_error_like_upstream():
-    user = UsuarioFactory()
+    user = criar_usuario()
     organization = Organizacao.objects.create(nome="Acme", slug="acme")
     upstream = ObjectPermissionBackend()
     cached = CachedObjectPermissionBackend()
@@ -110,7 +110,7 @@ def test_guardian_backend_raises_wrong_app_error_like_upstream():
 
 
 def test_guardian_async_methods_use_same_snapshot():
-    user = UsuarioFactory()
+    user = criar_usuario()
     organization = Organizacao.objects.create(nome="Acme", slug="acme")
     assign_perm("view_organizacao", user, organization)
     backend = CachedObjectPermissionBackend()

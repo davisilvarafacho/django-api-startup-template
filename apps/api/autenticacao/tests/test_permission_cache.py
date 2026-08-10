@@ -21,13 +21,13 @@ from guardian.shortcuts import assign_perm
 
 from apps.api.autenticacao.permissions import CustomDjangoModelPermissions
 from apps.organizacoes.models import Organizacao
-from apps.usuarios.factories import UsuarioFactory
 from internal_frameworks.permission_cache.backends import CachedModelBackend
 from internal_frameworks.permission_cache.epochs import EpochStore
 from internal_frameworks.permission_cache.keys import global_scope, layer_scope, snapshot_key, user_scope
 from internal_frameworks.permission_cache.resolvers.django import DjangoPermissionResolver
 from internal_frameworks.permission_cache.store import PermissionCacheStore
 from internal_frameworks.permission_cache.types import DjangoPermissionSnapshot, encode_envelope
+from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
 
@@ -49,7 +49,7 @@ def permission(codename):
 
 
 def test_direct_and_group_permissions_are_separate_and_cached():
-    user = UsuarioFactory()
+    user = criar_usuario()
     direct = permission("add_organizacao")
     inherited = permission("view_organizacao")
     group = Group.objects.create(name="readers")
@@ -69,7 +69,7 @@ def test_direct_and_group_permissions_are_separate_and_cached():
 
 
 def test_backend_does_not_create_modelbackend_l1_attributes():
-    user = UsuarioFactory()
+    user = criar_usuario()
     CachedModelBackend().get_all_permissions(user)
 
     assert not hasattr(user, "_perm_cache")
@@ -78,7 +78,7 @@ def test_backend_does_not_create_modelbackend_l1_attributes():
 
 
 def test_two_user_instances_with_same_pk_share_the_distributed_snapshot():
-    original = UsuarioFactory()
+    original = criar_usuario()
     original.user_permissions.add(permission("view_organizacao"))
     reloaded = Usuario.objects.get(pk=original.pk)
 
@@ -92,10 +92,10 @@ def test_two_user_instances_with_same_pk_share_the_distributed_snapshot():
 
 def test_inactive_anonymous_unsaved_object_and_superuser_match_modelbackend():
     backend = CachedModelBackend()
-    inactive = UsuarioFactory(is_active=False)
-    ordinary = UsuarioFactory()
+    inactive = criar_usuario(is_active=False)
+    ordinary = criar_usuario()
     unsaved = Usuario(email="unsaved@example.com", first_name="Un", last_name="Saved")
-    superuser = UsuarioFactory(is_superuser=True, is_staff=True)
+    superuser = criar_usuario(is_superuser=True, is_staff=True)
     obj = Group.objects.create(name="object")
 
     assert backend.get_all_permissions(inactive) == set()
@@ -109,7 +109,7 @@ def test_inactive_anonymous_unsaved_object_and_superuser_match_modelbackend():
 
 
 def test_async_methods_use_same_semantic_snapshot_without_l1_attributes():
-    user = UsuarioFactory()
+    user = criar_usuario()
     user.user_permissions.add(permission("view_organizacao"))
     backend = CachedModelBackend()
 
@@ -139,7 +139,7 @@ def test_async_permission_checks_delegate_to_sync_overrides():
 
 
 def test_has_perms_and_module_permissions_use_cached_backend():
-    user = UsuarioFactory()
+    user = criar_usuario()
     user.user_permissions.add(permission("add_organizacao"), permission("view_organizacao"))
     backend = CachedModelBackend()
 
@@ -150,10 +150,10 @@ def test_has_perms_and_module_permissions_use_cached_backend():
 
 
 def test_authentication_and_with_perm_remain_modelbackend_compatible():
-    direct = UsuarioFactory()
-    inherited = UsuarioFactory()
-    inactive = UsuarioFactory(is_active=False)
-    superuser = UsuarioFactory(is_superuser=True, is_staff=True)
+    direct = criar_usuario()
+    inherited = criar_usuario()
+    inactive = criar_usuario(is_active=False)
+    superuser = criar_usuario(is_superuser=True, is_staff=True)
     perm = permission("view_organizacao")
     direct.user_permissions.add(perm)
     inactive.user_permissions.add(perm)
@@ -180,7 +180,7 @@ def test_authentication_and_with_perm_remain_modelbackend_compatible():
     }
 )
 def test_kill_switch_bypasses_permission_snapshots():
-    user = UsuarioFactory()
+    user = criar_usuario()
     user.user_permissions.add(permission("view_organizacao"))
     backend = CachedModelBackend()
 
@@ -195,7 +195,7 @@ def test_kill_switch_bypasses_permission_snapshots():
 @pytest.mark.parametrize("cache_enabled", [True, False])
 def test_direct_user_has_perm_preserves_result_with_cache_enabled_or_disabled(settings, cache_enabled):
     settings.AUTHORIZATION_CACHE = {**settings.AUTHORIZATION_CACHE, "ENABLED": cache_enabled}
-    user = UsuarioFactory()
+    user = criar_usuario()
     user.user_permissions.add(permission("view_organizacao"))
 
     assert user.has_perm("organizacoes.view_organizacao") is True
@@ -206,7 +206,7 @@ def test_drf_model_permissions_transparently_use_cached_backend():
     class OrganizationView:
         queryset = Organizacao.objects.all()
 
-    user = UsuarioFactory()
+    user = criar_usuario()
     user.user_permissions.add(permission("view_organizacao"))
     factory = APIRequestFactory()
     first_raw_request = factory.get("/organizacoes/")
@@ -226,7 +226,7 @@ def test_drf_model_permissions_transparently_use_cached_backend():
 
 
 def test_user_has_module_perms_preserves_django_admin_behavior():
-    user = UsuarioFactory()
+    user = criar_usuario()
     user.user_permissions.add(permission("view_organizacao"))
 
     assert user.has_module_perms("organizacoes") is True
@@ -234,7 +234,7 @@ def test_user_has_module_perms_preserves_django_admin_behavior():
 
 
 def test_celery_eager_task_reloads_user_and_preserves_permission_result():
-    user = UsuarioFactory()
+    user = criar_usuario()
     user.user_permissions.add(permission("view_organizacao"))
 
     assert user.has_perm("organizacoes.view_organizacao") is True
@@ -250,7 +250,7 @@ def test_management_command_context_resolves_permissions_without_request():
             snapshot = DjangoPermissionResolver().resolve(user)
             return "allowed" if "organizacoes.view_organizacao" in snapshot.all_permissions else "denied"
 
-    user = UsuarioFactory()
+    user = criar_usuario()
     user.user_permissions.add(permission("view_organizacao"))
 
     result = ResolvePermissionCommand(stdout=StringIO()).execute(
@@ -264,7 +264,7 @@ def test_management_command_context_resolves_permissions_without_request():
 
 
 def test_empty_permission_snapshot_is_cached():
-    user = UsuarioFactory()
+    user = criar_usuario()
     backend = CachedModelBackend()
 
     with CaptureQueriesContext(connection) as first_queries:
@@ -276,7 +276,7 @@ def test_empty_permission_snapshot_is_cached():
 
 
 def test_malformed_permission_payload_is_ignored_and_reloaded():
-    user = UsuarioFactory()
+    user = criar_usuario()
     user.user_permissions.add(permission("view_organizacao"))
     cache = caches["permissions"]
     scopes = (global_scope(), layer_scope("django"), user_scope("django", user.pk))
@@ -296,7 +296,7 @@ def test_malformed_permission_payload_is_ignored_and_reloaded():
 
 
 def test_malformed_permission_item_is_reloaded_before_module_check():
-    user = UsuarioFactory()
+    user = criar_usuario()
     user.user_permissions.add(permission("view_organizacao"))
     cache = caches["permissions"]
     scopes = (global_scope(), layer_scope("django"), user_scope("django", user.pk))
@@ -324,7 +324,7 @@ def test_database_alias_is_part_of_snapshot_identity():
     cache = LocMemCache("django-permission-aliases", {})
     store = PermissionCacheStore(cache_backend=cache, epoch_store=EpochStore(cache_backend=cache))
     resolver = AliasResolver(store=store)
-    default_user = UsuarioFactory()
+    default_user = criar_usuario()
     replica_user = copy.copy(default_user)
     replica_user._state = copy.copy(default_user._state)
     replica_user._state.db = "replica"
@@ -335,9 +335,9 @@ def test_database_alias_is_part_of_snapshot_identity():
 
 def test_user_has_perm_keeps_backend_or_semantics():
     rules.add_perm("organizacoes.rule_only", rules.always_allow)
-    rules_user = UsuarioFactory()
-    django_user = UsuarioFactory()
-    guardian_user = UsuarioFactory()
+    rules_user = criar_usuario()
+    django_user = criar_usuario()
+    guardian_user = criar_usuario()
     organization = Organizacao.objects.create(nome="Acme", slug="acme")
     django_user.user_permissions.add(permission("view_organizacao"))
     assign_perm("change_organizacao", guardian_user, organization)

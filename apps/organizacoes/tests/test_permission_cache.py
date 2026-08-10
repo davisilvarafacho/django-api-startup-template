@@ -14,14 +14,14 @@ from apps.organizacoes.rules import e_gestor
 from apps.organizacoes.serializers import ConviteCreateSerializer, VinculoSerializer
 from apps.organizacoes.tests.test_api import client_autenticado
 from apps.organizacoes.views import TimeViewSet
-from apps.usuarios.factories import UsuarioFactory
 from internal_frameworks.permission_cache.resolvers.tenant import TenantAccessResolver
 from internal_frameworks.permission_cache.types import TenantAccess
+from tests.support.usuarios import criar_usuario
 
 
 @pytest.mark.django_db
 def test_tenant_permission_sets_request_tenant_and_rls_context():
-    user = UsuarioFactory()
+    user = criar_usuario()
     organization = Organizacao.objects.create(nome="Acme", slug="acme")
     membership = Vinculo.objects.create(usuario=user, organizacao=organization, papel=Papel.GESTOR)
     raw_request = APIRequestFactory().get("/times/", HTTP_X_ORGANIZATION="acme")
@@ -45,7 +45,7 @@ def test_papel_minimo_permission_reads_tenant_dataclass():
 
 @pytest.mark.django_db
 def test_papel_minimo_rule_reuses_tenant_resolver(monkeypatch):
-    usuario = UsuarioFactory()
+    usuario = criar_usuario()
     objeto = Mock(organizacao_id=1)
     resolver = Mock(return_value=TenantAccess(1, "acme", 2, Papel.GESTOR))
     monkeypatch.setattr(TenantAccessResolver, "by_organization_id", resolver)
@@ -61,7 +61,7 @@ def test_papel_minimo_rule_reuses_tenant_resolver(monkeypatch):
 
 @pytest.mark.django_db
 def test_tenant_permission_denies_cached_missing_membership():
-    user = UsuarioFactory()
+    user = criar_usuario()
     client = client_autenticado(user)
 
     first = client.get("/times/", HTTP_X_ORGANIZATION="missing")
@@ -74,7 +74,7 @@ def test_tenant_permission_denies_cached_missing_membership():
 
 @pytest.mark.django_db
 def test_time_view_filters_and_creates_by_tenant_organization_id():
-    user = UsuarioFactory()
+    user = criar_usuario()
     acme = Organizacao.objects.create(nome="Acme", slug="acme")
     other = Organizacao.objects.create(nome="Other", slug="other")
     Vinculo.objects.create(usuario=user, organizacao=acme, papel=Papel.GESTOR)

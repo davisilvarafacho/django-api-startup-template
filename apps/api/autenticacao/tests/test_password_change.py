@@ -25,7 +25,7 @@ from apps.api.autenticacao.models import (
     TrustedDevice,
 )
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
-from apps.usuarios.factories import UsuarioFactory
+from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
 
@@ -218,7 +218,7 @@ def test_nao_avisa_quando_a_troca_falha(usuario, django_capture_on_commit_callba
 
 def test_nao_afeta_outro_usuario(usuario):
     client, _ = client_com_sessao(usuario)
-    outro = UsuarioFactory(password="Senha123!")
+    outro = criar_usuario(password="Senha123!")
     _, sessao_do_outro = client_com_sessao(outro)
 
     client.post(URL, payload(), format="json")

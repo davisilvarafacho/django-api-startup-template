@@ -107,7 +107,7 @@ _Última atualização: 2026-07-29._
 | Gate de migrations | ⚠️ suspenso até o reset integral pré-lançamento |
 | Serviços Postgres/Redis no CI (fecha o caveat dos testes) | ✅ |
 | Segurança de dependências/imagem: `pip-audit`, `bandit`, `trivy`, Dependabot | ✅ |
-| `pytest-cov` + `factory_boy` + Codecov + coverage gate | ✅ |
+| `pytest-cov` + helpers locais de teste + Codecov + coverage gate | ✅ |
 | Fixtures / seeds / demo data | ⏳ |
 | Makefile | ✅ |
 | `responses` / `vcrpy` (mock de HTTP externo) · snapshot tests · load/contract testing | 🔎 |
