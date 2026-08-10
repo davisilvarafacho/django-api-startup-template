@@ -46,7 +46,10 @@ class Usuario(BaseTenantless, AbstractUser):
 
     first_name = models.CharField(_("nome"), max_length=30)
     last_name = models.CharField(_("sobrenome"), max_length=40)
-    email = models.EmailField(_("email"), unique=True, help_text=_("email do usuário"), db_comment="email do usuário")
+    # sem `unique=True`: a unicidade é parcial (`usuario_email_unico_nao_excluido`,
+    # em `Meta.constraints`) para que o e-mail volte a ficar livre após a exclusão
+    # lógica. Um índice único incondicional aqui quebra esse reuso.
+    email = models.EmailField(_("email"), help_text=_("email do usuário"), db_comment="email do usuário")
     phone_number = encrypt(
         models.CharField(
             _("telefone"),

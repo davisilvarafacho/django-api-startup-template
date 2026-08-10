@@ -50,6 +50,11 @@ def test_devolve_a_quantidade_removida():
 
 
 def test_a_tarefa_periodica_fica_agendada():
+    # A suíte roda com `--nomigrations`, então a linha semeada pela data migration
+    # não existe: aplicamos a mesma função aqui. `agendar` é idempotente, então o
+    # teste vale igual quando as migrations rodam de verdade.
+    agendar(django_apps, None)
+
     tarefa = PeriodicTask.objects.get(task="apps.api.core.tasks.limpar_logs_de_acesso_antigos")
 
     assert tarefa.enabled

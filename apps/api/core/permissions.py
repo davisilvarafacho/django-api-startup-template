@@ -1,9 +1,8 @@
 """Permissions reutilizáveis do template."""
+
 from django.conf import settings
 
 from rest_framework.permissions import BasePermission
-
-from apps.api.core.errors import APIError, CoreErrorCode
 
 from .ip_utils import ip_in_networks, peer_ip
 
@@ -23,14 +22,13 @@ class IsInternalIP(BasePermission):
             def manutencao(self, request):
                 ...
 
-    Responde 403 com código `core.internal_ip_required` quando o IP da conexão
-    (`REMOTE_ADDR`) não pertence à lista configurada.
+    Quando o IP da conexão (`REMOTE_ADDR`) não pertence à lista configurada,
+    devolve `False` e deixa o DRF responder a negativa padrão — 403 com
+    `auth.permission_denied`, igual a qualquer outra permissão do projeto. Um
+    código ou mensagem próprios contariam a quem chamou que existe uma rede
+    interna com acesso privilegiado a esta rota, então de propósito não há nada
+    aqui que distinga esta negativa das demais.
     """
 
-    message = "Este endpoint só pode ser acessado a partir da rede interna."
-
     def has_permission(self, request, view):
-        if ip_in_networks(peer_ip(request), settings.INTERNAL_IPS):
-            return True
-
-        raise APIError(CoreErrorCode.INTERNAL_IP_REQUIRED, status_code=403, message=self.message)
+        return ip_in_networks(peer_ip(request), settings.INTERNAL_IPS)

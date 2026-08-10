@@ -1,4 +1,5 @@
 """Testes dos utilitários de IP (não tocam o banco)."""
+
 import pytest
 
 from apps.api.core.ip_utils import ip_in_networks

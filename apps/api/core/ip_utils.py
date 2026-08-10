@@ -1,4 +1,5 @@
 """Utilitários de endereço IP para checagens de acesso por rede."""
+
 import ipaddress
 import logging
 

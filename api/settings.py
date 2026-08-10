@@ -289,7 +289,12 @@ AUTHENTICATION_BACKENDS = [
 ]
 
 # CachedObjectPermissionBackend subclasses and compatibility-tests Guardian's backend.
-SILENCED_SYSTEM_CHECKS = ["guardian.W001"]
+# auth.W004: `Usuario.email` é o USERNAME_FIELD e não tem `unique=True` — de
+# propósito. A unicidade é parcial (`usuario_email_unico_nao_excluido`), para o
+# e-mail voltar a ficar livre após a exclusão lógica; como o `_default_manager`
+# esconde os excluídos, `get_by_natural_key()` continua enxergando um único
+# registro por e-mail.
+SILENCED_SYSTEM_CHECKS = ["guardian.W001", "auth.W004"]
 
 # Não criar o usuário anônimo do guardian (o modelo de usuário usa e-mail como
 # username e o isolamento por organização torna esse registro desnecessário).
@@ -473,6 +478,11 @@ REST_FRAMEWORK = {
         "auth_password_reset": "5/min",
     },
     "DEFAULT_VERSIONING_CLASS": "rest_framework.versioning.NamespaceVersioning",
+    # Nenhuma URL do projeto vive sob namespace ainda, então sem uma versão padrão
+    # `determine_version()` devolve `None` e o drf-spectacular descarta *todas* as
+    # operações do schema (`paths` sai vazio). A versão só é usada para reverse de
+    # URL versionada — que o projeto não faz —, então isto é inerte em runtime.
+    "DEFAULT_VERSION": "v1",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "EXCEPTION_HANDLER": "apps.api.core.errors.api_exception_handler",
     "TEST_REQUEST_DEFAULT_FORMAT": "json",
