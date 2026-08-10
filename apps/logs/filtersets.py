@@ -31,7 +31,7 @@ class ChoiceInFilter(BaseInFilter, ChoiceFilter):
 
 
 class LogAlteracaoFilterSet(FilterSet):
-    """Filtros públicos de `GET /logs-alteracao/`."""
+    """Filtros públicos de `GET /logs_alteracao/`."""
 
     action = ChoiceFilter(
         choices=LogAlteracao.Action.choices,
