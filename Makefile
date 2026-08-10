@@ -1,4 +1,4 @@
-.PHONY: help install hooks up down stack kuma-up kuma-down migrate run run-observed worker worker-observed beat test lint format check precommit shell docs docs-serve commitlint version-check obs-up obs-down dev-obs-up dev-obs-down nginx-test nginx-reload
+.PHONY: help install hooks up down stack kuma-up kuma-down migrate run run-observed worker worker-observed beat test test-fast test-integration test-redis lint format check precommit shell docs docs-serve commitlint version-check obs-up obs-down dev-obs-up dev-obs-down nginx-test nginx-reload
 
 help: ## Lista os comandos disponíveis
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "\033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -89,6 +89,15 @@ export DATABASE_NAME DATABASE_USER DATABASE_PASSWORD DATABASE_HOST DATABASE_PORT
 
 test: ## Roda a suíte com cobertura (sem migrations até o reset pré-lançamento)
 	uv run --group test pytest --nomigrations
+
+test-fast: ## Roda a suíte sem testes de integração
+	uv run --group test pytest --nomigrations -m "not integration"
+
+test-integration: ## Roda somente testes de integração
+	uv run --group test pytest --nomigrations -m integration
+
+test-redis: ## Roda testes que exigem Redis real
+	uv run --group test pytest --nomigrations -m redis
 
 lint: ## Checa lint (ruff)
 	uv run ruff check .

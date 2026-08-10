@@ -22,7 +22,11 @@ from internal_frameworks.permission_cache.invalidation import bump_epoch_scopes
 from internal_frameworks.permission_cache.keys import epoch_key, global_scope, guardian_object_scope, layer_scope, snapshot_key, user_scope
 from internal_frameworks.permission_cache.store import PermissionCacheStore
 
-pytestmark = pytest.mark.django_db(transaction=True)
+pytestmark = [
+    pytest.mark.django_db(transaction=True),
+    pytest.mark.integration,
+    pytest.mark.redis,
+]
 
 
 def _redis_epoch_worker(redis_url, physical_key, operation, result_queue):
