@@ -1,8 +1,9 @@
 """Correlation ID por request.
 
-Cada request recebe um identificador único que atravessa log, Sentry e as tasks
-do Celery disparadas por ela. É o que permite pegar um erro no Sentry e achar a
-linha de log correspondente (e vice-versa) sem depender de timestamp.
+Cada request recebe um identificador único que atravessa log, Sentry, o span do
+OpenTelemetry e as tasks do Celery disparadas por ela. É o que permite pegar um
+erro no Sentry e achar a linha de log (ou o trace) correspondente, e vice-versa,
+sem depender de timestamp.
 
 O id é guardado em `contextvars` em vez de `threading.local` porque o `contextvar`
 acompanha corretamente código assíncrono e não vaza entre requests que reaproveitam
@@ -84,6 +85,7 @@ class RequestIDMiddleware(MiddlewareMixin):
         request._iniciada_em = time.monotonic()
 
         self._marcar_no_sentry(request.id)
+        self._marcar_no_span(request.id)
 
     def process_response(self, request, response):
         request_id = getattr(request, "id", None)
@@ -109,6 +111,27 @@ class RequestIDMiddleware(MiddlewareMixin):
         import sentry_sdk
 
         sentry_sdk.set_tag("request_id", request_id)
+
+    def _marcar_no_span(self, request_id):
+        """Anota o id no span corrente, quando há telemetria ativa.
+
+        Sem isso o id só é pesquisável no Loki: daria para chegar ao trace em
+        dois saltos (log -> `trace_id` -> Tempo), mas não buscar direto no Tempo
+        pelo id que o cliente recebeu no header.
+
+        O span já existe aqui porque o `DjangoInstrumentor` insere o middleware
+        dele na posição 0 do `MIDDLEWARE`, antes deste.
+        """
+        # Import local e tolerante: `opentelemetry` está no grupo opcional
+        # `observability` e pode não estar instalado.
+        try:
+            from opentelemetry import trace
+        except ImportError:
+            return
+
+        span = trace.get_current_span()
+        if span.get_span_context().is_valid:
+            span.set_attribute("request_id", request_id)
 
     def _logar_acesso(self, request, response):
         """Emite uma linha estruturada por request.
