@@ -17,7 +17,15 @@ def test_metadata_has_unique_composite_constraint():
 
     assert isinstance(constraint.func, ast.Attribute)
     assert constraint.func.attr == "UniqueConstraint"
-    assert ast.literal_eval(next(keyword.value for keyword in constraint.keywords if keyword.arg == "fields")) == ["content_type", "object_id"]
+    assert ast.literal_eval(next(keyword.value for keyword in constraint.keywords if keyword.arg == "fields")) == [
+        "organizacao",
+        "content_type",
+        "object_id",
+    ]
     assert (
-        ast.literal_eval(next(keyword.value for keyword in constraint.keywords if keyword.arg == "name")) == "metadata_content_type_object_id_unique"
+        ast.literal_eval(next(keyword.value for keyword in constraint.keywords if keyword.arg == "name"))
+        == "metadata_organizacao_content_type_object_id_unique"
     )
+    # Índice parcial: sem `condition`, um registro excluído seguiria bloqueando
+    # a recriação do documento (ADR 0008).
+    assert any(keyword.arg == "condition" for keyword in constraint.keywords)
