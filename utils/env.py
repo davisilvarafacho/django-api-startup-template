@@ -101,6 +101,10 @@ EnviromentVar = Literal[
     # sentry
     "SENTRY_DSN",
     "SENSITIVE_FIELD_KEYS",
+    # metadata
+    "METADATA_MAX_KEYS",
+    "METADATA_MAX_KEY_LENGTH",
+    "METADATA_MAX_VALUE_LENGTH",
 ]
 
 
@@ -116,6 +120,29 @@ def get_bool_from_env(key: EnviromentVar, default_value):
         except ValueError as exc:
             raise ValueError(f"'{value}' não é um valor válido para '{key}'") from exc
     return default_value
+
+
+def get_int_from_env(key: EnviromentVar, default_value):
+    """Lê uma env var como inteiro.
+
+    Args:
+        key: Nome da variável, declarado em `ENVS`.
+        default_value: Valor usado quando a variável está ausente ou vazia.
+
+    Returns:
+        O inteiro lido do ambiente ou o default.
+
+    Raises:
+        ValueError: Quando o valor presente não é um inteiro.
+    """
+    value = os.environ.get(key)
+    if not value:
+        return default_value
+
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ValueError(f"'{value}' não é um valor válido para '{key}'") from exc
 
 
 def get_list_from_env(key: EnviromentVar, default_value=None):

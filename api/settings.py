@@ -12,7 +12,7 @@ from celery.schedules import crontab
 
 from api.configure_enviroment import configure_enviroment
 from api.logging_config import build_logging
-from utils.env import get_bool_from_env, get_env_var, get_list_from_env
+from utils.env import get_bool_from_env, get_env_var, get_int_from_env, get_list_from_env
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
 
@@ -509,6 +509,12 @@ KNOX_TOKEN_MODEL = "autenticacao.AuthToken"
 # MFA
 MFA_SMS_BACKEND = get_env_var("MFA_SMS_BACKEND", "apps.api.autenticacao.mfa_backends.ConsoleSMSBackend")
 MFA_SMS_ENABLED = get_bool_from_env("MFA_SMS_ENABLED", False)
+
+# metadata genérico (JSON key-value por objeto)
+# Limites por objeto; ver docs/reference/metadata.md.
+METADATA_MAX_KEYS = get_int_from_env("METADATA_MAX_KEYS", 50)
+METADATA_MAX_KEY_LENGTH = get_int_from_env("METADATA_MAX_KEY_LENGTH", 256)
+METADATA_MAX_VALUE_LENGTH = get_int_from_env("METADATA_MAX_VALUE_LENGTH", 1024)
 
 REST_KNOX = {
     "AUTH_HEADER_PREFIX": "Bearer",
