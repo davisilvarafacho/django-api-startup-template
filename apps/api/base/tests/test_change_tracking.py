@@ -101,7 +101,7 @@ def test_save_detecta_mutacao_in_place_de_json(metadata_table):
     with organizacao_atual_privilegiada(organizacao.pk):
         metadata = Metadata.objects.create(
             organizacao=organizacao,
-            content_type=organizacao.content_type,
+            content_type=Organizacao.get_content_type(),
             object_id=organizacao.pk,
             dados={"tags": []},
         )

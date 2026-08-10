@@ -203,8 +203,14 @@ def test_metadata_mixin_resolve_modelo_pelo_caminho_canonico(ambiente_rls, tabel
     organizacao = Organizacao.objects.create(nome="Meta", slug="meta")
     with organizacao_atual_privilegiada(organizacao.pk):
         registro = RegistroRLS.objects.create(descricao="com metadata")
-        metadata = registro.metadata
+        metadata = Metadata.objects.create(
+            content_type=RegistroRLS.get_content_type(),
+            object_id=registro.pk,
+            dados={"chave": "valor"},
+        )
+
+        assert registro.metadata_registros.get() == metadata
+        assert registro.raw_metadata == {"chave": "valor"}
 
     assert isinstance(metadata, Metadata)
-    assert metadata.content_type == registro.content_type
     assert metadata.object_id == registro.pk

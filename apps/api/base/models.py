@@ -1,6 +1,7 @@
 import copy
 
 from django.conf import settings
+from django.contrib.contenttypes.fields import GenericRelation
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
 from django.utils.translation import gettext_lazy as _
@@ -288,21 +289,38 @@ class ApiScopeMixin(models.Model):
 
 
 class MetadataMixin(models.Model):
-    @property
-    def content_type(self):
-        return ContentType.objects.get_for_model(self)
+    """Acesso de leitura ao metadata genérico do objeto.
 
-    @property
-    def metadata(self):
-        from apps.api.metadata.models import Metadata
+    Escrita é responsabilidade de `apps.api.metadata.handlers.aplicar_metadata`,
+    o único ponto autorizado a criar linha de `Metadata`.
+    """
 
-        if not hasattr(self, "_metadata"):
-            self._metadata = Metadata.objects.get_or_create(content_type=self.content_type, object_id=self.pk)[0]
-        return self._metadata
+    metadata_registros = GenericRelation(
+        "metadata.Metadata",
+        content_type_field="content_type",
+        object_id_field="object_id",
+        related_query_name="%(app_label)s_%(class)s",
+    )
+
+    @classmethod
+    def get_content_type(cls):
+        """`ContentType` deste model, resolvido pelo cache do Django."""
+        return ContentType.objects.get_for_model(cls)
 
     @property
     def raw_metadata(self):
-        return self.metadata.dados
+        """Documento de metadata do objeto, ou `{}` quando não houver.
+
+        Leitura pura: não cria registro. Como `Metadata` está sob RLS, exige
+        contexto de organização, igual a qualquer leitura de model de negócio.
+
+        Não troque por `.first()`: ele acrescenta `ORDER BY` e `LIMIT`, força
+        uma query nova e ignora o cache do `prefetch_related`, trazendo o N+1
+        de volta. A constraint garante no máximo um registro vivo por
+        organização e objeto, então materializar a lista é seguro.
+        """
+        registros = list(self.metadata_registros.all())
+        return registros[0].dados if registros else {}
 
     class Meta:
         abstract = True
