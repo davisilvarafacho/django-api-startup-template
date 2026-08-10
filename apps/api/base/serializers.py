@@ -40,19 +40,3 @@ class BaseModelSerializer(serializers.ModelSerializer):
 
 class BaseModelSerpySerializer(serpy.Serializer):
     id = serpy.IntField()
-
-    def to_value(self, instance):
-        fields = [*self._compiled_fields]
-
-        # Remove o campo 'ativo' se ele for None
-        # if hasattr(self, "ativo") and getattr(self, "ativo") is None:
-        #     fields = [f for f in fields if f[0] != "ativo"]
-
-        if self.many:
-            serialize = self._serialize
-            return [serialize(o, fields) for o in instance]
-
-        if instance is None:
-            return None
-
-        return self._serialize(instance, fields)
