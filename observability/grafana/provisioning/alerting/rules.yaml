@@ -1,0 +1,216 @@
+# Regras de alerta sobre as métricas do django-prometheus.
+#
+# São exemplos deliberadamente conservadores: adapte limiares e janelas ao
+# tráfego real antes de levar para produção. Regras provisionadas por arquivo
+# não podem ser editadas pela interface do Grafana — altere aqui e reinicie o
+# serviço (`docker compose -f docker-compose.observability.yml restart grafana`).
+#
+# Cada regra segue o encadeamento que o próprio Grafana gera: A (consulta
+# PromQL) -> B (reduce, último valor) -> C (threshold), com `condition: C`.
+#
+# O rótulo `severity` decide o roteamento em notification-policies.yaml:
+# `critical` vai para Discord e Telegram, os demais só para o Discord.
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: disponibilidade
+    folder: DRF Base API
+    interval: 1m
+    rules:
+      - uid: drf_api_fora_do_ar
+        title: API fora do ar
+        condition: C
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: O Prometheus não obtém resposta do /metrics da API.
+          description: >-
+            O target `drf-base-api` está down há mais de 2 minutos. Confira o
+            container `web` e o nginx antes de olhar para dependências.
+        # Sem a série `up` não há o que avaliar: em produção isso significa
+        # scrape quebrado, então alerta. Localmente, pause a regra quando for
+        # trabalhar com a API deliberadamente parada.
+        noDataState: Alerting
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              expr: up{job="drf-base-api"}
+              instant: false
+              range: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              reducer: last
+              expression: A
+              datasource:
+                type: __expr__
+                uid: __expr__
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource:
+                type: __expr__
+                uid: __expr__
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+              intervalMs: 1000
+              maxDataPoints: 43200
+
+  - orgId: 1
+    name: saude-das-respostas
+    folder: DRF Base API
+    interval: 1m
+    rules:
+      - uid: drf_taxa_de_erro_5xx
+        title: Taxa de erros 5xx acima de 5%
+        condition: C
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Mais de 5% das respostas são 5xx nos últimos 5 minutos.
+          description: >-
+            Proporção atual: {{ $values.B }}. Comece pelo painel "DRF Base API —
+            visão geral" e pelos logs no Loki filtrando por `status>=500`.
+        # Sem tráfego a divisão não produz série; ausência de dados aqui é
+        # silêncio legítimo, não incidente.
+        noDataState: NoData
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              expr: >-
+                sum(rate(django_http_responses_total_by_status_total{status=~"5.."}[5m]))
+                / sum(rate(django_http_responses_total_by_status_total[5m]))
+              instant: false
+              range: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              reducer: last
+              expression: A
+              datasource:
+                type: __expr__
+                uid: __expr__
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource:
+                type: __expr__
+                uid: __expr__
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.05]
+              intervalMs: 1000
+              maxDataPoints: 43200
+
+      - uid: drf_latencia_p95_alta
+        title: Latência p95 acima de 1s
+        condition: C
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: O p95 de latência passou de 1 segundo por 10 minutos.
+          description: >-
+            p95 atual: {{ $values.B }}s. Use o Tempo para achar os spans lentos
+            do período (Grafana → Explore → Tempo).
+        noDataState: NoData
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              expr: >-
+                histogram_quantile(0.95,
+                sum(rate(django_http_requests_latency_seconds_by_view_method_bucket[5m])) by (le))
+              instant: false
+              range: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              reducer: last
+              expression: A
+              datasource:
+                type: __expr__
+                uid: __expr__
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: C
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource:
+                type: __expr__
+                uid: __expr__
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [1]
+              intervalMs: 1000
+              maxDataPoints: 43200

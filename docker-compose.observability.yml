@@ -73,6 +73,12 @@ services:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
       - GF_AUTH_DISABLE_LOGIN_FORM=true
+      # Destinos do Grafana Alerting (ver observability/grafana/provisioning/alerting/).
+      # Os defaults são placeholders válidos: o Grafana sobe e as regras rodam,
+      # mas o envio só funciona depois de preencher o `.env`.
+      - GRAFANA_DISCORD_WEBHOOK_URL=${GRAFANA_DISCORD_WEBHOOK_URL:-https://discord.com/api/webhooks/0/nao-configurado}
+      - GRAFANA_TELEGRAM_BOT_TOKEN=${GRAFANA_TELEGRAM_BOT_TOKEN:-0:nao-configurado}
+      - GRAFANA_TELEGRAM_CHAT_ID=${GRAFANA_TELEGRAM_CHAT_ID:-0}
     volumes:
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro

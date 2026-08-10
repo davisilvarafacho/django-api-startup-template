@@ -1,0 +1,31 @@
+# Roteamento dos alertas para os contact points.
+#
+# ATENÇÃO: provisionar `policies` substitui a árvore inteira de políticas de
+# notificação da organização, inclusive a raiz padrão do Grafana. Para voltar ao
+# padrão, troque este bloco por `resetPolicies: [1]` e reinicie o Grafana.
+#
+# Regra de roteamento: tudo vai para o Discord; o que estiver rotulado como
+# `severity: critical` vai também para o Telegram. Os dois destinos são rotas
+# irmãas com `continue: true` na primeira, porque uma rota-filha que casa
+# consome o alerta — a raiz não notifica de novo por conta própria.
+apiVersion: 1
+
+policies:
+  - orgId: 1
+    receiver: discord-alertas
+    # `grafana_folder` + `alertname` mantém um incidente por regra, em vez de
+    # uma notificação por série.
+    group_by:
+      - grafana_folder
+      - alertname
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+    routes:
+      - receiver: telegram-alertas
+        object_matchers:
+          - ["severity", "=", "critical"]
+        continue: true
+      - receiver: discord-alertas
+        object_matchers:
+          - ["severity", "=", "critical"]

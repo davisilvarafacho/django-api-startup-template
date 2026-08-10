@@ -1,0 +1,32 @@
+# Destinos de notificação do Grafana Alerting (Discord e Telegram).
+#
+# Os valores vêm do ambiente do container `grafana` (ver
+# docker-compose.observability.yml), que por sua vez os lê do `.env`. Nunca
+# escreva a webhook do Discord nem o token do bot direto neste arquivo: ele é
+# versionado.
+#
+# Enquanto as variáveis ficarem nos placeholders do compose, os contact points
+# existem e o Grafana sobe normalmente, mas o envio falha. Configure-os seguindo
+# docs/how-to/alertas-grafana.md.
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: discord-alertas
+    receivers:
+      - uid: discord_alertas
+        type: discord
+        disableResolveMessage: false
+        settings:
+          url: ${GRAFANA_DISCORD_WEBHOOK_URL}
+          use_discord_username: false
+
+  - orgId: 1
+    name: telegram-alertas
+    receivers:
+      - uid: telegram_alertas
+        type: telegram
+        disableResolveMessage: false
+        settings:
+          bottoken: ${GRAFANA_TELEGRAM_BOT_TOKEN}
+          chatid: ${GRAFANA_TELEGRAM_CHAT_ID}
