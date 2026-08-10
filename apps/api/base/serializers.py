@@ -53,6 +53,16 @@ class ForbiddenInternalWriteFieldsSerializerMixin:
         validated_data = super().to_internal_value(filtered_data)
         return _without_fields(validated_data, _forbidden_model_write_names(self))
 
+    def save(self, **kwargs):
+        forbidden_model_names = _forbidden_model_write_names(self)
+        forbidden_kwarg_names = forbidden_model_names | _forbidden_input_names(self)
+        filtered_kwargs = _without_fields(kwargs, forbidden_kwarg_names)
+
+        if hasattr(self, "_validated_data"):
+            self._validated_data = _without_fields(self._validated_data, forbidden_model_names)
+
+        return super().save(**filtered_kwargs)
+
 
 class InternalFieldsSerializerMixin:
     def __init__(self, *args, **kwargs):

@@ -56,6 +56,13 @@ class UsuarioForbiddenAliasSerializer(BaseModelSerializer):
         fields = ["id", "email", "first_name", "last_name", "autor"]
 
 
+class UsuarioInjectingForbiddenSerializer(UsuarioForbiddenSerializer):
+    def validate(self, attrs):
+        attrs["created_by"] = self.context["atacante"]
+        attrs["created_at"] = datetime(2000, 1, 1, tzinfo=UTC)
+        return attrs
+
+
 def test_base_serializer_compoe_os_mixins_de_politica():
     assert issubclass(BaseModelSerializer, InternalFieldsSerializerMixin)
     assert issubclass(BaseModelSerializer, ReadOnlyFieldsSerializerMixin)
@@ -211,3 +218,67 @@ def test_payload_descarta_extra_forbidden_do_model(monkeypatch):
 
     assert usuario.first_name == "Original"
     assert usuario.last_name == "Permitido"
+
+
+@pytest.mark.django_db
+def test_save_descarta_kwargs_forbidden_inclusive_attname():
+    criador = criar_usuario()
+    atacante = criar_usuario()
+    usuario = criar_usuario(created_by=criador)
+    created_at_original = usuario.created_at
+    serializer = UsuarioForbiddenSerializer(
+        usuario,
+        data={"last_name": "Permitido"},
+        partial=True,
+    )
+
+    assert serializer.is_valid(), serializer.errors
+    serializer.save(
+        created_by=atacante,
+        created_by_id=atacante.pk,
+        created_at=datetime(2000, 1, 1, tzinfo=UTC),
+    )
+    usuario.refresh_from_db()
+
+    assert usuario.last_name == "Permitido"
+    assert usuario.created_by_id == criador.pk
+    assert usuario.created_at == created_at_original
+
+
+@pytest.mark.django_db
+def test_save_descarta_kwarg_extra_forbidden(monkeypatch):
+    monkeypatch.setattr(Usuario, "extra_forbidden_internal_write_fields", ["first_name"])
+    usuario = criar_usuario(first_name="Original")
+    serializer = UsuarioForbiddenSerializer(
+        usuario,
+        data={"last_name": "Permitido"},
+        partial=True,
+    )
+
+    assert serializer.is_valid(), serializer.errors
+    serializer.save(first_name="Bloqueado")
+    usuario.refresh_from_db()
+
+    assert usuario.first_name == "Original"
+    assert usuario.last_name == "Permitido"
+
+
+@pytest.mark.django_db
+def test_save_remove_forbidden_injetado_por_validacao_customizada():
+    criador = criar_usuario()
+    atacante = criar_usuario()
+    usuario = criar_usuario(created_by=criador)
+    created_at_original = usuario.created_at
+    serializer = UsuarioInjectingForbiddenSerializer(
+        usuario,
+        data={"last_name": "Permitido"},
+        partial=True,
+        context={"atacante": atacante},
+    )
+
+    assert serializer.is_valid(), serializer.errors
+    serializer.save()
+    usuario.refresh_from_db()
+
+    assert usuario.created_by_id == criador.pk
+    assert usuario.created_at == created_at_original
