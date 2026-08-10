@@ -20,6 +20,7 @@ Aplique esta skill ao trabalhar com projetos Django — models, views, roteament
 - Quando houver um modelo que representa lógicamente vários models, utilize indexes compostos e parciais.
 - Prefira `PositiveSmallIntegerField` com `IntegerChoices` em vez de valores soltos para campos com valores restritos.
 - Use expressões `F()` e objetos `Q()` para queries complexas, evitando race conditions e melhorando a legibilidade.
+- Sempre definir `db_commet` e `help_text` e com os mesmos textos
 
 ## Views
 
