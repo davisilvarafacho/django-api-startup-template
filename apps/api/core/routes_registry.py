@@ -7,7 +7,7 @@ coletado no boot. Assim a sobrescrita é fácil e global, sem tocar em settings.
 Hoje existem dois registries:
 
 - `routes_registry` — rotas **públicas** (dispensam token). Cada app declara
-  `public_routes.py` com `PUBLIC_ROUTES`.
+  `PUBLIC_ROUTES` no respectivo `urls.py`.
 - `tenant_free_registry` — rotas que exigem token mas **não** exigem uma
   organização. Cada app declara `tenant_free_routes.py` com `TENANT_FREE_ROUTES`
   (ver `apps.organizacoes`).
@@ -81,7 +81,7 @@ class RouteRegistry:
 
 
 routes_registry = RouteRegistry(
-    file_name="public_routes",
+    file_name="urls",
     attr_name="PUBLIC_ROUTES",
     # Rotas públicas que não dependem de descoberta. Health check e métricas são
     # consumidos por orquestrador e scraper, que não têm token — o controle de

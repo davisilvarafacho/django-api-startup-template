@@ -5,15 +5,15 @@ import types
 
 import pytest
 
-from apps.api.core.routes_registry import RouteRegistry
+from apps.api.core.routes_registry import RouteRegistry, routes_registry
 
-FILE_NAME = "public_routes"
+FILE_NAME = "urls"
 ATTR_NAME = "PUBLIC_ROUTES"
 
 
 @pytest.fixture
 def registrar_app(monkeypatch):
-    """Cria um módulo `<app>.public_routes` importável e devolve o nome do app."""
+    """Cria um módulo `<app>.urls` importável e devolve o nome do app."""
 
     def _registrar(app_name, routes):
         modulo = types.ModuleType(f"{app_name}.{FILE_NAME}")
@@ -32,6 +32,11 @@ def registrar_app(monkeypatch):
 
 def build_registry(defaults=()):
     return RouteRegistry(file_name=FILE_NAME, attr_name=ATTR_NAME, defaults=defaults)
+
+
+def test_registry_publico_descobre_public_routes_no_modulo_urls():
+    assert routes_registry.file_name == "urls"
+    assert routes_registry.attr_name == "PUBLIC_ROUTES"
 
 
 def test_matches_antes_do_discover_falha_alto():

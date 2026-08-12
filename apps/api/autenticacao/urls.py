@@ -29,6 +29,10 @@ router = DefaultRouter()
 router.register("sessions", SessionViewSet, "auth_sessions")
 router.register("api_keys", APIKeyViewSet, "auth_api_keys")
 
+PUBLIC_ROUTES = [
+    "/auth/login/",
+]
+
 
 urlpatterns = [
     path("auth/login/", LoginView.as_view(), name="login"),

@@ -20,7 +20,7 @@ class CoreConfig(AppConfig):
         # tradução para codenames Django dependem dele já povoado.
         discover_scope_resources()
 
-        # Varre os BUSINESS_APPS atrás de `public_routes.PUBLIC_ROUTES`. Sem isso
+        # Varre os BUSINESS_APPS atrás de `urls.PUBLIC_ROUTES`. Sem isso
         # o AuthenticationMiddleware não sabe quais rotas dispensam token.
         routes_registry.discover()
 
