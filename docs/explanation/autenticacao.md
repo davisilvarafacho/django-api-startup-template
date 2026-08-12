@@ -18,7 +18,7 @@ duas.
 | Peça | Arquivo | Papel |
 | --- | --- | --- |
 | `RouteRegistry` | `apps/api/core/routes_registry.py` | Coleta, no boot, os prefixos declarados por cada app |
-| `PUBLIC_ROUTES` | `<app>/public_routes.py` | Rotas que dispensam token |
+| `PUBLIC_ROUTES` | `<app>/urls.py` | Rotas que dispensam token |
 | `AuthenticationMiddleware` | `apps/api/autenticacao/middleware.py` | Valida o token e resolve o usuário |
 | `TypedTokenAuthentication` | `apps/api/autenticacao/authentications.py` | Valida Knox e bloqueia tipos de token que não podem acessar a API |
 | `PassthroughAuthentication` | `apps/api/autenticacao/authentications.py` | Entrega ao DRF o que o middleware resolveu |
@@ -26,8 +26,8 @@ duas.
 ## O fluxo
 
 1. `CoreConfig.ready()` chama `routes_registry.discover()`, que varre os
-   `BUSINESS_APPS` atrás de um módulo `public_routes` com a lista
-   `PUBLIC_ROUTES`. Defaults, sem descoberta: `/admin/` e `/health/`.
+   `BUSINESS_APPS` atrás da lista `PUBLIC_ROUTES` em cada módulo `urls`.
+   Defaults, sem descoberta: `/admin/`, `/health/` e `/metrics`.
 2. O `AuthenticationMiddleware` decide, para cada request:
    - rota de debug (`/silk/`, `/api/docs/`, …) **e** `DEBUG=True` → segue sem token;
    - `routes_registry.matches(path)` → segue sem token;
@@ -239,7 +239,7 @@ O comando incrementa o epoch global e não usa `FLUSHDB`, varredura de chaves ne
 ## Declarando uma rota pública
 
 ```python
-# apps/meu_app/public_routes.py
+# apps/meu_app/urls.py
 PUBLIC_ROUTES = [
     "/v1/meu-endpoint/publico/",
 ]

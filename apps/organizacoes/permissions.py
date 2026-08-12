@@ -2,8 +2,8 @@
 
 Está em `DEFAULT_PERMISSION_CLASSES`, então **toda** rota exige um
 `X-Organization` válido por padrão. A sobrescrita é global e declarativa: cada
-app lista suas exceções em `public_routes.py` (rotas sem token) ou
-`tenant_free_routes.py` (rotas com token, sem organização).
+app lista rotas sem token em `urls.py` (`PUBLIC_ROUTES`) ou rotas com token sem
+organização em `tenant_free_routes.py` (`TENANT_FREE_ROUTES`).
 """
 
 from rest_framework.permissions import BasePermission

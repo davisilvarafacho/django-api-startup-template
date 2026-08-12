@@ -119,7 +119,7 @@ Padrão recorrente do projeto — comportamento global por padrão, exceções d
 pelo app e coletadas no boot (`RouteRegistry`, em `apps/api/core/routes_registry.py`,
 descoberto no `ready()` de `apps.api.core`):
 
-- `public_routes.py` → `PUBLIC_ROUTES`: rotas **sem token**.
+- `urls.py` → `PUBLIC_ROUTES`: rotas **sem token**.
 - `tenant_free_routes.py` → `TENANT_FREE_ROUTES`: com token, **sem organização**.
 - Decorators `@public` / `@no_tenancy` (`apps/api/core/route_markers.py`) para views
   deste projeto. A checagem é sempre `decorator OU prefixo`; prefixos existem para o
