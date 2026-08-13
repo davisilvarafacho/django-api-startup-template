@@ -13,6 +13,7 @@ SCOPE_ACTIONS_BY_VIEWSET_ACTION = {
     "retrieve": ScopeAction.READ,
     "grid": ScopeAction.READ,
     "form": ScopeAction.READ,
+    "logs": ScopeAction.READ,
     "create": ScopeAction.CREATE,
     "bulk_create": ScopeAction.CREATE,
     "clonar": ScopeAction.CREATE,

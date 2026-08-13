@@ -6,7 +6,7 @@ from rest_framework.test import APIRequestFactory
 import pytest
 
 from apps.api.base.serializers import BaseModelSerializer
-from apps.api.base.views import BaseModelViewSet
+from apps.api.base.views import BaseModelViewSet, PermissionsViewSetMixin
 from apps.logs.models import LogAlteracao
 from apps.usuarios.models import Usuario
 from tests.support.usuarios import criar_usuario
@@ -74,6 +74,10 @@ def test_logs_e_paginado_pelo_paginator_do_projeto():
     assert response.data["total"] == 4
     assert len(response.data["resultados"]) == 2
     assert response.data["proxima"] is not None
+
+
+def test_logs_exige_a_permission_de_leitura_do_recurso():
+    assert PermissionsViewSetMixin.base_permissions["logs"] == ["%(app_label)s.view_%(model_name)s"]
 
 
 @pytest.mark.django_db

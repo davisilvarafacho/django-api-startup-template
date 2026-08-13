@@ -39,6 +39,7 @@ class _SemRecursoViewSet(UtilsViewSetMixin, GenericViewSet):
         ("retrieve", "users:read"),
         ("grid", "users:read"),
         ("form", "users:read"),
+        ("logs", "users:read"),
         ("create", "users:create"),
         ("bulk_create", "users:create"),
         ("clonar", "users:create"),
