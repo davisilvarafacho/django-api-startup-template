@@ -13,6 +13,20 @@ consistência, legibilidade e qualidade do código.
 Todos os apps da aplicação **devem** ficar sempre dentro de uma pasta `apps/`, na
 raiz do projeto. Não é permitido manter apps soltos fora dessa pasta.
 
+Subapps **devem** ficar sempre dentro do diretório `subapps/` do app pai. Não é
+permitido criar um subapp diretamente na raiz do app pai. Essa regra vale em
+qualquer profundidade da hierarquia.
+
+```txt
+apps/
+└── assinaturas/
+    └── subapps/
+        └── faturamento/
+```
+
+O dotted path acompanha a estrutura física, por exemplo
+`apps.assinaturas.subapps.faturamento`.
+
 ### 1.2. Organização Modular
 
 Cada módulo da aplicação (`models`, `serializers`, `views`, `filters`, `handlers`,
@@ -34,9 +48,13 @@ para comportar múltiplos arquivos de teste.
             test_*.py
 ```
 
-Nomes de arquivo **devem** ser sempre no plural (ex.: `models.py`, `serializers.py`,
-`views.py`, `handlers.py`, `filters.py`), inclusive os que não fazem parte da lista
-fixa acima (ex.: `validators.py`, não `validator.py`).
+Nomes de arquivo **devem** ser sempre em inglês e no plural (ex.: `models.py`,
+`serializers.py`, `views.py`, `handlers.py`, `filters.py`), inclusive os que não
+fazem parte da lista fixa acima (ex.: `validators.py`, não `validator.py`). Nomes
+canônicos impostos pelo Python, Django ou outra ferramenta, como `__init__.py`,
+`admin.py` e `manage.py`, são exceções e devem conservar o nome reconhecido pelo
+framework. Nomes de classes, campos e conceitos do domínio podem permanecer em
+português; esta regra se aplica aos nomes dos arquivos.
 
 ### 1.3. Criação de Apps
 
@@ -122,6 +140,18 @@ forma formatada (legível):
 - **`ForeignKey`:**
   `verbose_name (lazy_gettext)`, `to`, `on_delete`, `related_name`, `limit_choices_to`, `blank`, `null`, `help_text`, `db_comment`.
 
+#### 2.2.1. Inteiros pequenos positivos
+
+Valores inteiros não negativos que, pela regra do domínio, não serão superiores
+a 32.000 **devem** usar `models.PositiveSmallIntegerField`. Exemplos incluem
+quantidades de seats, dias de trial ou carência, números de versão e contadores
+pequenos.
+
+Essa é uma convenção interna de escolha do tipo do field. Não criar constante,
+função auxiliar ou validator apenas para representar ou impor o limite de
+32.000. Valores monetários e contadores com crescimento potencialmente superior
+devem usar o tipo inteiro adequado ao seu domínio.
+
 ### 2.3. Classe Meta
 
 A classe `Meta` de cada model **deve** declarar, no mínimo, os seguintes atributos:
@@ -168,10 +198,15 @@ default sobre a tabela unificada de tokens.
 
 **Exceções arquiteturais explícitas:**
 
-- Modelos do control plane de identidade/tenancy (`Usuario`, `Organizacao`,
-  `Vinculo` e `Convite`) herdam de `BaseGlobal`: precisam ser consultados antes
-  de existir contexto RLS, mas mantêm `created_by`, `created_at` e
-  `last_modified_at`.
+- Modelos globais de identidade, catálogo, tenancy ou roteamento do control
+  plane podem herdar de `BaseGlobal` quando precisam ser consultados antes de
+  existir contexto RLS. A exceção deve ser justificada na docstring do model;
+  ela mantém `created_by`, `created_at` e `last_modified_at`. Exemplos existentes
+  são `Usuario`, `Organizacao`, `Vinculo` e `Convite`.
+- Um modelo com isolamento especial que não caiba no FK obrigatório de `Base`
+  pode combinar `BaseGlobal` com `RLSModel` e policies próprias. A necessidade,
+  o caminho privilegiado e testes sob um papel sujeito a RLS devem ser
+  documentados explicitamente.
 - Modelos de credencial que implementam contratos externos (como o
   `AuthToken` swappable do Knox) podem herdar diretamente do mixin mínimo
   necessário. A exceção deve estar documentada no model e não remove os campos
@@ -365,12 +400,14 @@ Todo ViewSet herda, de graça:
 | Categoria | Regra |
 |---|---|
 | Estrutura | Todos os apps sempre dentro da pasta `apps/` |
+| Estrutura | Subapps sempre dentro de `subapps/`, em qualquer profundidade |
 | Estrutura | Módulos como **arquivos** `.py`; `tests/` como **pacote** |
-| Estrutura | Nomes de arquivo sempre no **plural** (`models.py`, `validators.py`, etc.) |
+| Estrutura | Nomes de arquivo em **inglês e no plural** (`models.py`, `validators.py`, etc.); nomes canônicos de ferramentas são exceção |
 | Estrutura | `common/` = implementações próprias (serialização, cache de permissões, encrypt de fields); domínio fica em `apps/`, helpers em `utils/` |
 | QuerySets | `select_related`/`prefetch_related` obrigatórios; `only()`/`values()` para limitar campos |
 | Models | Choices no topo do `models.py`, `IntegerChoices`, docstring referenciando modelo/coluna |
 | Models | Ordem fixa de argumentos por tipo de Field |
+| Models | Inteiros não negativos limitados pelo domínio a 32.000 → `PositiveSmallIntegerField`, sem abstração adicional |
 | Models | Todo field com `help_text` **e** `db_comment` (mesmo valor) |
 | Models | `Meta` com `db_table`, `ordering`, `verbose_name`, `verbose_name_plural`, `permissions` |
 | Models | Permissões em inglês, prefixos Django ou `can_`, sufixo = modelo em minúsculas |
