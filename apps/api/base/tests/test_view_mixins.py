@@ -25,6 +25,7 @@ from apps.api.base import views
         ("BulkUpdateViewSetMixin", ["bulk_update"]),
         ("ClonarViewSetMixin", ["clonar", "modify_unique_fields"]),
         ("CacheInvalidationViewSetMixin", ["invalidate_cache"]),
+        ("LogsViewSetMixin", ["logs"]),
     ],
 )
 def test_view_mixins_expoem_metodos_de_sua_responsabilidade(mixin_name, methods):
@@ -46,16 +47,17 @@ def test_utils_viewset_mixin_compoe_comportamentos_compartilhados():
     assert all(issubclass(views.UtilsViewSetMixin, mixin) for mixin in expected_mixins)
 
 
-def test_base_model_viewset_expoe_apenas_crud_e_metadata():
-    """Metadata é a única action ligada por padrão; as demais são opt-in.
+def test_base_model_viewset_expoe_apenas_crud_metadata_e_logs():
+    """Metadata e logs são as únicas actions ligadas por padrão; as demais são opt-in.
 
-    A exceção é deliberada: metadata é ponto de extensão do consumidor da API e
-    precisa existir em todo recurso sem cerimônia. Quem não deve aceitar
-    escrita livre de chaves declara `metadata_habilitado = False`.
+    As exceções são deliberadas: metadata é ponto de extensão do consumidor da
+    API e logs é a trilha de auditoria do próprio registro — ambas precisam
+    existir em todo recurso sem cerimônia. Quem não deve aceitar escrita livre
+    de chaves declara `metadata_habilitado = False`.
     """
     action_names = {action.__name__ for action in views.BaseModelViewSet.get_extra_actions()}
 
-    assert action_names == {"metadata"}
+    assert action_names == {"metadata", "logs"}
     assert not hasattr(views.BaseModelViewSet, "has_is_active_field")
 
 
@@ -63,7 +65,9 @@ def test_metadata_pode_ser_desligada_no_viewset():
     class ViewSetSemMetadata(views.BaseModelViewSet):
         metadata_habilitado = False
 
-    assert ViewSetSemMetadata.get_extra_actions() == []
+    action_names = {action.__name__ for action in ViewSetSemMetadata.get_extra_actions()}
+
+    assert action_names == {"logs"}
 
 
 def test_actions_de_modelo_sao_opt_in():
@@ -89,8 +93,9 @@ def test_actions_de_modelo_sao_opt_in():
         "grid",
         "inativar",
         "invalidate_cache",
-        # Única action não opt-in; ver `test_base_model_viewset_expoe_apenas_crud_e_metadata`.
+        # Actions não opt-in; ver `test_base_model_viewset_expoe_apenas_crud_metadata_e_logs`.
         "metadata",
+        "logs",
     }
 
 

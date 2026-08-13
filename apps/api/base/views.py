@@ -16,6 +16,8 @@ from apps.api.core.errors import APIError, CoreErrorCode
 from apps.api.core.scope_mixins import ScopeResourceMixin
 from apps.api.metadata.handlers import aplicar_metadata
 from apps.api.metadata.serializers import MetadataAlteracaoSerializer
+from apps.logs.models import LogAlteracao
+from apps.logs.serializers import LogAlteracaoSerpySerializer
 
 from .handlers import ativar_registro, inativar_registro
 
@@ -305,6 +307,44 @@ class MetadataViewSetMixin:
         return Response({"dados": registro.dados})
 
 
+class LogsViewSetMixin:
+    """Action de histórico de auditoria do objeto.
+
+    Ligada por padrão em `BaseModelViewSet`: todo recurso publica a própria
+    trilha, sem endpoint global de logs.
+    """
+
+    @action(methods=["get"], detail=True)
+    def logs(self, request, *args, **kwargs):
+        """Devolve a trilha de auditoria do registro, do mais recente ao mais antigo.
+
+        Não aceita filtros: o recorte já é o objeto da URL. `self.filter_queryset()`
+        e `self.get_serializer()` são deliberadamente ignorados aqui — ambos
+        resolvem para o filterset/serializer do recurso, não do log.
+
+        A autorização é dupla: `view_<model>` (declarada em
+        `PermissionsViewSetMixin.base_permissions`) e o próprio `get_object()`,
+        que passa pelo RLS e responde 404 para objeto de outra organização.
+
+        Args:
+            request: Request da action.
+            *args: Argumentos posicionais do roteamento.
+            **kwargs: Argumentos nomeados do roteamento (inclui `pk`).
+
+        Returns:
+            Response paginada com os registros de `LogAlteracao` do objeto.
+        """
+        instance = self.get_object()
+        queryset = LogAlteracao.objects.get_for_object(instance).select_related("content_type", "actor")
+        page = self.paginate_queryset(queryset)
+
+        if page is None:
+            return Response(LogAlteracaoSerpySerializer(queryset, many=True).data)
+
+        serializer = LogAlteracaoSerpySerializer(page, many=True)
+        return self.get_paginated_response(serializer.data)
+
+
 class CacheInvalidationViewSetMixin(CacheViewSetMixin):
     """Mixin responsável pela invalidação do cache versionado do recurso."""
 
@@ -323,7 +363,7 @@ class GenericBaseViewSet(UtilsViewSetMixin, GenericViewSet):
     pass
 
 
-class BaseModelViewSet(UtilsViewSetMixin, MetadataViewSetMixin, ModelViewSet):
+class BaseModelViewSet(UtilsViewSetMixin, MetadataViewSetMixin, LogsViewSetMixin, ModelViewSet):
     queryset = None
     serializer_class = None
     serializer_classes = {}
