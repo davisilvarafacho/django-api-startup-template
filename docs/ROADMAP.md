@@ -127,6 +127,11 @@ _Atualizado em 2026-08-02._
   ou permissões (ver `docs/adr/0005-cache-semantico-de-autorizacao.md`).
 - ⏳ Para fechar o batch:
   - **Field-level permissions** com serializers dinâmicos por papel.
+    - Evolução futura: estender o `makemigrations` para detectar
+      `RenameField` em campos autorizáveis e acrescentar automaticamente uma
+      operação reversível que preserve as políticas de escrita e suas
+      concessões. A primeira versão exigirá uma operação explícita na
+      migration e permanecerá fail-closed quando houver políticas órfãs.
   - **Ciclo de vida de conta**: verificação de e-mail, social auth,
     desativação e exclusão.
 - ⚠️ Pendência operacional: migrations permanecem congeladas nesta fase; CI e
