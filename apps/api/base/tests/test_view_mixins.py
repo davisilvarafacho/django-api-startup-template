@@ -125,6 +125,7 @@ def test_permissions_mapeiam_actions_para_operacoes_crud():
     assert views.PermissionsViewSetMixin.base_permissions == {
         "grid": ["%(app_label)s.view_%(model_name)s"],
         "form": ["%(app_label)s.view_%(model_name)s"],
+        "logs": ["%(app_label)s.view_%(model_name)s"],
         "bulk_create": ["%(app_label)s.add_%(model_name)s"],
         "bulk_update": ["%(app_label)s.change_%(model_name)s"],
         "clonar": ["%(app_label)s.add_%(model_name)s"],

@@ -1,9 +1,13 @@
 """Testes da action de histórico de auditoria herdada pelo `BaseModelViewSet`."""
 
+from django.urls import NoReverseMatch, include, path, reverse
+
 from rest_framework.permissions import AllowAny
+from rest_framework.routers import SimpleRouter
 from rest_framework.test import APIRequestFactory
 
 import pytest
+from drf_spectacular.generators import SchemaGenerator
 
 from apps.api.base.serializers import BaseModelSerializer
 from apps.api.base.views import BaseModelViewSet, PermissionsViewSetMixin
@@ -74,6 +78,25 @@ def test_logs_e_paginado_pelo_paginator_do_projeto():
     assert response.data["total"] == 4
     assert len(response.data["resultados"]) == 2
     assert response.data["proxima"] is not None
+
+
+def test_endpoint_global_de_logs_nao_existe_mais():
+    with pytest.raises(NoReverseMatch):
+        reverse("log-alteracao-list")
+
+
+def test_openapi_documenta_o_corpo_da_resposta_de_logs():
+    """serpy é invisível para o `AutoSchema`; sem `LOGS_ACTION_SCHEMA` a rota sairia sem corpo."""
+    router = SimpleRouter()
+    router.register("usuarios", _UsuarioViewSet, basename="usuario-logs-schema")
+    patterns = [path("", include(router.urls))]
+
+    schema = SchemaGenerator(patterns=patterns).get_schema(request=None, public=True)
+    operation = schema["paths"]["/usuarios/{id}/logs/"]["get"]
+    resposta = operation["responses"]["200"]["content"]["application/json"]["schema"]
+
+    assert operation["summary"] == "Lista o histórico de auditoria do registro"
+    assert resposta["$ref"].endswith("/PaginatedLogAlteracaoSchemaList")
 
 
 def test_logs_exige_a_permission_de_leitura_do_recurso():

@@ -1,12 +1,10 @@
-"""Documentação OpenAPI do log de alteração.
+"""Documentação OpenAPI das actions herdadas do `BaseModelViewSet`.
 
-A leitura é servida por `LogAlteracaoSerpySerializer`, e serpy é invisível para
-o `AutoSchema` — sem os serializers-espelho abaixo o endpoint apareceria no
-schema sem corpo de resposta. Eles existem só para documentar: nenhuma request
-é serializada por eles, então mantenha-os em sincronia com o serializer de
-leitura ao mexer nos campos.
-
-Aplique com `@extend_schema_view(**LOG_ALTERACAO_SCHEMA)` na viewset.
+A leitura do histórico é servida por `LogAlteracaoSerpySerializer`, e serpy é
+invisível para o `AutoSchema` — sem o serializer-espelho abaixo a action `logs`
+apareceria no schema sem corpo de resposta. Ele existe só para documentar:
+nenhuma request é serializada por ele, então mantenha-o em sincronia com o
+serializer de leitura ao mexer nos campos.
 """
 
 from rest_framework import serializers
@@ -29,14 +27,14 @@ ACOES_DESCRIPTION = (
 
 CHANGES_DESCRIPTION = (
     "`changes` é um objeto `{campo: [valor_antes, valor_depois]}`. Campos "
-    "sensíveis aparecem mascarados, e o filtro `changed_field` consulta as "
-    "chaves desse objeto direto no banco."
+    "sensíveis aparecem mascarados e campos técnicos ficam de fora."
 )
 
 SOMENTE_LEITURA_DESCRIPTION = (
-    "O log é **somente leitura**: não há create, update nem delete pela API. "
-    "Os registros são escritos pelo auditlog durante a request original e nunca "
-    "reescritos — editá-los invalidaria a trilha de auditoria."
+    "O histórico é **somente leitura** e não aceita filtros: o recorte é o "
+    "próprio registro da URL, do mais recente ao mais antigo. Os registros são "
+    "escritos pelo auditlog durante a request original e nunca reescritos — "
+    "editá-los invalidaria a trilha de auditoria."
 )
 
 
@@ -76,38 +74,22 @@ EXEMPLO_REGISTRO = OpenApiExample(
     response_only=True,
 )
 
-ERROS_DE_LEITURA = {
-    401: document_error_codes(
-        AuthErrorCode.NOT_AUTHENTICATED,
-        AuthErrorCode.INVALID_TOKEN,
-        AuthErrorCode.EXPIRED_TOKEN,
-    ),
-    403: document_error_codes(AuthErrorCode.PERMISSION_DENIED),
-    422: document_error_codes(
-        OrganizationErrorCode.HEADER_REQUIRED,
-        OrganizationErrorCode.MEMBERSHIP_REQUIRED,
-    ),
-}
-
-document_log_alteracao_list = extend_schema(
-    summary="Lista registros do log de alteração",
+LOGS_ACTION_SCHEMA = extend_schema(
+    summary="Lista o histórico de auditoria do registro",
     description="\n\n".join([SOMENTE_LEITURA_DESCRIPTION, ACOES_DESCRIPTION, CHANGES_DESCRIPTION]),
-    responses={200: LogAlteracaoSchema(many=True), **ERROS_DE_LEITURA},
-    examples=[EXEMPLO_REGISTRO],
-)
-
-document_log_alteracao_retrieve = extend_schema(
-    summary="Detalha um registro do log de alteração",
-    description="\n\n".join([ACOES_DESCRIPTION, CHANGES_DESCRIPTION]),
     responses={
-        200: LogAlteracaoSchema,
+        200: LogAlteracaoSchema(many=True),
+        401: document_error_codes(
+            AuthErrorCode.NOT_AUTHENTICATED,
+            AuthErrorCode.INVALID_TOKEN,
+            AuthErrorCode.EXPIRED_TOKEN,
+        ),
+        403: document_error_codes(AuthErrorCode.PERMISSION_DENIED),
         404: document_error_codes(CoreErrorCode.NOT_FOUND),
-        **ERROS_DE_LEITURA,
+        422: document_error_codes(
+            OrganizationErrorCode.HEADER_REQUIRED,
+            OrganizationErrorCode.MEMBERSHIP_REQUIRED,
+        ),
     },
     examples=[EXEMPLO_REGISTRO],
 )
-
-LOG_ALTERACAO_SCHEMA = {
-    "list": document_log_alteracao_list,
-    "retrieve": document_log_alteracao_retrieve,
-}

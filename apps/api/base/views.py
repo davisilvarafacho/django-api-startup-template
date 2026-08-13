@@ -20,6 +20,7 @@ from apps.logs.models import LogAlteracao
 from apps.logs.serializers import LogAlteracaoSerpySerializer
 
 from .handlers import ativar_registro, inativar_registro
+from .schema import LOGS_ACTION_SCHEMA
 
 
 class PermissionsViewSetMixin:
@@ -315,6 +316,7 @@ class LogsViewSetMixin:
     trilha, sem endpoint global de logs.
     """
 
+    @LOGS_ACTION_SCHEMA
     @action(methods=["get"], detail=True)
     def logs(self, request, *args, **kwargs):
         """Devolve a trilha de auditoria do registro, do mais recente ao mais antigo.
