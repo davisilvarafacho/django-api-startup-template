@@ -131,7 +131,7 @@ uma view base).
 
 ### Camada base da API (`apps/api/base/`)
 
-- `BaseModelViewSet` entrega de graça as actions `grid`, `form`, `values`,
+- `BaseModelViewSet` entrega de graça as actions `grid`, `form`, `values`, `logs`,
   `bulk_create`, `bulk_update`, `clonar`, `invalidate_cache` e `ativar`/`inativar`.
   Use `serializer_class` **ou** `serializer_classes = {"<action>": ...}`, nunca os dois.
   `get_queryset()` chama `modify_base_queryset()` e, se existir, `modify_<action>_queryset()`.
@@ -144,6 +144,12 @@ uma view base).
 - Permissões de action vêm do `perms_map` de `CustomDjangoModelPermissions`
   (`apps/api/autenticacao/permissions.py`); actions fora dos verbos do Django usam o
   prefixo `can_` (ex.: `can_toggle_<model>`) e devem ser declaradas em `Meta.permissions`.
+- `GET /<recurso>/<id>/logs/` devolve a trilha de auditoria do registro
+  (`apps.logs.models.LogAlteracao`), exigindo `view_<model>`. Não aceita filtros, e o
+  `get_object()` garante que só há log de objeto visível pelo RLS. O app `logs` não
+  publica rota própria: guarda apenas o model e o serializer. Quem grava é o auditlog,
+  via `AUDITLOG_LOGENTRY_MODEL` — sem essa setting os signals escreveriam em
+  `auditlog.LogEntry` e `log_alteracao` ficaria vazia.
 
 ### Cache
 

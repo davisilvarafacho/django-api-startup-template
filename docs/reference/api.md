@@ -41,6 +41,20 @@ startup se houver formato inválido ou duplicidade. Ver a implementação em
 `apps/api/core/errors.py` e a spec normativa em
 `docs/superpowers/specs/2026-07-28-api-errors-design.md`.
 
+## Histórico de auditoria
+
+Todo recurso servido por um `BaseModelViewSet` publica o próprio histórico.
+
+| Rota | Descrição |
+| --- | --- |
+| `GET /<recurso>/<id>/logs/` | Trilha de auditoria do registro, paginada e ordenada do mais recente ao mais antigo |
+
+Exige a mesma permissão de leitura do recurso (`view_<model>`) e não aceita
+filtros — o recorte é o próprio registro da URL. Como a resolução passa pelo
+`get_object()`, um registro de outra organização responde `404`, não `403`.
+Não existe endpoint global de logs: o app `logs` guarda só o model
+`LogAlteracao` e seu serializer.
+
 ## Autenticação
 
 Todas as URLs usam `_` (nunca `-`) em palavras compostas. Detalhes de cada

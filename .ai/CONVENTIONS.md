@@ -345,6 +345,7 @@ Todo ViewSet herda, de graça:
 |---|---|---|
 | `grid` | GET | Listagem paginada serializada. |
 | `form` | GET (detail) | Instância única serializada. |
+| `logs` | GET (detail) | Histórico de auditoria do registro (paginado, sem filtros). |
 | `values` | GET | Projeção via `?values=campo1,campo2`. |
 | `bulk_create` | POST | Criação em lote. |
 | `bulk_update` | PATCH | Atualização parcial em lote (atômica). |

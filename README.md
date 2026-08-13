@@ -162,6 +162,12 @@ docker compose up --build
   a action `POST .../invalidate_cache/` para flush manual (invalidação O(1) por
   versão de namespace).
 
+### Auditoria
+
+Todo recurso servido por um `BaseModelViewSet` publica o próprio histórico em
+`GET .../<id>/logs/`: paginado, do mais recente ao mais antigo, exigindo a mesma
+permissão de leitura do recurso (`view_<model>`). Não há endpoint global de logs.
+
 ### Throttling
 
 Limites padrão do DRF: `anon` 100/h, `user` 1000/h. O escopo `auth` (10/min) está
