@@ -86,9 +86,13 @@ if BEHIND_PROXY:
     USE_X_FORWARDED_HOST = True
     USE_X_FORWARDED_PORT = True
 
-INTERNAL_IPS = [
-    "127.0.0.1",
-]
+INTERNAL_IPS = get_list_from_env(
+    "DJANGO_INTERNAL_IPS",
+    [
+        "127.0.0.1",
+        "::1",
+    ],
+)
 
 
 SITE_ID = 1

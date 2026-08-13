@@ -55,6 +55,7 @@ class CoreErrorCode(models.TextChoices):
     CONFLICT = "core.conflict", _("Conflito de estado.")
     THROTTLED = "core.throttled", _("Muitas requisições. Tente novamente mais tarde.")
     INTERNAL_ERROR = "core.internal_error", _("Erro interno.")
+    INTERNAL_IP_REQUIRED = "core.internal_ip_required", _("Este endpoint só pode ser acessado a partir da rede interna.")
 
 
 class ValidationErrorCode(models.TextChoices):

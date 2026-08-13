@@ -5,6 +5,7 @@ from django.test import RequestFactory
 import pytest
 
 from apps.api.core import metrics as modulo
+from apps.api.core.ip_utils import ip_in_networks
 from internal_frameworks.permission_cache import metrics as permission_cache_metrics
 
 
@@ -70,12 +71,12 @@ def test_view_responde_403_para_externo(factory):
 @pytest.mark.parametrize("ip", ["10.1.2.3", "172.20.0.5", "192.168.1.7", "::1"])
 def test_faixas_privadas_liberadas(factory, ip):
     # Cobre o cenário de container falando com container (redes do Docker/K8s).
-    assert modulo._ip_interno(ip) is True
+    assert ip_in_networks(ip, modulo.REDES_PERMITIDAS) is True
 
 
 @pytest.mark.parametrize("ip", ["", "nao-e-ip", "8.8.8.8"])
 def test_valores_invalidos_ou_publicos_bloqueados(ip):
-    assert modulo._ip_interno(ip) is False
+    assert ip_in_networks(ip, modulo.REDES_PERMITIDAS) is False
 
 
 def test_exposicao_inclui_metricas_do_cache_de_autorizacao(factory):

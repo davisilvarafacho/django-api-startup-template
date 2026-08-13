@@ -6,13 +6,13 @@ reconhecimento para quem estiver sondando a API. Aqui o acesso é restrito à
 rede interna (ou a um token compartilhado com o scraper).
 """
 
-import ipaddress
 import logging
 
 from django.http import HttpResponseForbidden
 
 from django_prometheus.exports import ExportToDjangoView
 
+from apps.api.core.ip_utils import ip_in_networks, peer_ip
 from utils.env import get_env_var, get_list_from_env
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ TOKEN_METRICS = get_env_var("PROMETHEUS_METRICS_TOKEN")
 def metrics_view(request):
     """Devolve as métricas no formato de exposição do Prometheus."""
     if not _autorizado(request):
-        logger.warning("Acesso negado a /metrics de %s", _ip_do_cliente(request))
+        logger.warning("Acesso negado a /metrics de %s", peer_ip(request))
         return HttpResponseForbidden("Acesso restrito.")
 
     return ExportToDjangoView(request)
@@ -42,35 +42,4 @@ def _autorizado(request):
     if TOKEN_METRICS and request.META.get(HEADER_TOKEN_METRICS) == TOKEN_METRICS:
         return True
 
-    return _ip_interno(_ip_do_cliente(request))
-
-
-def _ip_do_cliente(request):
-    """Devolve o endereço do peer da conexão.
-
-    Deliberadamente **não** usa `X-Forwarded-For`: o header é escrito pelo
-    cliente e qualquer um poderia mandar `X-Forwarded-For: 127.0.0.1` para
-    passar pela checagem de rede interna. Aqui só vale quem realmente abriu a
-    conexão. Para raspar de fora das faixas internas (através de um proxy, por
-    exemplo), use `PROMETHEUS_METRICS_TOKEN`.
-    """
-    return request.META.get("REMOTE_ADDR", "")
-
-
-def _ip_interno(ip):
-    if not ip:
-        return False
-
-    try:
-        endereco = ipaddress.ip_address(ip)
-    except ValueError:
-        return False
-
-    for rede in REDES_PERMITIDAS:
-        try:
-            if endereco in ipaddress.ip_network(rede):
-                return True
-        except ValueError:
-            logger.warning("Rede inválida em PROMETHEUS_ALLOWED_NETWORKS: %s", rede)
-
-    return False
+    return ip_in_networks(peer_ip(request), REDES_PERMITIDAS)
