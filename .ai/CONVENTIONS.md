@@ -307,7 +307,22 @@ plane pré-RLS podem usar as bases do DRF quando as actions genéricas herdadas
 de `BaseModelViewSet` ampliariam indevidamente a superfície pública. Nesses
 casos, queryset, permissions, scopes e métodos HTTP devem ser explícitos.
 
-### 4.2. Serializer por Ação
+### 4.2. Recursos e endpoints de comando
+
+- Use `ModelViewSet` ou `ViewSet` para recursos e coleções: quando as operações
+  compartilham a mesma entidade, queryset e interface pública.
+- Use `APIView` para endpoints de comando e fluxos transacionais sem um recurso
+  central, como login, logout, redefinição de senha, reautenticação e desafios MFA.
+  Cada endpoint deve expor explicitamente apenas os métodos HTTP, permissões,
+  throttles, serializer e documentação que lhe cabem.
+- Uma `@action` só deve ser usada quando o comando pertence claramente a um
+  `ViewSet` de recurso existente, por exemplo, rotacionar uma API key ou encerrar
+  uma sessão. Não crie um `ViewSet` de uma única action apenas para substituir uma
+  `APIView`.
+- Não agrupe fluxos distintos em um único `ViewSet` de autenticação apenas para
+  padronização; preserve módulos coesos e com uma interface pequena.
+
+### 4.3. Serializer por Ação
 
 - Quando uma única classe atende todas as ações, defina `serializer_class`.
 - Quando ações diferentes exigem serializers diferentes, defina
@@ -315,14 +330,14 @@ casos, queryset, permissions, scopes e métodos HTTP devem ser explícitos.
 - **Não** declarar `serializer_class` e `serializer_classes` ao mesmo tempo
   (`serializer_classes` é ignorado com aviso nesse caso).
 
-### 4.3. Filtros
+### 4.4. Filtros
 
 - Toda view **deve** definir explicitamente um `filterset_class`.
 
 A regra não se aplica a endpoints de comando sem filtros nem aos ViewSets
 excepcionais acima quando não existe uma interface pública de filtragem.
 
-### 4.4. Actions Herdadas do `BaseModelViewSet`
+### 4.5. Actions Herdadas do `BaseModelViewSet`
 
 Todo ViewSet herda, de graça:
 
@@ -414,6 +429,7 @@ Todo ViewSet herda, de graça:
 | Models | Herança obrigatória de `Base` e implementação de `__str__` |
 | Serializers | Serializer externo padrão enxuto, com herança para extensões |
 | Serializers | Leitura → `BaseModelSerpySerializer`; escrita → `BaseModelSerializer` |
+| Views | Recursos usam `ModelViewSet`/`ViewSet`; comandos sem recurso central usam `APIView` |
 | Views | Herança de `BaseModelViewSet`; `serializer_class` **ou** `serializer_classes` |
 | Views | Definição obrigatória de `filterset_class` |
 | Cache | Namespace versionado por modelo; invalidação O(1); cachalot opt-in |
