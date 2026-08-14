@@ -35,6 +35,7 @@ nav:
   - Referência:
       - API: reference/api.md
       - Estrutura de diretórios: reference/estrutura-de-diretorios.md
+      - Glossário: reference/glossario.md
       - Deprecação de API: reference/deprecacao-api.md
       - Metadata genérico: reference/metadata.md
       - Convenções: reference/convencoes.md
