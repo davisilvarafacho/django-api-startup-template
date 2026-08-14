@@ -15,6 +15,43 @@ class CustomPagination(PageNumberPagination):
             }
         )
 
+    def get_paginated_response_schema(self, schema):
+        """Descreve no OpenAPI o envelope que `get_paginated_response()` devolve.
+
+        O default do DRF documenta `count`/`next`/`previous`/`results`, nomes que
+        esta classe não usa — sem este override o schema publicado descreveria um
+        corpo que a API nunca devolve, em **todo** endpoint paginado.
+
+        Args:
+            schema: Schema da lista de resultados, montado pelo drf-spectacular.
+
+        Returns:
+            O schema do objeto que envolve a lista.
+        """
+        return {
+            "type": "object",
+            "required": ["total", "resultados"],
+            "properties": {
+                "total": {
+                    "type": "integer",
+                    "example": 123,
+                },
+                "proxima": {
+                    "type": "string",
+                    "nullable": True,
+                    "format": "uri",
+                    "example": f"http://api.example.org/accounts/?{self.page_query_param}=4",
+                },
+                "anterior": {
+                    "type": "string",
+                    "nullable": True,
+                    "format": "uri",
+                    "example": f"http://api.example.org/accounts/?{self.page_query_param}=2",
+                },
+                "resultados": schema,
+            },
+        }
+
     def get_page_size(self, request):
         if self.page_size_query_param:
             try:

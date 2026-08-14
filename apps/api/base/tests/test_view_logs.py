@@ -86,7 +86,7 @@ def test_endpoint_global_de_logs_nao_existe_mais():
 
 
 def test_openapi_documenta_o_corpo_da_resposta_de_logs():
-    """serpy é invisível para o `AutoSchema`; sem `LOGS_ACTION_SCHEMA` a rota sairia sem corpo."""
+    """O `AutoSchema` não enxerga serpy; sem `LOGS_ACTION_SCHEMA` a rota sairia sem corpo."""
     router = SimpleRouter()
     router.register("usuarios", _UsuarioViewSet, basename="usuario-logs-schema")
     patterns = [path("", include(router.urls))]
