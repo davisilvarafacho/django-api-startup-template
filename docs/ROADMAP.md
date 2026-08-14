@@ -78,7 +78,7 @@ _Atualizado em 2026-08-09._
 - `CHANGELOG.md` no formato **Keep a Changelog**.
 - Portal **MkDocs + Material** organizado por **Diátaxis**.
 - **ADRs (MADR)** em `docs/adr/`.
-- Convenções de código explícitas em `.ai/CONVENTIONS.md`.
+- Convenções de código explícitas em `docs/reference/convencoes.md`.
 
 ### Batch 6 — Multi-tenancy
 - **Organização → Time → Vínculo → Convite**.

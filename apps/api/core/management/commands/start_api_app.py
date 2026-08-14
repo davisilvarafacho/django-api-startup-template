@@ -1,4 +1,4 @@
-"""Cria um app da API já no formato exigido por `.ai/CONVENTIONS.md`."""
+"""Cria um app da API já no formato exigido por `docs/reference/convencoes.md`."""
 
 import keyword
 import re

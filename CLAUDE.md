@@ -208,7 +208,7 @@ no menor escopo de runtime. Imports exclusivos de tipagem ficam sob
 por string, como `"organizacoes.Organizacao"`, para desacoplar o carregamento da
 ordem de imports. Consulte o ADR 0006.
 
-`.ai/CONVENTIONS.md` é o documento normativo — leia antes de criar models, serializers
+`docs/reference/convencoes.md` é o documento normativo — leia antes de criar models, serializers
 ou views. Os pontos mais fáceis de violar:
 
 - Apps sempre em `apps/`. Cada módulo (`models`, `serializers`, `views`, `filters`,

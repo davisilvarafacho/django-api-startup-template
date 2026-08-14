@@ -122,7 +122,7 @@ _Última atualização: 2026-07-29._
 | Arquivos padrão do GitHub (CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, templates) | ✅ |
 | Docs com **MkDocs + Material** organizadas por Diátaxis | ✅ |
 | **ADRs (MADR)** em `docs/adr/` | ✅ |
-| Convenções de código explícitas em `.ai/CONVENTIONS.md` | ✅ |
+| Convenções de código explícitas em `docs/reference/convencoes.md` | ✅ |
 
 ## 10. Compliance & extensibilidade
 
