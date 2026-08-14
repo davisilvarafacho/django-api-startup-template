@@ -34,6 +34,7 @@ nav:
       - Publicar uma versão: how-to/publicar-versao.md
   - Referência:
       - API: reference/api.md
+      - Estrutura de diretórios: reference/estrutura-de-diretorios.md
       - Deprecação de API: reference/deprecacao-api.md
       - Metadata genérico: reference/metadata.md
       - Convenções: reference/convencoes.md
