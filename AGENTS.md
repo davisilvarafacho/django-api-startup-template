@@ -2,14 +2,41 @@
 
 ## Project Structure & Module Organization
 
-This is a Django REST Framework API template. Django project configuration lives
-in `api/` (settings, routing, ASGI/WSGI, Celery). Reusable application code lives
-under `apps/`: `apps/api/` contains shared API modules, while `apps/usuarios/`
-and `apps/organizacoes/` are domain apps.
+This is a Django REST Framework API template. The authoritative map of the
+directory tree is `docs/reference/estrutura-de-diretorios.md`; read it before
+creating a directory or deciding where new code belongs. The short version:
+
+- `api/` — Django project configuration only (settings, routing, ASGI/WSGI,
+  Celery, per-environment app lists). No business logic.
+- `apps/` — every installed app. `apps/api/` is a *grouper*, not an app: it has
+  no `apps.py` and is absent from `BUSINESS_APPS`, so its children sit directly
+  inside it. A real parent app nests its children under `subapps/` instead.
+- `internal_frameworks/` — infrastructure written in-house (guardrails,
+  permission cache, sensitive fields). No domain models here.
+- `utils/` — generic, stateless helpers.
+- `tests/` — only what spans more than one app: `architecture/` and `support/`.
+- `observability/`, `docker/`, `.devcontainer/`, `.ci/` — operational config.
+- `docs/` — documentation, built with MkDocs.
+
 Keep each app's tests in its `tests/` package and migrations in `migrations/`.
-Shared utilities are in `utils/`; operational configuration is in
-`observability/`; documentation is built from `docs/` with MkDocs. Do not treat
-`examples/` as part of the primary test suite.
+Do not treat `.examples/` as part of the primary test suite.
+
+## Where to Write Documentation
+
+Split by genre of text, not by audience. Content serving both developers and
+agents has a single copy in `docs/`, pointed to from here.
+
+- `docs/` — project documentation, Diátaxis-organized, validated by
+  `mkdocs build --strict`.
+- `AGENTS.md`, `CLAUDE.md` — routers: auto-loaded, they point at everything else.
+- `.ai/` — instructions meant only for agents.
+- `.claude/skills/` — specialized instructions, loaded on demand by topic.
+
+**Brainstorming output goes to `.ai/brainstorming/`**: design documents in
+`spec/`, implementation plans in `plan/`, named `YYYY-MM-DD-topic.md`. Never
+write a spec or a plan under `docs/` — they are work records, not product
+documentation. `docs/superpowers/` holds the specs and plans that predate this
+convention; it is history, not a destination for new files.
 
 ## Import Architecture
 

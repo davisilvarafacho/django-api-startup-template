@@ -227,6 +227,26 @@ ou views. Os pontos mais fáceis de violar:
   fazem parte da interface de produção. Celery roda eager em teste; prefira testes
   DB-less quando o comportamento não depende do banco.
 
+## Onde escrever documentação
+
+A separação é por **gênero de texto**, não por quem lê. Conteúdo que serve a devs
+e a agentes tem uma cópia só, em `docs/`, apontada a partir daqui.
+
+| Onde | O que |
+|---|---|
+| `docs/` | Documentação do projeto, em Diátaxis. Validada por `mkdocs build --strict`. |
+| `CLAUDE.md`, `AGENTS.md` | Roteador: carregado automaticamente, aponta para o resto. |
+| `.ai/` | Instrução destinada exclusivamente a agentes. |
+| `.claude/skills/` | Instrução especializada, carregada sob demanda conforme o assunto. |
+
+**Brainstorming, specs e plans vão para `.ai/brainstorming/`** — `spec/` para o
+documento de design, `plan/` para o plano de implementação. Nomeie os arquivos
+com a data no formato `AAAA-MM-DD-assunto.md`. Não escreva spec ou plan em
+`docs/`: são registro de trabalho, não documentação do produto.
+
+`docs/superpowers/` guarda os specs e plans anteriores a esta convenção; é
+histórico, não destino de arquivo novo.
+
 ## Versionamento
 
 SemVer via commitizen, com a versão espelhada em `api/settings.py`
