@@ -109,8 +109,7 @@ exclude = [
 [tool.ruff]
 target-version = "py312"
 line-length = 150
-extend-exclude = ["*/migrations/*", "libs", ".examples", ".skills"]
-# Vendored: .skills/ guarda skills de agente de terceiros — não aplicamos nosso lint nelas.
+extend-exclude = ["*/migrations/*", ".examples"]
 force-exclude = true
 
   [tool.ruff.lint]

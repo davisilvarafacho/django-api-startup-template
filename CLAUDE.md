@@ -236,7 +236,7 @@ divergir de `pyproject.toml`. Release automatizado por release-please. Ver
 
 ## Notas
 
-- `.examples/` e `libs/` estão fora do ruff e da coleta do pytest (`norecursedirs`).
+- `.examples/` está fora do ruff e da coleta do pytest (`norecursedirs`).
 - `manage.py seed_demo` cria dados locais idempotentes (organização `demo`, usuário
   `demo@example.com` / `demo123456`); é bloqueado em produção.
 - A documentação segue Diátaxis em `docs/` (tutorial / how-to / reference / explanation
