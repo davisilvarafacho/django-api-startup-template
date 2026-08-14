@@ -32,9 +32,9 @@ from urllib.parse import urlsplit
 
 from django.http.response import HttpResponseBase
 
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.openapi import AutoSchema
 
-__all__ = ["ApiDeprecation", "api_deprecated"]
+__all__ = ["ApiDeprecation", "DeprecationAwareAutoSchema", "api_deprecated", "deprecacao_do_handler"]
 
 _METADATA_ATTRIBUTE = "__api_deprecation__"
 
