@@ -29,15 +29,19 @@ make check        # manage.py check --deploy
 make version-check# versão do pacote == versão do schema OpenAPI
 ```
 
-A suíte **exige Postgres e Redis rodando** (`make up`); o alvo `test` do Makefile
-exporta os defaults do `docker-compose.yml` (`base`/`postgres`/`postgres`/`127.0.0.1`/`5432`),
-mas variáveis `DATABASE_*` já presentes no ambiente prevalecem.
+A suíte **exige Postgres e Redis rodando** (`make up`); o Makefile exporta os
+defaults do `docker-compose.yml` (`base`/`postgres`/`postgres`/`127.0.0.1`/`5432`)
+para todos os alvos, mas variáveis `DATABASE_*` já presentes no ambiente
+prevalecem. O `.env` não supre isso sob pytest: `load_dotenv()` roda em
+`manage.py`, `wsgi.py` e `asgi.py`, que o pytest não usa.
 
-Um teste isolado (o grupo `test` precisa ser explícito fora do Makefile):
+Fora do Makefile, o grupo `test`, as variáveis `DATABASE_*` e o `--nomigrations`
+precisam ser explícitos — **sem `--nomigrations` a suíte roda as migrations de
+verdade e falha em massa** no `TRUNCATE` da FK de `auditlog_logentry`:
 
 ```bash
-uv run --group test pytest apps/api/core/tests/test_lookup.py::test_nome -q
-uv run --group test pytest apps/organizacoes -k rls
+uv run --group test pytest --nomigrations apps/api/core/tests/test_lookup.py::test_nome -q
+uv run --group test pytest --nomigrations apps/organizacoes -k rls
 ```
 
 Dependências: `uv add <pacote>` / `uv remove <pacote>`; `pyproject.toml` e `uv.lock`
