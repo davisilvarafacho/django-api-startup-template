@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_mcp_app_is_installed():
-    assert "apps.api.mcp" in settings.BUSINESS_APPS
+    assert "apps.api.mcp_server" in settings.BUSINESS_APPS
 
 
 def test_mcp_dependencies_are_runtime_dependencies():

@@ -17,7 +17,7 @@ tool será `health`, apoiada nas verificações de Django já mantidas pelo `cor
 
 - Entregar um servidor MCP remoto pronto para produção via Streamable HTTP.
 - Oferecer `stdio` para integração local sem manter um segundo servidor lógico.
-- Colocar a interface MCP em um app Django de infraestrutura, `apps.api.mcp`.
+- Colocar a interface MCP em um app Django de infraestrutura, `apps.api.mcp_server`.
 - Compartilhar registro, schema, tools e regras de erro entre os transportes.
 - Reutilizar as verificações de banco e cache do `apps.api.core`.
 - Proteger o transporte HTTP como OAuth 2.1 Resource Server.
@@ -59,13 +59,16 @@ dedicado preserva o comportamento operacional da API.
 
 `apps/api/` é o agrupador dos apps de infraestrutura entregues pelo template.
 O MCP conhece Django, tem configuração e ciclo de vida próprios e, portanto,
-será um app instalado chamado `apps.api.mcp`, criado pelo comando
+será um app instalado chamado `apps.api.mcp_server`, criado pelo comando
 `start_api_app` do projeto e registrado alfabeticamente em `BUSINESS_APPS`.
+O sufixo `_server` é necessário: como `apps/api/` é um agrupador sem
+`__init__.py`, um diretório local chamado apenas `mcp` sombreia o SDK externo
+`mcp` durante a coleta dos testes do próprio app.
 
 Os arquivos ativos do app serão:
 
 ```text
-apps/api/mcp/
+apps/api/mcp_server/
 ├── __init__.py
 ├── apps.py
 ├── bootstrap.py
@@ -114,7 +117,7 @@ Nenhum entrypoint conterá regra de tool, schema ou agregação de health.
 O comando local será:
 
 ```bash
-uv run --frozen python -m apps.api.mcp
+uv run --frozen python -m apps.api.mcp_server
 ```
 
 O cliente inicia um processo exclusivo. `stdin` e `stdout` ficam reservados ao
@@ -125,7 +128,7 @@ usuário, o ambiente e o processo que o iniciou.
 ### Streamable HTTP
 
 Produção executará
-`uvicorn apps.api.mcp.asgi:create_asgi_app --factory`. Usar a factory adia a
+`uvicorn apps.api.mcp_server.asgi:create_asgi_app --factory`. Usar a factory adia a
 validação da configuração OAuth para o startup do processo, sem efeitos
 colaterais ao importar o módulo. A aplicação será criada com:
 
@@ -328,7 +331,7 @@ diretórios serão atualizados. O README somente apontará para o guia principal
 
 ## Critérios de aceitação
 
-- `apps.api.mcp` é um app instalado, inerte no bootstrap comum do Django.
+- `apps.api.mcp_server` é um app instalado, inerte no bootstrap comum do Django.
 - `stdio` e Streamable HTTP usam a mesma factory e a mesma tool.
 - Produção inicia somente o serviço Streamable HTTP protegido por OAuth.
 - O processo HTTP falha fechado quando sua configuração de segurança está

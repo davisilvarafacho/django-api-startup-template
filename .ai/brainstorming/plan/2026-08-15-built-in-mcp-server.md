@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Entregar `apps.api.mcp` como servidor MCP built-in com a tool `health`, `stdio` local e Streamable HTTP protegido por OIDC em produção.
+**Goal:** Entregar `apps.api.mcp_server` como servidor MCP built-in com a tool `health`, `stdio` local e Streamable HTTP protegido por OIDC em produção.
 
 **Architecture:** Uma única factory constrói `MCPServer` e registra as tools. `__main__.py` adapta essa factory a `stdio`; `asgi.py` a adapta a Streamable HTTP e OAuth. As verificações de banco/cache vivem num módulo profundo do `core`, reutilizado pelo readiness REST e pela tool MCP.
 
@@ -11,6 +11,7 @@
 ## Global Constraints
 
 - Usar `from mcp.server import MCPServer`; não usar `FastMCP`.
+- Nomear o app `apps.api.mcp_server`: o nome local `apps.api.mcp` colide com o pacote externo `mcp` durante a coleta pytest, porque `apps/api` é um diretório agrupador sem `__init__.py`.
 - Declarar `mcp>=2.0.0,<3` e `PyJWT[crypto]>=2.13.0,<3` em `[project].dependencies`; não instalar `mcp[cli]`. Atualizar o pin direto existente para `idna==3.18`, piso exigido pelo `httpx2` usado pelo MCP 2.
 - Manter uma única `create_mcp_server()` e um único registro da tool `health`.
 - Executar Streamable HTTP somente com OAuth completo; configuração incompleta falha no startup.
@@ -31,7 +32,7 @@
 | Arquivo | Responsabilidade |
 |---|---|
 | `pyproject.toml`, `uv.lock` | SDK MCP e JWT no runtime da imagem. |
-| `apps/api/mcp/` | App Django, factory MCP e adapters de transporte/autenticação. |
+| `apps/api/mcp_server/` | App Django, factory MCP e adapters de transporte/autenticação. |
 | `apps/api/core/dependency_health.py` | Interface profunda para checar todos os aliases de DB/cache e sanitizar resultados. |
 | `apps/api/core/health_check.py` | Views REST existentes, reutilizando os novos primitivos. |
 | `utils/env.py`, `api/settings.py`, `.env.example` | Configuração tipada do servidor HTTP/OIDC. |
@@ -40,18 +41,18 @@
 | `docs/how-to/mcp.md` | Uso local, configuração OIDC e deploy. |
 | `docs/reference/estrutura-de-diretorios.md`, `mkdocs.yml`, `README.md` | Descoberta e localidade da capacidade MCP. |
 
-### Task 1: Add runtime dependencies and scaffold `apps.api.mcp`
+### Task 1: Add runtime dependencies and scaffold `apps.api.mcp_server`
 
 **Files:**
 - Create: `tests/architecture/test_mcp_runtime.py`
-- Create: `apps/api/mcp/` via `start_api_app`
+- Create: `apps/api/mcp_server/` via `start_api_app`
 - Modify: `api/settings.py`
 - Modify: `pyproject.toml`
 - Modify: `uv.lock`
 
 **Interfaces:**
 - Consumes: `BUSINESS_APPS` and the project app generator.
-- Produces: importable installed app `apps.api.mcp`; runtime imports `mcp` and `jwt`.
+- Produces: importable installed app `apps.api.mcp_server`; runtime imports `mcp` and `jwt`.
 
 - [ ] **Step 1: Write the failing architecture tests**
 
@@ -69,7 +70,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_mcp_app_is_installed():
-    assert "apps.api.mcp" in settings.BUSINESS_APPS
+    assert "apps.api.mcp_server" in settings.BUSINESS_APPS
 
 
 def test_mcp_dependencies_are_runtime_dependencies():
@@ -87,18 +88,18 @@ Run:
 uv run pytest --nomigrations tests/architecture/test_mcp_runtime.py -q
 ```
 
-Expected: two failures because `apps.api.mcp` and both runtime dependencies are absent.
+Expected: two failures because `apps.api.mcp_server` and both runtime dependencies are absent.
 
 - [ ] **Step 3: Generate the app through the repository command**
 
 Run, as separate commands:
 
 ```bash
-mkdir -p apps/api/mcp
-uv run python manage.py start_api_app mcp apps/api/mcp
+mkdir -p apps/api/mcp_server
+uv run python manage.py start_api_app mcp_server apps/api/mcp_server
 ```
 
-Expected: `apps.api.mcp` is inserted alphabetically into `BUSINESS_APPS` and the canonical app skeleton is created.
+Expected: `apps.api.mcp_server` is inserted alphabetically into `BUSINESS_APPS` and the canonical app skeleton is created.
 
 - [ ] **Step 4: Add the runtime dependencies**
 
@@ -124,7 +125,7 @@ Expected: `2 passed`; the import command prints `MCPServer` and a PyJWT version 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add tests/architecture/test_mcp_runtime.py apps/api/mcp api/settings.py pyproject.toml uv.lock
+git add tests/architecture/test_mcp_runtime.py apps/api/mcp_server api/settings.py pyproject.toml uv.lock
 git commit -m "build: add MCP runtime and app"
 ```
 
@@ -371,9 +372,9 @@ git commit -m "feat(core): share dependency health checks"
 ### Task 3: Build the single MCP server and structured `health` tool
 
 **Files:**
-- Create: `apps/api/mcp/server.py`
-- Create: `apps/api/mcp/tools.py`
-- Create: `apps/api/mcp/tests/test_server.py`
+- Create: `apps/api/mcp_server/server.py`
+- Create: `apps/api/mcp_server/tools.py`
+- Create: `apps/api/mcp_server/tests/test_server.py`
 
 **Interfaces:**
 - Consumes: `collect_dependency_health() -> DependencyHealthReport`.
@@ -385,8 +386,8 @@ git commit -m "feat(core): share dependency health checks"
 import pytest
 from mcp import Client
 
-from apps.api.mcp import tools
-from apps.api.mcp.server import create_mcp_server
+from apps.api.mcp_server import tools
+from apps.api.mcp_server.server import create_mcp_server
 
 
 @pytest.fixture
@@ -433,14 +434,14 @@ async def test_health_hides_unexpected_adapter_error(monkeypatch):
 - [ ] **Step 2: Run and verify RED**
 
 ```bash
-uv run pytest --nomigrations apps/api/mcp/tests/test_server.py -q
+uv run pytest --nomigrations apps/api/mcp_server/tests/test_server.py -q
 ```
 
 Expected: import failure because `server.py` and `tools.py` do not exist.
 
 - [ ] **Step 3: Implement tool registration**
 
-Create `apps/api/mcp/tools.py`:
+Create `apps/api/mcp_server/tools.py`:
 
 ```python
 import logging
@@ -462,7 +463,7 @@ def register_tools(server: MCPServer) -> None:
             raise RuntimeError("Health check failed") from None
 ```
 
-Create `apps/api/mcp/server.py`:
+Create `apps/api/mcp_server/server.py`:
 
 ```python
 from mcp.server import MCPServer
@@ -490,7 +491,7 @@ def create_mcp_server(
 - [ ] **Step 4: Run and verify GREEN**
 
 ```bash
-uv run pytest --nomigrations apps/api/mcp/tests/test_server.py -q
+uv run pytest --nomigrations apps/api/mcp_server/tests/test_server.py -q
 ```
 
 Expected: `1 passed`.
@@ -498,25 +499,25 @@ Expected: `1 passed`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/api/mcp/server.py apps/api/mcp/tools.py apps/api/mcp/tests/test_server.py
+git add apps/api/mcp_server/server.py apps/api/mcp_server/tools.py apps/api/mcp_server/tests/test_server.py
 git commit -m "feat(mcp): expose structured health tool"
 ```
 
 ### Task 4: Add the local `stdio` adapter and subprocess smoke test
 
 **Files:**
-- Create: `apps/api/mcp/bootstrap.py`
-- Create: `apps/api/mcp/__main__.py`
-- Create: `apps/api/mcp/tests/settings.py`
-- Create: `apps/api/mcp/tests/test_stdio.py`
+- Create: `apps/api/mcp_server/bootstrap.py`
+- Create: `apps/api/mcp_server/__main__.py`
+- Create: `apps/api/mcp_server/tests/settings.py`
+- Create: `apps/api/mcp_server/tests/test_stdio.py`
 
 **Interfaces:**
-- Produces: `setup_django() -> None` and command `python -m apps.api.mcp`.
+- Produces: `setup_django() -> None` and command `python -m apps.api.mcp_server`.
 - Consumes: `create_mcp_server()` with no OAuth arguments.
 
 - [ ] **Step 1: Write the failing subprocess test**
 
-Create `apps/api/mcp/tests/settings.py`:
+Create `apps/api/mcp_server/tests/settings.py`:
 
 ```python
 from api.settings import *  # noqa: F403
@@ -525,7 +526,7 @@ DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memor
 CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
 ```
 
-Create `apps/api/mcp/tests/test_stdio.py`:
+Create `apps/api/mcp_server/tests/test_stdio.py`:
 
 ```python
 import io
@@ -546,8 +547,8 @@ async def test_stdio_boots_django_and_calls_health():
     stderr = io.StringIO()
     parameters = StdioServerParameters(
         command=sys.executable,
-        args=["-m", "apps.api.mcp"],
-        env={"DJANGO_SETTINGS_MODULE": "apps.api.mcp.tests.settings"},
+        args=["-m", "apps.api.mcp_server"],
+        env={"DJANGO_SETTINGS_MODULE": "apps.api.mcp_server.tests.settings"},
     )
 
     async with Client(stdio_client(parameters, errlog=stderr), raise_exceptions=True) as client:
@@ -562,14 +563,14 @@ async def test_stdio_boots_django_and_calls_health():
 - [ ] **Step 2: Run and verify RED**
 
 ```bash
-uv run pytest --nomigrations apps/api/mcp/tests/test_stdio.py -q
+uv run pytest --nomigrations apps/api/mcp_server/tests/test_stdio.py -q
 ```
 
-Expected: subprocess exits because `apps.api.mcp.__main__` is absent.
+Expected: subprocess exits because `apps.api.mcp_server.__main__` is absent.
 
 - [ ] **Step 3: Implement bootstrap and entrypoint**
 
-Create `apps/api/mcp/bootstrap.py`:
+Create `apps/api/mcp_server/bootstrap.py`:
 
 ```python
 import os
@@ -584,7 +585,7 @@ def setup_django() -> None:
     django.setup()
 ```
 
-Create `apps/api/mcp/__main__.py`:
+Create `apps/api/mcp_server/__main__.py`:
 
 ```python
 from .bootstrap import setup_django
@@ -605,7 +606,7 @@ if __name__ == "__main__":
 - [ ] **Step 4: Run and verify GREEN**
 
 ```bash
-uv run pytest --nomigrations apps/api/mcp/tests/test_stdio.py apps/api/mcp/tests/test_server.py -q
+uv run pytest --nomigrations apps/api/mcp_server/tests/test_stdio.py apps/api/mcp_server/tests/test_server.py -q
 ```
 
 Expected: both tests pass. A successful protocol exchange proves that ordinary bootstrap output did not corrupt `stdout`.
@@ -613,15 +614,15 @@ Expected: both tests pass. A successful protocol exchange proves that ordinary b
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/api/mcp/bootstrap.py apps/api/mcp/__main__.py apps/api/mcp/tests/settings.py apps/api/mcp/tests/test_stdio.py
+git add apps/api/mcp_server/bootstrap.py apps/api/mcp_server/__main__.py apps/api/mcp_server/tests/settings.py apps/api/mcp_server/tests/test_stdio.py
 git commit -m "feat(mcp): add stdio transport"
 ```
 
 ### Task 5: Implement OIDC/JWKS token verification and settings
 
 **Files:**
-- Create: `apps/api/mcp/authentications.py`
-- Create: `apps/api/mcp/tests/test_authentications.py`
+- Create: `apps/api/mcp_server/authentications.py`
+- Create: `apps/api/mcp_server/tests/test_authentications.py`
 - Modify: `utils/env.py`
 - Modify: `api/settings.py`
 - Modify: `.env.example`
@@ -643,7 +644,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 import jwt
 import pytest
 
-from apps.api.mcp.authentications import OidcTokenVerifier, build_http_auth
+from apps.api.mcp_server.authentications import OidcTokenVerifier, build_http_auth
 
 
 class StaticJwkClient:
@@ -744,7 +745,7 @@ def test_http_auth_rejects_symmetric_algorithm():
 - [ ] **Step 2: Run and verify RED**
 
 ```bash
-uv run pytest --nomigrations apps/api/mcp/tests/test_authentications.py -q
+uv run pytest --nomigrations apps/api/mcp_server/tests/test_authentications.py -q
 ```
 
 Expected: import failure because `authentications.py` does not exist.
@@ -779,7 +780,7 @@ Add an `MCP` section to `.env.example` containing the seven variables, with empt
 
 - [ ] **Step 4: Implement the verifier and auth builder**
 
-Create `apps/api/mcp/authentications.py`:
+Create `apps/api/mcp_server/authentications.py`:
 
 ```python
 import logging
@@ -894,8 +895,8 @@ def build_http_auth() -> tuple[TokenVerifier, AuthSettings]:
 - [ ] **Step 5: Run and verify GREEN**
 
 ```bash
-uv run pytest --nomigrations apps/api/mcp/tests/test_authentications.py -q
-uv run ruff check apps/api/mcp/authentications.py apps/api/mcp/tests/test_authentications.py utils/env.py api/settings.py
+uv run pytest --nomigrations apps/api/mcp_server/tests/test_authentications.py -q
+uv run ruff check apps/api/mcp_server/authentications.py apps/api/mcp_server/tests/test_authentications.py utils/env.py api/settings.py
 ```
 
 Expected: verifier tests and Ruff pass.
@@ -903,15 +904,15 @@ Expected: verifier tests and Ruff pass.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add apps/api/mcp/authentications.py apps/api/mcp/tests/test_authentications.py utils/env.py api/settings.py .env.example
+git add apps/api/mcp_server/authentications.py apps/api/mcp_server/tests/test_authentications.py utils/env.py api/settings.py .env.example
 git commit -m "feat(mcp): validate OIDC bearer tokens"
 ```
 
 ### Task 6: Add the authenticated Streamable HTTP ASGI adapter
 
 **Files:**
-- Create: `apps/api/mcp/asgi.py`
-- Create: `apps/api/mcp/tests/test_http.py`
+- Create: `apps/api/mcp_server/asgi.py`
+- Create: `apps/api/mcp_server/tests/test_http.py`
 
 **Interfaces:**
 - Produces: `create_asgi_app(*, token_verifier: TokenVerifier | None = None, auth: AuthSettings | None = None, allowed_hosts: list[str] | None = None, allowed_origins: list[str] | None = None) -> ASGIApp` for Uvicorn `--factory`.
@@ -919,7 +920,7 @@ git commit -m "feat(mcp): validate OIDC bearer tokens"
 
 - [ ] **Step 1: Write failing HTTP transport tests**
 
-Create `apps/api/mcp/tests/test_http.py`:
+Create `apps/api/mcp_server/tests/test_http.py`:
 
 ```python
 import socket
@@ -936,8 +937,8 @@ from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
 from pydantic import AnyHttpUrl
 
-from apps.api.mcp import tools
-from apps.api.mcp.asgi import create_asgi_app
+from apps.api.mcp_server import tools
+from apps.api.mcp_server.asgi import create_asgi_app
 
 
 class StaticTokenVerifier:
@@ -1069,14 +1070,14 @@ def test_trusted_browser_origin_receives_cors_headers(http_server):
 - [ ] **Step 2: Run and verify RED**
 
 ```bash
-uv run pytest --nomigrations apps/api/mcp/tests/test_http.py -q
+uv run pytest --nomigrations apps/api/mcp_server/tests/test_http.py -q
 ```
 
-Expected: import failure because `apps.api.mcp.asgi` does not exist.
+Expected: import failure because `apps.api.mcp_server.asgi` does not exist.
 
 - [ ] **Step 3: Implement the ASGI factory**
 
-Create `apps/api/mcp/asgi.py`:
+Create `apps/api/mcp_server/asgi.py`:
 
 ```python
 from django.conf import settings
@@ -1142,7 +1143,7 @@ def create_asgi_app(
 - [ ] **Step 4: Run and verify GREEN**
 
 ```bash
-uv run pytest --nomigrations apps/api/mcp/tests/test_http.py apps/api/mcp/tests/test_server.py apps/api/mcp/tests/test_stdio.py -q
+uv run pytest --nomigrations apps/api/mcp_server/tests/test_http.py apps/api/mcp_server/tests/test_server.py apps/api/mcp_server/tests/test_stdio.py -q
 ```
 
 Expected: all three adapters/contract test modules pass.
@@ -1150,7 +1151,7 @@ Expected: all three adapters/contract test modules pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/api/mcp/asgi.py apps/api/mcp/tests/test_http.py
+git add apps/api/mcp_server/asgi.py apps/api/mcp_server/tests/test_http.py
 git commit -m "feat(mcp): serve authenticated streamable HTTP"
 ```
 
@@ -1164,7 +1165,7 @@ git commit -m "feat(mcp): serve authenticated streamable HTTP"
 
 **Interfaces:**
 - Produces: Compose profile `mcp`, internal port `8001`, `/live` healthcheck, public host `mcp.localhost` through nginx.
-- Consumes: `apps.api.mcp.asgi:create_asgi_app` as a Uvicorn factory.
+- Consumes: `apps.api.mcp_server.asgi:create_asgi_app` as a Uvicorn factory.
 
 - [ ] **Step 1: Write failing deployment-shape tests**
 
@@ -1216,7 +1217,7 @@ Add this service beside `web`:
     build: .
     command:
       - uvicorn
-      - apps.api.mcp.asgi:create_asgi_app
+      - apps.api.mcp_server.asgi:create_asgi_app
       - --factory
       - --host
       - 0.0.0.0
@@ -1352,7 +1353,7 @@ Configure o cliente para iniciar o processo na raiz do repositório:
   "mcpServers": {
     "django-api": {
       "command": "uv",
-      "args": ["run", "--frozen", "python", "-m", "apps.api.mcp"],
+      "args": ["run", "--frozen", "python", "-m", "apps.api.mcp_server"],
       "cwd": "/caminho/absoluto/do/projeto"
     }
   }
@@ -1468,7 +1469,7 @@ git commit -m "docs: explain built-in MCP server"
 - [ ] **Step 1: Run focused MCP/core tests**
 
 ```bash
-uv run pytest --nomigrations apps/api/core/tests/test_dependency_health.py apps/api/core/tests/test_health_check.py apps/api/mcp/tests tests/architecture/test_mcp_runtime.py tests/architecture/test_mcp_deployment.py -q
+uv run pytest --nomigrations apps/api/core/tests/test_dependency_health.py apps/api/core/tests/test_health_check.py apps/api/mcp_server/tests tests/architecture/test_mcp_runtime.py tests/architecture/test_mcp_deployment.py -q
 ```
 
 Expected: all focused tests pass.
