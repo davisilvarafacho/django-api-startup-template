@@ -257,7 +257,11 @@ cópia mantida em paralelo para agentes.
 
 Dois diretórios em `docs/` estão fora da taxonomia Diátaxis, por serem registro
 histórico de trabalho e não documentação do produto: `docs/superpowers/`
-(specs, plans e handoffs, datados) e `docs/research/`.
+(specs, plans e handoffs, datados) e `docs/research/`. Dentro deste último,
+`sources/` guarda material externo capturado — artigos e posts salvos com
+frontmatter `tipo: "source"`, com `url`, `autor` e data de captura. É leitura de
+apoio, nunca documentação do produto: referência do produto mora em
+`docs/reference/`.
 
 ## Gerado, ignorado e fora das ferramentas
 
