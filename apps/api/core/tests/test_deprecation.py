@@ -100,15 +100,12 @@ class DeprecatedViewSet(viewsets.ViewSet):
     def list(self, request):
         return Response({"ok": True})
 
-    # Em custom actions o decorator fica ACIMA do `@action`: o `@action` do DRF
-    # faz `func.kwargs = kwargs` e apagaria a chave `schema` gravada pelo
-    # `extend_schema` se viesse por último.
+    @action(detail=False, methods=["get"])
     @api_deprecated(
         since="2026-08-01",
         sunset="2026-11-01",
         documentation="/docs/deprecations/relatorio/",
     )
-    @action(detail=False, methods=["get"])
     def relatorio(self, request):
         return Response({"ok": True})
 
@@ -116,21 +113,21 @@ class DeprecatedViewSet(viewsets.ViewSet):
     def apagar_relatorio(self, request):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @action(detail=False, methods=["post"])
     @api_deprecated(
         since="2026-08-01",
         sunset="2026-11-01",
         documentation="/docs/deprecations/validacao/",
     )
-    @action(detail=False, methods=["post"])
     def resposta_400(self, request):
         return Response({"erro": True}, status=status.HTTP_400_BAD_REQUEST)
 
+    @action(detail=False, methods=["post"])
     @api_deprecated(
         since="2026-08-01",
         sunset="2026-11-01",
         documentation="/docs/deprecations/excecao/",
     )
-    @action(detail=False, methods=["post"])
     def excecao_400(self, request):
         raise ValidationError("inválido")
 
@@ -218,6 +215,44 @@ def test_openapi_omite_replacement_quando_nao_configurado():
     operation = gerar_schema()["paths"]["/deprecated-test/relatorio/"]["get"]
 
     assert "x-replacement" not in operation
+
+
+class OrdemInvertidaViewSet(viewsets.ViewSet):
+    """O mesmo recurso com `@api_deprecated` acima do `@action`."""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    @api_deprecated(
+        since="2026-08-01",
+        sunset="2026-11-01",
+        documentation="/docs/deprecations/relatorio/",
+    )
+    @action(detail=False, methods=["get"])
+    def relatorio(self, request):
+        return Response({"ok": True})
+
+
+def test_deprecacao_no_openapi_independe_da_ordem_dos_decorators():
+    """A depreciação não pode depender de `@action` vir antes ou depois.
+
+    O `@action` do DRF faz `func.kwargs = kwargs`, reatribuindo o dicionário
+    inteiro. Qualquer caminho que leve o schema por `func.kwargs` perde a chave
+    quando `@action` fica por fora — e, quando fica por dentro, vaza a classe do
+    schema para os `initkwargs` do router.
+    """
+    router = SimpleRouter()
+    router.register("ordem-invertida", OrdemInvertidaViewSet, basename="ordem-invertida")
+    patterns = [path("", include((router.urls, "deprecacao"), namespace="v1"))]
+    schema = SchemaGenerator(patterns=patterns, api_version="v1").get_schema(request=None, public=True)
+
+    invertida = schema["paths"]["/ordem-invertida/relatorio/"]["get"]
+    documentada = gerar_schema()["paths"]["/deprecated-test/relatorio/"]["get"]
+
+    assert invertida["deprecated"] is True
+    assert documentada["deprecated"] is True
+    assert invertida["externalDocs"] == documentada["externalDocs"]
+    assert invertida["x-sunset"] == documentada["x-sunset"]
 
 
 def test_custom_action_leva_a_deprecacao_para_o_openapi():

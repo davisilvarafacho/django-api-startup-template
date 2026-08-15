@@ -489,7 +489,9 @@ REST_FRAMEWORK = {
     # operações do schema (`paths` sai vazio). A versão só é usada para reverse de
     # URL versionada — que o projeto não faz —, então isto é inerte em runtime.
     "DEFAULT_VERSION": "v1",
-    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    # Subclasse do AutoSchema do drf-spectacular que publica a depreciação
+    # declarada por `@api_deprecated` (ver `apps.api.core.deprecation`).
+    "DEFAULT_SCHEMA_CLASS": "apps.api.core.deprecation.DeprecationAwareAutoSchema",
     "EXCEPTION_HANDLER": "apps.api.core.errors.api_exception_handler",
     "TEST_REQUEST_DEFAULT_FORMAT": "json",
     "DATE_INPUT_FORMATS": ["%d/%m/%Y"],

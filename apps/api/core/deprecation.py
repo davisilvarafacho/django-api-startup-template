@@ -32,6 +32,8 @@ from urllib.parse import urlsplit
 
 from django.http.response import HttpResponseBase
 
+from rest_framework import viewsets
+
 from drf_spectacular.openapi import AutoSchema
 
 __all__ = ["ApiDeprecation", "DeprecationAwareAutoSchema", "api_deprecated", "deprecacao_do_handler"]
@@ -153,8 +155,10 @@ class ApiDeprecation:
 def api_deprecated(*, since, sunset, documentation, replacement=None):
     """Marca um handler de ViewSet como depreciado.
 
-    Aplique sempre imediatamente acima do handler — abaixo do `@action`, quando
-    houver — para que o decorator envolva a função e não o roteamento.
+    A ordem em relação ao `@action` é indiferente: a depreciação é lida do
+    handler durante a geração do schema, por `DeprecationAwareAutoSchema`, e não
+    depende de anotação carregada em `func.kwargs`. Por clareza, prefira o
+    decorator imediatamente acima do handler, abaixo do `@action`.
 
     Args:
         since: Data efetiva da depreciação (`YYYY-MM-DD`, meia-noite UTC). Pode
@@ -193,10 +197,62 @@ def api_deprecated(*, since, sunset, documentation, replacement=None):
             return response
 
         setattr(wrapped, _METADATA_ATTRIBUTE, metadata)
-        return extend_schema(
-            deprecated=True,
-            external_docs={"url": metadata.documentation},
-            extensions=metadata.openapi_extensions,
-        )(wrapped)
+        return wrapped
 
     return decorator
+
+
+def deprecacao_do_handler(handler):
+    """Devolve a `ApiDeprecation` declarada no handler, ou `None`.
+
+    Args:
+        handler: A função de view a inspecionar.
+
+    Returns:
+        Os metadados gravados por `@api_deprecated`, ou `None` se o handler não
+        estiver depreciado.
+    """
+    return getattr(handler, _METADATA_ATTRIBUTE, None)
+
+
+class DeprecationAwareAutoSchema(AutoSchema):
+    """Publica no OpenAPI a depreciação declarada por `@api_deprecated`.
+
+    Lê o marcador direto do handler, em vez de anotar a operação com
+    `extend_schema`. O motivo é o `@action` do DRF, que faz `func.kwargs =
+    kwargs` — uma reatribuição do dicionário inteiro. Qualquer schema que
+    trafegue por `func.kwargs` some quando `@action` é o decorator externo; e,
+    quando é o interno, a classe do schema vaza para os `initkwargs` do router e
+    quebra os handlers irmãos registrados por `MethodMapper`. Lendo o marcador
+    aqui, a ordem dos decorators deixa de importar.
+
+    A resolução do handler acompanha a do próprio gerador, o que preserva a
+    granularidade por handler exigida pelo ADR 0004: um método mapeado por
+    `@<action>.mapping.<verbo>` só é depreciado se tiver o próprio decorator.
+    """
+
+    def _deprecacao(self):
+        """Localiza os metadados de depreciação do handler em geração."""
+        if isinstance(self.view, viewsets.ViewSetMixin):
+            handler = getattr(self.view, self.view.action, None)
+        else:
+            handler = getattr(self.view, self.method.lower(), None)
+        return deprecacao_do_handler(handler)
+
+    def is_deprecated(self):
+        """Marca `deprecated: true` na operação."""
+        return self._deprecacao() is not None
+
+    def get_external_docs(self):
+        """Aponta `externalDocs` para o guia de migração."""
+        deprecacao = self._deprecacao()
+        if deprecacao is None:
+            return None
+        return {"url": deprecacao.documentation}
+
+    def get_extensions(self):
+        """Publica as extensões `x-deprecation-since`, `x-sunset` e `x-replacement`."""
+        deprecacao = self._deprecacao()
+        if deprecacao is None:
+            return {}
+        return deprecacao.openapi_extensions
