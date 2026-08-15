@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Usar `from mcp.server import MCPServer`; não usar `FastMCP`.
-- Declarar `mcp>=2.0.0,<3` e `PyJWT[crypto]>=2.13.0,<3` em `[project].dependencies`; não instalar `mcp[cli]`.
+- Declarar `mcp>=2.0.0,<3` e `PyJWT[crypto]>=2.13.0,<3` em `[project].dependencies`; não instalar `mcp[cli]`. Atualizar o pin direto existente para `idna==3.18`, piso exigido pelo `httpx2` usado pelo MCP 2.
 - Manter uma única `create_mcp_server()` e um único registro da tool `health`.
 - Executar Streamable HTTP somente com OAuth completo; configuração incompleta falha no startup.
 - Executar `stdio` sem OAuth, reservando `stdin`/`stdout` ao protocolo e logs a `stderr`.
@@ -105,7 +105,7 @@ Expected: `apps.api.mcp` is inserted alphabetically into `BUSINESS_APPS` and the
 Run:
 
 ```bash
-uv add 'mcp>=2.0.0,<3' 'PyJWT[crypto]>=2.13.0,<3'
+uv add 'idna==3.18' 'mcp>=2.0.0,<3' 'PyJWT[crypto]>=2.13.0,<3'
 ```
 
 Expected: both `pyproject.toml` and `uv.lock` change; `mcp[cli]` is absent.
