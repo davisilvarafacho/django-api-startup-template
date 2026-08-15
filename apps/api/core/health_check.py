@@ -15,16 +15,14 @@ orquestrador não tem token.
 import logging
 import time
 
-from django.core.cache import cache
 from django.core.files.storage import default_storage
-from django.db import connection
 from django.http import JsonResponse
 
 from rest_framework import status
 
-logger = logging.getLogger(__name__)
+from apps.api.core.dependency_health import check_cache, check_database
 
-CHAVE_CACHE_HEALTH = "health-check"
+logger = logging.getLogger(__name__)
 
 
 def health_check(request):
@@ -77,20 +75,11 @@ def _duracao_ms(iniciada_em):
 
 
 def _checar_banco():
-    connection.ensure_connection()
-
-    with connection.cursor() as cursor:
-        cursor.execute("SELECT 1")
-        cursor.fetchone()
+    check_database("default")
 
 
 def _checar_cache():
-    # Escreve e lê de volta: um Redis em modo somente-leitura (failover a meio
-    # caminho) responde ao PING mas não serve como cache.
-    cache.set(CHAVE_CACHE_HEALTH, "ok", timeout=30)
-
-    if cache.get(CHAVE_CACHE_HEALTH) != "ok":
-        raise RuntimeError("o cache não devolveu o valor gravado")
+    check_cache("default")
 
 
 def _checar_broker():
