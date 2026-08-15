@@ -221,7 +221,7 @@ DATABASES = {
         "PASSWORD": get_env_var("DATABASE_PASSWORD"),
         "PORT": get_env_var("DATABASE_PORT"),
         "TEST": {
-            "NAME": get_env_var("TEST_DATABASE_NAME", "test_base_permission_cache"),
+            "NAME": get_env_var("TEST_DATABASE_NAME", "base_test"),
         },
         "CONN_MAX_AGE": 60 * 60 * 3,  # 3 horas
         "CONN_HEALTH_CHECKS": True,
@@ -336,6 +336,8 @@ DJANGO_RLS = {
     # em vez de silenciosamente retornar zero linhas.
     "REQUIRE_CONTEXT": True,
     "AUDIT_LOG": IN_PRODUCTION,
+    # Evita reabrir a conexão de teste durante o teardown; em produção permanece ativo.
+    "RESET_CONTEXT_ON_CONNECT": not TESTING,
 }
 
 

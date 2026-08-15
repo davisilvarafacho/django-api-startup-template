@@ -87,20 +87,21 @@ DATABASE_USER ?= postgres
 DATABASE_PASSWORD ?= postgres
 DATABASE_HOST ?= 127.0.0.1
 DATABASE_PORT ?= 5432
+TEST_DATABASE_NAME ?= base_test
 
-export DATABASE_NAME DATABASE_USER DATABASE_PASSWORD DATABASE_HOST DATABASE_PORT
+export DATABASE_NAME DATABASE_USER DATABASE_PASSWORD DATABASE_HOST DATABASE_PORT TEST_DATABASE_NAME
 
-test: ## Roda a suíte com cobertura (sem migrations até o reset pré-lançamento)
-	uv run --group test pytest --nomigrations
+test: ## Roda a suíte com cobertura e migrations reais
+	uv run --group test pytest
 
 test-fast: ## Roda a suíte sem testes de integração
-	uv run --group test pytest --nomigrations -m "not integration"
+	uv run --group test pytest -m "not integration"
 
 test-integration: ## Roda somente testes de integração
-	uv run --group test pytest --nomigrations -m integration
+	uv run --group test pytest -m integration
 
 test-redis: ## Roda testes que exigem Redis real
-	uv run --group test pytest --nomigrations -m redis
+	uv run --group test pytest -m redis
 
 lint: ## Checa lint (ruff)
 	uv run ruff check .
