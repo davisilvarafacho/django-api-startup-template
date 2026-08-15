@@ -2,6 +2,8 @@ from pathlib import Path
 from subprocess import CalledProcessError
 from types import SimpleNamespace
 
+from django.db import connections
+
 import pytest
 
 from apps.api.core import migration_reset
@@ -24,6 +26,8 @@ def configurar_plano(settings, monkeypatch, tmp_path, configs):
         "ENGINE": "django_rls.backends.postgresql",
         "NAME": "base",
     }
+    monkeypatch.setitem(connections["default"].settings_dict, "ENGINE", "django_rls.backends.postgresql")
+    monkeypatch.setitem(connections["default"].settings_dict, "NAME", "base")
     monkeypatch.setattr(migration_reset, "_installed_app_configs", lambda: configs)
 
 
@@ -110,6 +114,22 @@ def test_apply_recusa_plano_de_banco_diferente_de_base_antes_de_mutar(settings, 
 
     with pytest.raises(migration_reset.MigrationResetError, match="base"):
         migration_reset.apply_migration_reset(plan, confirmed_database="outro")
+
+    assert (Path(auth.path) / "migrations" / "0001_initial.py").read_text(encoding="utf-8") == "# migration\n"
+
+
+def test_apply_recusa_conexao_efetiva_diferente_do_plano_antes_de_mutar(settings, monkeypatch, tmp_path):
+    auth = criar_app(tmp_path, "apps.api.autenticacao", "0001_initial.py")
+    configurar_plano(settings, monkeypatch, tmp_path, [auth])
+    settings.IN_PRODUCTION = False
+    plan = migration_reset.build_migration_reset_plan()
+    monkeypatch.setitem(connections["default"].settings_dict, "NAME", "outro")
+    monkeypatch.setitem(connections["default"].settings_dict, "ENGINE", "django.db.backends.sqlite3")
+    monkeypatch.setattr(migration_reset, "_run_manage_py", lambda *args: pytest.fail("não deveria executar"))
+    monkeypatch.setattr(migration_reset, "_reset_public_schema", lambda: pytest.fail("schema não deveria mudar"))
+
+    with pytest.raises(migration_reset.MigrationResetError, match="conexão"):
+        migration_reset.apply_migration_reset(plan, confirmed_database="base")
 
     assert (Path(auth.path) / "migrations" / "0001_initial.py").read_text(encoding="utf-8") == "# migration\n"
 

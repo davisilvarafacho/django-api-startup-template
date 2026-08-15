@@ -53,3 +53,15 @@ uv run ruff check apps/api/core/migration_reset.py apps/api/core/tests/managemen
 ```
 
 Self-review: `git diff --check` será executado antes do commit; alteração restrita à guarda, ao teste focado e a este relatório.
+
+## Correção pós-review: conexão efetiva
+
+- Adicionada validação, antes do `TemporaryDirectory`/snapshot, de `connections["default"].settings_dict`: `NAME` deve ser literalmente `base` e `ENGINE` deve terminar em `.postgresql`.
+- O helper de teste sincroniza `settings.DATABASES` e o `settings_dict` da conexão para manter os seams determinísticos; o novo teste força conexão SQLite/`outro` com plano `base` e confirma ausência de mutação.
+- O escopo Minor de `connection.close()` em `finally` continua fora desta rodada.
+
+### TDD da correção de conexão
+
+RED: `test_apply_recusa_conexao_efetiva_diferente_do_plano_antes_de_mutar` falhou ao alcançar `_run_manage_py` quando a conexão efetiva era SQLite/`outro`.
+
+GREEN: após a validação, `uv run --group test pytest --nomigrations apps/api/core/tests/management_commands/test_reset_migrations.py -q --no-cov` passou com 11 testes e `uv run ruff check apps/api/core/migration_reset.py apps/api/core/tests/management_commands/test_reset_migrations.py` passou.

@@ -136,6 +136,9 @@ def apply_migration_reset(plan: MigrationResetPlan, *, confirmed_database: str |
         raise MigrationResetError("reset_migrations só pode operar no banco 'base'.")
     if confirmed_database != "base":
         raise MigrationResetError("confirmação inválida; informe exatamente 'base'.")
+    connection_settings = connections["default"].settings_dict
+    if connection_settings.get("NAME") != "base" or not str(connection_settings.get("ENGINE", "")).rsplit(".", 1)[-1] == "postgresql":
+        raise MigrationResetError("a conexão efetiva deve ser PostgreSQL no banco 'base'.")
 
     with TemporaryDirectory(prefix="migration-reset-") as temporary:
         backup_root = Path(temporary)
