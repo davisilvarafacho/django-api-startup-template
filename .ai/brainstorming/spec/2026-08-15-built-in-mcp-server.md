@@ -124,8 +124,10 @@ usuário, o ambiente e o processo que o iniciou.
 
 ### Streamable HTTP
 
-Produção entregará `apps.api.mcp.asgi:app` a Uvicorn. A aplicação será criada
-com:
+Produção executará
+`uvicorn apps.api.mcp.asgi:create_asgi_app --factory`. Usar a factory adia a
+validação da configuração OAuth para o startup do processo, sem efeitos
+colaterais ao importar o módulo. A aplicação será criada com:
 
 ```python
 mcp.streamable_http_app(
@@ -166,6 +168,7 @@ MCP_SERVER_URL=https://mcp.example.com/mcp
 MCP_AUTH_ISSUER_URL=https://auth.example.com
 MCP_AUTH_AUDIENCE=https://mcp.example.com/mcp
 MCP_AUTH_JWKS_URL=https://auth.example.com/.well-known/jwks.json
+MCP_AUTH_ALGORITHMS=RS256
 MCP_ALLOWED_HOSTS=mcp.example.com
 MCP_ALLOWED_ORIGINS=
 ```
@@ -199,6 +202,8 @@ nginx
 O Compose ganhará um serviço `mcp` que:
 
 - usa a mesma imagem, `.env`, PostgreSQL e Redis do serviço `web`;
+- pertence ao profile explícito `mcp`, pois não pode iniciar antes de o
+  operador configurar um provedor OIDC;
 - expõe a porta somente na rede interna, sem `ports` no host;
 - depende da saúde de PostgreSQL e Redis;
 - executa um worker por container e escala por réplicas;
@@ -208,6 +213,10 @@ O Nginx ganhará hostname e upstream exclusivos para MCP. Encaminhará `/mcp`,
 Protected Resource Metadata e os headers necessários. TLS terminará no Nginx
 ou em um load balancer confiável imediatamente à frente. A porta interna nunca
 será a interface pública.
+
+O upstream usará resolução DNS tardia para que o Nginx da API continue
+iniciando quando o profile `mcp` estiver desligado. Nesse estado, somente o
+hostname MCP responde `502`; a API REST permanece disponível.
 
 A rota de liveness do processo não será publicada pelo proxy. Ela responde
 somente `ok` e não substitui a tool autenticada `health`.
