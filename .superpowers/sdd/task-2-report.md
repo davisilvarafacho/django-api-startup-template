@@ -1,0 +1,33 @@
+# Relatório — Tarefa 2: aplicar a baseline com rollback de arquivos
+
+## Implementação
+
+- Adicionada `apply_migration_reset(plan, *, confirmed_database)` em `apps/api/core/migration_reset.py`.
+- A aplicação bloqueia produção e exige confirmação exata do banco antes de qualquer mutação.
+- Migrations removíveis são copiadas para um diretório temporário; falhas em `makemigrations` restauram o snapshot e removem arquivos gerados.
+- A execução segue a ordem: `makemigrations`, validação, reset do schema público, `migrate`, validação final e `showmigrations --plan`.
+- O reset do schema usa a conexão padrão e recria `public` com autorização e grant públicos.
+
+## Arquivos alterados
+
+- `apps/api/core/migration_reset.py`
+- `apps/api/core/tests/management_commands/test_reset_migrations.py`
+
+## TDD e testes
+
+RED: após adicionar os quatro testes de aplicação/proteção/rollback/ordem, a suíte reportou 4 falhas por ausência de `_run_manage_py` e `apply_migration_reset`; os 5 testes de planejamento passaram.
+
+GREEN: implementação mínima adicionada; `uv run --group test pytest --nomigrations apps/api/core/tests/management_commands/test_reset_migrations.py -q --no-cov` passou com 9 testes.
+
+Ruff: `uv run ruff check apps/api/core/migration_reset.py apps/api/core/tests/management_commands/test_reset_migrations.py` passou.
+
+## Self-review
+
+- Diff restrito aos dois arquivos da tarefa; `git diff --check` passou.
+- Testes patcham apenas seams internos e não executam reset real, banco ou migrations reais.
+- A ordem e as mensagens exigidas pelo brief foram preservadas.
+
+## Preocupações
+
+- A suíte completa permanece não executada conforme bloqueio documentado no brief (banco legado `test_base_permission_cache` com sessão ativa).
+- Falha durante a reconstrução do banco após geração da baseline não restaura arquivos, conforme comportamento especificado no brief.

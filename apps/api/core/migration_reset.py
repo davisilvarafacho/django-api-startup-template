@@ -1,11 +1,17 @@
 """Plan and execute a destructive first-party migration reset."""
 
 import re
+import shutil
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from django.apps import apps as django_apps
 from django.conf import settings
+from django.db import connections
+from django.db.utils import DatabaseError
 
 MIGRATION_FILENAME = re.compile(r"^\d{4}_[a-z0-9_]+\.py$")
 PRESERVED_MIGRATIONS = {
@@ -86,3 +92,69 @@ def build_migration_reset_plan() -> MigrationResetPlan:
         remove=tuple(remove),
         preserve=tuple(sorted(preserve)),
     )
+
+
+def _run_manage_py(*arguments: str) -> None:
+    subprocess.run(
+        [sys.executable, str(Path(settings.BASE_DIR) / "manage.py"), *arguments],
+        cwd=settings.BASE_DIR,
+        check=True,
+    )
+
+
+def _current_resettable_files(plan: MigrationResetPlan):
+    preserved = set(plan.preserve)
+    for migration_dir in plan.migration_directories:
+        for path in migration_dir.glob("*.py"):
+            if path.name != "__init__.py" and path not in preserved and MIGRATION_FILENAME.fullmatch(path.name):
+                yield path
+
+
+def _restore_snapshot(plan: MigrationResetPlan, backup_root: Path) -> None:
+    for path in _current_resettable_files(plan):
+        path.unlink()
+    for original in plan.remove:
+        backup = backup_root / original.relative_to(plan.base_dir)
+        original.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(backup, original)
+
+
+def _reset_public_schema() -> None:
+    connection = connections["default"]
+    connection.close()
+    with connection.cursor() as cursor:
+        cursor.execute("DROP SCHEMA public CASCADE")
+        cursor.execute("CREATE SCHEMA public AUTHORIZATION CURRENT_USER")
+        cursor.execute("GRANT USAGE ON SCHEMA public TO PUBLIC")
+    connection.close()
+
+
+def apply_migration_reset(plan: MigrationResetPlan, *, confirmed_database: str | None) -> None:
+    if settings.IN_PRODUCTION:
+        raise MigrationResetError("reset_migrations é bloqueado em produção.")
+    if confirmed_database != plan.database_name:
+        raise MigrationResetError(f"confirmação inválida; informe exatamente '{plan.database_name}'.")
+
+    with TemporaryDirectory(prefix="migration-reset-") as temporary:
+        backup_root = Path(temporary)
+        for original in plan.remove:
+            backup = backup_root / original.relative_to(plan.base_dir)
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(original, backup)
+
+        try:
+            for original in plan.remove:
+                original.unlink()
+            _run_manage_py("makemigrations", *plan.app_labels)
+            _run_manage_py("makemigrations", "--check", "--dry-run")
+        except (OSError, subprocess.CalledProcessError) as exc:
+            _restore_snapshot(plan, backup_root)
+            raise MigrationResetError("makemigrations falhou; os arquivos originais foram restaurados.") from exc
+
+        try:
+            _reset_public_schema()
+            _run_manage_py("migrate")
+            _run_manage_py("makemigrations", "--check", "--dry-run")
+            _run_manage_py("showmigrations", "--plan")
+        except (OSError, subprocess.CalledProcessError, DatabaseError) as exc:
+            raise MigrationResetError("a baseline foi gerada, mas a reconstrução do banco falhou.") from exc

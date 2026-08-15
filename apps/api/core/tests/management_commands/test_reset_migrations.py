@@ -1,4 +1,5 @@
 from pathlib import Path
+from subprocess import CalledProcessError
 from types import SimpleNamespace
 
 import pytest
@@ -75,3 +76,66 @@ def test_plano_recusa_diretorio_de_migrations_simbolico(settings, monkeypatch, t
 
     with pytest.raises(migration_reset.MigrationResetError, match="fora do app"):
         migration_reset.build_migration_reset_plan()
+
+
+def test_apply_bloqueia_producao_antes_de_mutar(settings, monkeypatch, tmp_path):
+    core = criar_app(tmp_path, "apps.api.core", "0001_schedule_access_log_cleanup.py")
+    configurar_plano(settings, monkeypatch, tmp_path, [core])
+    settings.IN_PRODUCTION = True
+    plan = migration_reset.build_migration_reset_plan()
+    monkeypatch.setattr(migration_reset, "_run_manage_py", lambda *args: pytest.fail("não deveria executar"))
+
+    with pytest.raises(migration_reset.MigrationResetError, match="produção"):
+        migration_reset.apply_migration_reset(plan, confirmed_database="base")
+
+
+def test_apply_exige_nome_exato_do_banco(settings, monkeypatch, tmp_path):
+    core = criar_app(tmp_path, "apps.api.core", "0001_schedule_access_log_cleanup.py")
+    configurar_plano(settings, monkeypatch, tmp_path, [core])
+    settings.IN_PRODUCTION = False
+    plan = migration_reset.build_migration_reset_plan()
+
+    with pytest.raises(migration_reset.MigrationResetError, match="confirmação"):
+        migration_reset.apply_migration_reset(plan, confirmed_database="outro")
+
+
+def test_apply_restaura_migrations_quando_makemigrations_falha(settings, monkeypatch, tmp_path):
+    auth = criar_app(tmp_path, "apps.api.autenticacao", "0001_initial.py")
+    core = criar_app(tmp_path, "apps.api.core", "0001_schedule_access_log_cleanup.py")
+    configurar_plano(settings, monkeypatch, tmp_path, [auth, core])
+    settings.IN_PRODUCTION = False
+    plan = migration_reset.build_migration_reset_plan()
+
+    def falhar(*args):
+        (Path(auth.path) / "migrations" / "0001_generated.py").write_text("# generated\n", encoding="utf-8")
+        raise CalledProcessError(1, args)
+
+    monkeypatch.setattr(migration_reset, "_run_manage_py", falhar)
+    monkeypatch.setattr(migration_reset, "_reset_public_schema", lambda: pytest.fail("schema não deveria mudar"))
+
+    with pytest.raises(migration_reset.MigrationResetError, match="makemigrations"):
+        migration_reset.apply_migration_reset(plan, confirmed_database="base")
+
+    assert (Path(auth.path) / "migrations" / "0001_initial.py").read_text(encoding="utf-8") == "# migration\n"
+    assert not (Path(auth.path) / "migrations" / "0001_generated.py").exists()
+
+
+def test_apply_reseta_schema_depois_de_validar_migrations(settings, monkeypatch, tmp_path):
+    core = criar_app(tmp_path, "apps.api.core", "0001_schedule_access_log_cleanup.py")
+    configurar_plano(settings, monkeypatch, tmp_path, [core])
+    settings.IN_PRODUCTION = False
+    plan = migration_reset.build_migration_reset_plan()
+    events = []
+    monkeypatch.setattr(migration_reset, "_run_manage_py", lambda *args: events.append(args))
+    monkeypatch.setattr(migration_reset, "_reset_public_schema", lambda: events.append(("reset-schema",)))
+
+    migration_reset.apply_migration_reset(plan, confirmed_database="base")
+
+    assert events == [
+        ("makemigrations", "core"),
+        ("makemigrations", "--check", "--dry-run"),
+        ("reset-schema",),
+        ("migrate",),
+        ("makemigrations", "--check", "--dry-run"),
+        ("showmigrations", "--plan"),
+    ]
