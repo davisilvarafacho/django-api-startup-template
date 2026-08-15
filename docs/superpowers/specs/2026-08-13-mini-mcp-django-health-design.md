@@ -1,5 +1,9 @@
 # Design: mini servidor MCP para saúde do Django
 
+> **Substituída em 2026-08-15:** esta proposta local baseada somente em
+> `stdio` foi substituída pela spec de servidor MCP built-in em
+> `.ai/brainstorming/spec/2026-08-15-built-in-mcp-server.md`.
+
 ## Objetivo
 
 Adicionar ao template um servidor MCP local e pequeno, executado por `stdio`, que inicialize o Django e exponha somente a ferramenta `health`. A ferramenta informa a disponibilidade de todos os bancos de dados e caches configurados no projeto.
