@@ -19,8 +19,9 @@ marcada como `PRESERVAR`.
 make reset-migrations RESET_MIGRATIONS_ARGS='--apply --confirm-database base'
 ```
 
-Troque `base` somente quando `DATABASE_NAME` tiver outro valor e confirme o
-nome exatamente. A operação não cria backup dos dados.
+O comando só opera quando `DATABASE_NAME=base` e a confirmação literal é
+`--confirm-database base`; qualquer outro nome é recusado. A operação não cria
+backup dos dados.
 
 ## Verificar
 
