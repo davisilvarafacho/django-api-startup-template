@@ -529,8 +529,8 @@ CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"
 Create `apps/api/mcp_server/tests/test_stdio.py`:
 
 ```python
-import io
 import sys
+import tempfile
 
 import pytest
 from mcp import Client
@@ -544,16 +544,16 @@ def anyio_backend():
 
 @pytest.mark.anyio
 async def test_stdio_boots_django_and_calls_health():
-    stderr = io.StringIO()
     parameters = StdioServerParameters(
         command=sys.executable,
         args=["-m", "apps.api.mcp_server"],
         env={"DJANGO_SETTINGS_MODULE": "apps.api.mcp_server.tests.settings"},
     )
 
-    async with Client(stdio_client(parameters, errlog=stderr), raise_exceptions=True) as client:
-        discovered = await client.list_tools()
-        result = await client.call_tool("health")
+    with tempfile.TemporaryFile(mode="w+") as stderr:
+        async with Client(stdio_client(parameters, errlog=stderr), raise_exceptions=True) as client:
+            discovered = await client.list_tools()
+            result = await client.call_tool("health")
 
     assert [tool.name for tool in discovered.tools] == ["health"]
     assert result.is_error is False
@@ -576,6 +576,7 @@ Create `apps/api/mcp_server/bootstrap.py`:
 import os
 
 import django
+
 import dotenv
 
 
