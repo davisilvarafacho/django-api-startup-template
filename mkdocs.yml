@@ -24,6 +24,7 @@ nav:
       - Primeiro ambiente: tutorial/primeiro-ambiente.md
   - Como fazer:
       - Fluxo de desenvolvimento: how-to/fluxo-de-desenvolvimento.md
+      - Resetar migrations: how-to/resetar-migrations.md
       - Desenvolvimento local: how-to/desenvolvimento-local.md
       - Proxy reverso com nginx: how-to/proxy-nginx.md
       - Proteção contra força bruta: how-to/protecao-forca-bruta.md

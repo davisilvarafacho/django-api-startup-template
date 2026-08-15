@@ -104,7 +104,7 @@ _Última atualização: 2026-07-29._
 | `get_env_var` com default opcional + helper `get_list_from_env` | ✅ |
 | Pré-commit hooks | ✅ |
 | GitHub Actions (commits, lint, versões, docs e testes) | ✅ |
-| Gate de migrations | ⚠️ suspenso até o reset integral pré-lançamento |
+| Gate de migrations | ✅ ativo na CI |
 | Serviços Postgres/Redis no CI (fecha o caveat dos testes) | ✅ |
 | Segurança de dependências/imagem: `pip-audit`, `bandit`, `trivy`, Dependabot | ✅ |
 | `pytest-cov` + helpers locais de teste + Codecov + coverage gate | ✅ |
@@ -158,7 +158,5 @@ _Última atualização: 2026-07-29._
 
 1. Fechar o **Batch 5**: cache de permissions, MFA/2FA + HaveIBeenPwned,
    field-level permissions e ciclo de vida de conta.
-2. Fazer o **reset integral das migrations** antes do lançamento e restaurar o
-   gate `makemigrations --check --dry-run`.
-3. Continuar o **Batch 8** com notificações, uploads, money/metadata,
+2. Continuar o **Batch 8** com notificações, uploads, money/metadata,
    idempotency keys e abstração de e-mail.

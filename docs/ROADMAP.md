@@ -66,7 +66,7 @@ _Atualizado em 2026-08-09._
 
 ### Batch 3 — DevEx / CI
 - **pre-commit** (ruff + hooks básicos).
-- **GitHub Actions** por cadência: `ci.yml` (lint + pytest com Postgres/Redis) e `security.yml` (pip-audit + bandit + trivy) + `dependabot.yml`; `makemigrations --check` está suspenso até o reset integral pré-lançamento.
+- **GitHub Actions** por cadência: `ci.yml` (lint + pytest com Postgres/Redis) e `security.yml` (pip-audit + bandit + trivy) + `dependabot.yml`; o gate `makemigrations --check --dry-run` está ativo.
 - **Codecov** + cobertura (`pytest-cov`), gate de patch 80% em código novo.
 - **Makefile** e arquivos padrão do GitHub (CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, templates).
 - Helper determinístico `criar_usuario` restrito a `tests/support/` + testes DB-less (lookup, env).
@@ -134,9 +134,8 @@ _Atualizado em 2026-08-09._
       migration e permanecerá fail-closed quando houver políticas órfãs.
   - **Ciclo de vida de conta**: verificação de e-mail, social auth,
     desativação e exclusão.
-- ⚠️ Pendência operacional: migrations permanecem congeladas nesta fase; CI e
-  testes usam `--nomigrations`. O histórico será recriado integralmente antes
-  do lançamento e o gate `makemigrations --check --dry-run` será restaurado.
+- ✅ Baseline de migrations consolidada; CI e testes aplicam o grafo real e o
+  gate `makemigrations --check --dry-run` está ativo.
 
 ### Batch 8 — Domínio & segurança 🚧
 - ⏳ Base de código de **notificações** (providers plugáveis, templates, preferências).

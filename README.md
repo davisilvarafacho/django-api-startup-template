@@ -14,13 +14,10 @@ uv run python manage.py runserver
 Comandos comuns:
 
 ```bash
-uv run pytest --nomigrations
+make test
 uv run python manage.py migrate
 uv lock --upgrade
 ```
-
-Até o reset integral das migrations, previsto antes do lançamento, a suíte usa
-`--nomigrations`.
 
 O arquivo `uv.lock` deve ser versionado. Após modificar as dependências, use `uv add <pacote>` (ou `uv remove <pacote>`) e inclua as alterações em `pyproject.toml` e `uv.lock` no commit.
 
