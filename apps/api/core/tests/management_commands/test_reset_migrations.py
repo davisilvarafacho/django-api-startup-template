@@ -1,7 +1,11 @@
+from io import StringIO
 from pathlib import Path
 from subprocess import CalledProcessError
 from types import SimpleNamespace
+from unittest.mock import patch
 
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.db import connections
 
 import pytest
@@ -29,6 +33,41 @@ def configurar_plano(settings, monkeypatch, tmp_path, configs):
     monkeypatch.setitem(connections["default"].settings_dict, "ENGINE", "django_rls.backends.postgresql")
     monkeypatch.setitem(connections["default"].settings_dict, "NAME", "base")
     monkeypatch.setattr(migration_reset, "_installed_app_configs", lambda: configs)
+
+
+def test_command_default_e_dry_run(settings, monkeypatch, tmp_path):
+    core = criar_app(tmp_path, "apps.api.core", "0001_schedule_access_log_cleanup.py")
+    configurar_plano(settings, monkeypatch, tmp_path, [core])
+    stdout = StringIO()
+
+    with patch("apps.api.core.management.commands.reset_migrations.apply_migration_reset") as apply:
+        call_command("reset_migrations", stdout=stdout)
+
+    assert "DRY-RUN" in stdout.getvalue()
+    assert "Ambiente:" in stdout.getvalue()
+    assert "base" in stdout.getvalue()
+    assert "0001_schedule_access_log_cleanup.py" in stdout.getvalue()
+    assert "makemigrations --check --dry-run" in stdout.getvalue()
+    apply.assert_not_called()
+
+
+def test_command_apply_encaminha_confirmacao(settings, monkeypatch, tmp_path):
+    core = criar_app(tmp_path, "apps.api.core", "0001_schedule_access_log_cleanup.py")
+    configurar_plano(settings, monkeypatch, tmp_path, [core])
+
+    with patch("apps.api.core.management.commands.reset_migrations.apply_migration_reset") as apply:
+        call_command("reset_migrations", "--apply", "--confirm-database", "base")
+
+    apply.assert_called_once()
+    assert apply.call_args.kwargs == {"confirmed_database": "base"}
+
+
+def test_command_recusa_confirmacao_sem_apply(settings, monkeypatch, tmp_path):
+    core = criar_app(tmp_path, "apps.api.core", "0001_schedule_access_log_cleanup.py")
+    configurar_plano(settings, monkeypatch, tmp_path, [core])
+
+    with pytest.raises(CommandError, match="--apply"):
+        call_command("reset_migrations", "--confirm-database", "base")
 
 
 def test_plano_remove_so_migrations_dos_business_apps(settings, monkeypatch, tmp_path):
