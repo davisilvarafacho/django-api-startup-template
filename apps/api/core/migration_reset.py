@@ -46,7 +46,7 @@ def build_migration_reset_plan() -> MigrationResetPlan:
     apps_root = base_dir / "apps"
     database = settings.DATABASES["default"]
     engine = database["ENGINE"]
-    if engine.rsplit(".", 1)[-1] != "postgresql":
+    if not str(engine).endswith(".postgresql"):
         raise MigrationResetError("reset_migrations exige um backend PostgreSQL.")
 
     database_name = str(database.get("NAME") or "")
@@ -137,7 +137,7 @@ def apply_migration_reset(plan: MigrationResetPlan, *, confirmed_database: str |
     if confirmed_database != "base":
         raise MigrationResetError("confirmação inválida; informe exatamente 'base'.")
     connection_settings = connections["default"].settings_dict
-    if connection_settings.get("NAME") != "base" or not str(connection_settings.get("ENGINE", "")).rsplit(".", 1)[-1] == "postgresql":
+    if connection_settings.get("NAME") != "base" or not str(connection_settings.get("ENGINE", "")).endswith(".postgresql"):
         raise MigrationResetError("a conexão efetiva deve ser PostgreSQL no banco 'base'.")
 
     with TemporaryDirectory(prefix="migration-reset-") as temporary:

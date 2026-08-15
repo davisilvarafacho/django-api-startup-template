@@ -65,3 +65,11 @@ Self-review: `git diff --check` será executado antes do commit; alteração res
 RED: `test_apply_recusa_conexao_efetiva_diferente_do_plano_antes_de_mutar` falhou ao alcançar `_run_manage_py` quando a conexão efetiva era SQLite/`outro`.
 
 GREEN: após a validação, `uv run --group test pytest --nomigrations apps/api/core/tests/management_commands/test_reset_migrations.py -q --no-cov` passou com 11 testes e `uv run ruff check apps/api/core/migration_reset.py apps/api/core/tests/management_commands/test_reset_migrations.py` passou.
+
+## Correção pós-review: sufixo literal do backend
+
+- As validações de backend na construção do plano e na conexão efetiva agora exigem literalmente `str(engine).endswith(".postgresql")`.
+- Adicionados testes regressivos para `ENGINE="postgresql"`, cobrindo plano e fronteira mutável antes de snapshot/mutação.
+- RED: os dois testes aceitaram indevidamente `ENGINE="postgresql"` e, na aplicação, alcançaram `_run_manage_py`.
+- GREEN: `uv run --group test pytest --nomigrations apps/api/core/tests/management_commands/test_reset_migrations.py -q --no-cov` passou com 13 testes; Ruff passou; `git diff --check` passou.
+- O escopo de `connection.close()` em `finally` continua inalterado e fora desta rodada.

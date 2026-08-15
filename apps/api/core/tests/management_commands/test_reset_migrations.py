@@ -62,6 +62,15 @@ def test_plano_recusa_backend_nao_postgresql(settings, monkeypatch, tmp_path):
         migration_reset.build_migration_reset_plan()
 
 
+def test_plano_recusa_backend_postgresql_sem_prefixo(settings, monkeypatch, tmp_path):
+    core = criar_app(tmp_path, "apps.api.core", "0001_schedule_access_log_cleanup.py")
+    configurar_plano(settings, monkeypatch, tmp_path, [core])
+    settings.DATABASES["default"]["ENGINE"] = "postgresql"
+
+    with pytest.raises(migration_reset.MigrationResetError, match="PostgreSQL"):
+        migration_reset.build_migration_reset_plan()
+
+
 def test_plano_recusa_migration_manual_ausente(settings, monkeypatch, tmp_path):
     core = criar_app(tmp_path, "apps.api.core")
     configurar_plano(settings, monkeypatch, tmp_path, [core])
@@ -125,6 +134,21 @@ def test_apply_recusa_conexao_efetiva_diferente_do_plano_antes_de_mutar(settings
     plan = migration_reset.build_migration_reset_plan()
     monkeypatch.setitem(connections["default"].settings_dict, "NAME", "outro")
     monkeypatch.setitem(connections["default"].settings_dict, "ENGINE", "django.db.backends.sqlite3")
+    monkeypatch.setattr(migration_reset, "_run_manage_py", lambda *args: pytest.fail("não deveria executar"))
+    monkeypatch.setattr(migration_reset, "_reset_public_schema", lambda: pytest.fail("schema não deveria mudar"))
+
+    with pytest.raises(migration_reset.MigrationResetError, match="conexão"):
+        migration_reset.apply_migration_reset(plan, confirmed_database="base")
+
+    assert (Path(auth.path) / "migrations" / "0001_initial.py").read_text(encoding="utf-8") == "# migration\n"
+
+
+def test_apply_recusa_backend_postgresql_sem_prefixo_antes_de_mutar(settings, monkeypatch, tmp_path):
+    auth = criar_app(tmp_path, "apps.api.autenticacao", "0001_initial.py")
+    configurar_plano(settings, monkeypatch, tmp_path, [auth])
+    settings.IN_PRODUCTION = False
+    plan = migration_reset.build_migration_reset_plan()
+    monkeypatch.setitem(connections["default"].settings_dict, "ENGINE", "postgresql")
     monkeypatch.setattr(migration_reset, "_run_manage_py", lambda *args: pytest.fail("não deveria executar"))
     monkeypatch.setattr(migration_reset, "_reset_public_schema", lambda: pytest.fail("schema não deveria mudar"))
 
