@@ -8,7 +8,7 @@ from internal_frameworks.permission_cache.config import get_authorization_cache_
 
 
 def test_django_uses_isolated_permission_cache_test_database():
-    expected_name = os.environ.get("TEST_DATABASE_NAME", "test_base_permission_cache")
+    expected_name = os.environ.get("TEST_DATABASE_NAME", "base_test")
     assert connection.settings_dict["TEST"]["NAME"] == expected_name
 
 
