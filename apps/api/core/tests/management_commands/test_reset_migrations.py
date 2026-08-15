@@ -99,6 +99,21 @@ def test_apply_exige_nome_exato_do_banco(settings, monkeypatch, tmp_path):
         migration_reset.apply_migration_reset(plan, confirmed_database="outro")
 
 
+def test_apply_recusa_plano_de_banco_diferente_de_base_antes_de_mutar(settings, monkeypatch, tmp_path):
+    auth = criar_app(tmp_path, "apps.api.autenticacao", "0001_initial.py")
+    configurar_plano(settings, monkeypatch, tmp_path, [auth])
+    settings.IN_PRODUCTION = False
+    settings.DATABASES["default"]["NAME"] = "outro"
+    plan = migration_reset.build_migration_reset_plan()
+    monkeypatch.setattr(migration_reset, "_run_manage_py", lambda *args: pytest.fail("não deveria executar"))
+    monkeypatch.setattr(migration_reset, "_reset_public_schema", lambda: pytest.fail("schema não deveria mudar"))
+
+    with pytest.raises(migration_reset.MigrationResetError, match="base"):
+        migration_reset.apply_migration_reset(plan, confirmed_database="outro")
+
+    assert (Path(auth.path) / "migrations" / "0001_initial.py").read_text(encoding="utf-8") == "# migration\n"
+
+
 def test_apply_restaura_migrations_quando_makemigrations_falha(settings, monkeypatch, tmp_path):
     auth = criar_app(tmp_path, "apps.api.autenticacao", "0001_initial.py")
     core = criar_app(tmp_path, "apps.api.core", "0001_schedule_access_log_cleanup.py")

@@ -132,8 +132,10 @@ def _reset_public_schema() -> None:
 def apply_migration_reset(plan: MigrationResetPlan, *, confirmed_database: str | None) -> None:
     if settings.IN_PRODUCTION:
         raise MigrationResetError("reset_migrations é bloqueado em produção.")
-    if confirmed_database != plan.database_name:
-        raise MigrationResetError(f"confirmação inválida; informe exatamente '{plan.database_name}'.")
+    if plan.database_name != "base":
+        raise MigrationResetError("reset_migrations só pode operar no banco 'base'.")
+    if confirmed_database != "base":
+        raise MigrationResetError("confirmação inválida; informe exatamente 'base'.")
 
     with TemporaryDirectory(prefix="migration-reset-") as temporary:
         backup_root = Path(temporary)
