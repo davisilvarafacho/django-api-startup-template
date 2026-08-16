@@ -23,7 +23,12 @@ async def test_stdio_boots_django_and_calls_health():
         async with Client(stdio_client(parameters, errlog=stderr), raise_exceptions=True) as client:
             discovered = await client.list_tools()
             result = await client.call_tool("health")
+        stderr.seek(0)
+        stderr_output = stderr.read()
 
     assert [tool.name for tool in discovered.tools] == ["health"]
+    assert discovered.tools[0].output_schema["type"] == "object"
     assert result.is_error is False
     assert result.structured_content["status"] == "healthy"
+    assert stderr_output
+    assert '"jsonrpc"' not in stderr_output

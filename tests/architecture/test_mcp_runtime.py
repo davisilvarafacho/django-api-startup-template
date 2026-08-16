@@ -12,8 +12,12 @@ def test_mcp_app_is_installed():
     assert "apps.api.mcp_server" in settings.BUSINESS_APPS
 
 
+def test_business_apps_are_alphabetical():
+    assert settings.BUSINESS_APPS == sorted(settings.BUSINESS_APPS)
+
+
 def test_mcp_dependencies_are_runtime_dependencies():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     names = {Requirement(value).name.lower() for value in project["dependencies"]}
 
-    assert {"mcp", "pyjwt"} <= names
+    assert {"mcp", "pyjwt", "starlette", "uvicorn"} <= names

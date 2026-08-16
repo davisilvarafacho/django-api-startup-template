@@ -71,6 +71,14 @@ ALLOWED_HOSTS = get_list_from_env("DJANGO_ALLOWED_HOSTS", ["127.0.0.1", "localho
 
 CSRF_TRUSTED_ORIGINS = get_list_from_env("DJANGO_CSRF_TRUSTED_ORIGINS", ["http://127.0.0.1:8000", "http://localhost:8000"])
 
+MCP_SERVER_URL = get_env_var("MCP_SERVER_URL")
+MCP_AUTH_ISSUER_URL = get_env_var("MCP_AUTH_ISSUER_URL")
+MCP_AUTH_AUDIENCE = get_env_var("MCP_AUTH_AUDIENCE")
+MCP_AUTH_JWKS_URL = get_env_var("MCP_AUTH_JWKS_URL")
+MCP_AUTH_ALGORITHMS = get_list_from_env("MCP_AUTH_ALGORITHMS", ["RS256"])
+MCP_ALLOWED_HOSTS = get_list_from_env("MCP_ALLOWED_HOSTS")
+MCP_ALLOWED_ORIGINS = get_list_from_env("MCP_ALLOWED_ORIGINS")
+
 # A API sempre roda atrás do nginx (`docker/nginx/`), que sobrescreve os
 # `X-Forwarded-*` — o valor que o cliente mandar é descartado antes de chegar
 # aqui. Sem isto o Django enxerga a request como http na porta do gunicorn e
@@ -136,9 +144,9 @@ BUSINESS_APPS = [
     "apps.api.base",
     "apps.api.core",
     "apps.api.mcp_server",
+    "apps.api.metadata",
     "apps.logs",
     "apps.organizacoes",
-    "apps.api.metadata",
     "apps.usuarios",
 ]
 
