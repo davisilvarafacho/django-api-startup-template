@@ -3,6 +3,7 @@ import subprocess
 import sys
 
 from django.conf import settings
+from django.db.migrations.loader import MigrationLoader
 
 
 def test_default_test_database_name_is_isolated():
@@ -11,6 +12,15 @@ def test_default_test_database_name_is_isolated():
 
 def test_rls_connection_context_reset_is_disabled_during_tests():
     assert settings.DJANGO_RLS["RESET_CONTEXT_ON_CONNECT"] is False
+
+
+def test_swapped_third_party_schemas_are_owned_by_local_models():
+    loader = MigrationLoader(None, ignore_no_migrations=True)
+
+    third_party_apps_with_local_models = {"auditlog", "knox"}
+    migrated_apps = {app_label for app_label, _migration_name in loader.disk_migrations}
+
+    assert third_party_apps_with_local_models.isdisjoint(migrated_apps)
 
 
 def test_rls_connection_context_reset_remains_enabled_in_production():

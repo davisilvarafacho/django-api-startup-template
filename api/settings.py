@@ -426,6 +426,10 @@ LOGGING = build_logging(
 # apontado é excluído do próprio registro pelo auditlog, então não há recursão.
 AUDITLOG_LOGENTRY_MODEL = "logs.LogAlteracao"
 
+# `logs.LogAlteracao` e `autenticacao.AuthToken` possuem os schemas locais;
+# não crie as tabelas substituídas dos pacotes.
+MIGRATION_MODULES = {"auditlog": None, "knox": None}
+
 BASE_AUDITLOG_EXCLUDE_FIELDS = [
     "created_at",
     "last_modified_at",
