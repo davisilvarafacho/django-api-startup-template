@@ -3,6 +3,7 @@ from collections.abc import Callable
 from cachalot.api import cachalot_disabled
 
 from apps.organizacoes.models import Vinculo
+from apps.usuarios.models import Usuario
 from internal_frameworks.permission_cache.keys import global_scope, layer_scope, user_scope
 from internal_frameworks.permission_cache.store import PermissionCacheStore
 from internal_frameworks.permission_cache.types import TenantAccess
@@ -21,6 +22,8 @@ class TenantAccessResolver:
         database_alias: str = "default",
         metric_layer: str = "tenant",
     ) -> TenantAccess | None:
+        if not self._user_is_not_deleted(user_id, database_alias):
+            return None
         return self._resolve(
             # A versão separa snapshots criados antes de o loader verificar o
             # estado da conta; eles deixam de ser reutilizados no deploy.
@@ -38,6 +41,8 @@ class TenantAccessResolver:
         database_alias: str = "default",
         metric_layer: str = "tenant",
     ) -> TenantAccess | None:
+        if not self._user_is_not_deleted(user_id, database_alias):
+            return None
         return self._resolve(
             identity=("account_state", TENANT_ACCOUNT_STATE_CACHE_VERSION, "user", user_id, "organization_id", organization_id),
             scopes=(global_scope(), layer_scope("tenant"), user_scope("tenant", user_id)),
@@ -104,6 +109,11 @@ class TenantAccessResolver:
             membership_id=row["id"],
             role=row["papel"],
         )
+
+    @staticmethod
+    def _user_is_not_deleted(user_id: int, database_alias: str) -> bool:
+        with cachalot_disabled(all_queries=True):
+            return Usuario.all_objects.using(database_alias).filter(pk=user_id, is_deleted=False).exists()
 
     @staticmethod
     def _encode(access: TenantAccess | None) -> dict[str, object] | None:
