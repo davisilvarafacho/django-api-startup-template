@@ -50,8 +50,8 @@ real de migrations e destroem o banco ao final.
 ## O pull request
 
 1. **CI** roda três jobs — `commits` (valida Conventional Commits do range),
-   `lint` (ruff, versões, migrations e docs) e `test` (pytest com migrations +
-   cobertura Codecov). Todos precisam passar.
+   `lint` (ruff, versões e docs) e `test` (gate de migrations, pytest com
+   migrations reais e cobertura Codecov). Todos precisam passar.
 2. **Review**: pelo menos uma aprovação.
 3. **Squash merge**: cada PR vira um único commit na `main`. Mantém o histórico
    linear e o range de commits que o commitlint valida trivial. A branch é
