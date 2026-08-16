@@ -15,7 +15,7 @@ import pyotp
 from knox.settings import knox_settings
 
 from .models import AuthToken, MFAChallenge, MFAChallengePurpose, MFAFactor, MFAFactorType, MFARecoveryCode, MFAResetAudit, TokenType, TrustedDevice
-from .services import issue_token, lock_user_account, resolve_database_alias, revoke_all_sessions
+from .services import issue_token, lock_eligible_responsible, lock_user_account, resolve_database_alias, revoke_all_sessions
 
 OTP_LIFETIME = timedelta(minutes=5)
 OTP_COOLDOWN = timedelta(seconds=60)
@@ -207,23 +207,20 @@ def remove_factor(user, factor_type: MFAFactorType) -> None:
     revoke_trusted_devices(user)
 
 
-def create_trusted_device(user, metadata: dict, *, using=None) -> PlainTrustedDevice | None:
-    database_alias = resolve_database_alias(user, using)
+def create_trusted_device(user, metadata: dict) -> PlainTrustedDevice:
+    database_alias = user._state.db or "default"
     with transaction.atomic(using=database_alias):
-        conta = lock_user_account(user, using=database_alias)
-        if conta.is_deleted or not conta.is_active:
-            return None
-
+        locked_user = lock_eligible_responsible(user, database_alias)
         plain_token = secrets.token_urlsafe(32)
         device = TrustedDevice.objects.using(database_alias).create(
-            user=conta,
+            user=locked_user,
             digest=_trusted_digest(plain_token),
             name=metadata.get("device_name", ""),
             user_agent=metadata.get("user_agent", ""),
             ip_address=metadata.get("ip_address"),
             expires_at=timezone.now() + TRUSTED_DEVICE_LIFETIME,
         )
-        return PlainTrustedDevice(instance=device, plain_token=plain_token)
+    return PlainTrustedDevice(instance=device, plain_token=plain_token)
 
 
 def consume_trusted_device(user, plain_token: str, *, using=None) -> PlainTrustedDevice | None:

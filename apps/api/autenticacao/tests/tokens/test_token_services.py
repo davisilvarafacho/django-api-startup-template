@@ -2,7 +2,8 @@
 
 from unittest.mock import patch
 
-from django.db import IntegrityError
+from django.db import IntegrityError, connection
+from django.test.utils import CaptureQueriesContext
 
 import pytest
 
@@ -51,6 +52,20 @@ def test_issue_token_cria_token_e_metadata_na_mesma_transacao(usuario, metadata_
 
 
 @pytest.mark.django_db
+def test_issue_token_bloqueia_responsavel_antes_da_emissao(usuario, metadata_input):
+    with CaptureQueriesContext(connection) as queries:
+        issue_token(
+            responsavel=usuario,
+            token_type=TokenType.TOKEN,
+            created_by=usuario,
+            expiry=None,
+            metadata_input=metadata_input,
+        )
+
+    assert any('FROM "usuario"' in query["sql"] and "FOR UPDATE" in query["sql"] for query in queries)
+
+
+@pytest.mark.django_db
 def test_issue_token_de_api_key_grava_organizacao_e_scopes(usuario, metadata_input):
     from apps.organizacoes.models import Organizacao, Vinculo
 
@@ -75,7 +90,7 @@ def test_issue_token_de_api_key_grava_organizacao_e_scopes(usuario, metadata_inp
 
 @pytest.mark.django_db
 def test_issue_token_e_atomico_quando_metadata_falha(usuario, metadata_input):
-    with patch.object(TokenMetaData.objects, "create", side_effect=IntegrityError("boom")):
+    with patch.object(TokenMetaData, "save", side_effect=IntegrityError("boom")):
         with pytest.raises(IntegrityError):
             issue_token(
                 responsavel=usuario,

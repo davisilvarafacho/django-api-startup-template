@@ -1,10 +1,14 @@
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
+
 import pyotp
 import pytest
 
+from apps.api.autenticacao.errors import AuthErrorCode
 from apps.api.autenticacao.mfa import confirm_enrollment, create_trusted_device, start_enrollment
-from apps.api.autenticacao.models import MFAFactorType
+from apps.api.autenticacao.models import MFAFactorType, TrustedDevice
+from apps.api.core.errors import APIError
 from apps.usuarios.models import Usuario
-from tests.support.usuarios import criar_usuario
 
 
 @pytest.mark.django_db
@@ -43,9 +47,20 @@ def test_confirmacao_de_fator_revoga_dispositivos_confiaveis(usuario):
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("flags", [{"is_active": False}, {"is_deleted": True}])
-def test_dispositivo_confiavel_nao_e_criado_para_conta_inativa_ou_excluida(flags):
-    usuario = criar_usuario()
-    Usuario.all_objects.filter(pk=usuario.pk).update(**flags)
+@pytest.mark.parametrize("account_update", [{"is_deleted": True}, {"is_active": False}])
+def test_create_trusted_device_recarrega_e_recusa_usuario_inelegivel(usuario, account_update):
+    Usuario.all_objects.filter(pk=usuario.pk).update(**account_update)
 
-    assert create_trusted_device(usuario, {}) is None
+    with pytest.raises(APIError) as exc:
+        create_trusted_device(usuario, {})
+
+    assert exc.value.code == AuthErrorCode.RESPONSIBLE_INACTIVE
+    assert not TrustedDevice.objects.filter(user_id=usuario.pk).exists()
+
+
+@pytest.mark.django_db
+def test_create_trusted_device_bloqueia_usuario_antes_da_emissao(usuario):
+    with CaptureQueriesContext(connection) as queries:
+        create_trusted_device(usuario, {})
+
+    assert any('FROM "usuario"' in query["sql"] and "FOR UPDATE" in query["sql"] for query in queries)

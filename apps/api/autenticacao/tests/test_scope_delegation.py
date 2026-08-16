@@ -2,6 +2,7 @@ from django.contrib.auth.models import Permission
 
 import pytest
 
+from apps.api.autenticacao.permissions import IsSuperUser
 from apps.api.autenticacao.scope_delegation import validate_scope_delegation
 from apps.api.core.errors import APIError
 from apps.api.core.scope_registry import ScopeRegistry
@@ -101,6 +102,26 @@ def test_superuser_sempre_pode_delegar_qualquer_scope(registro_isolado):
         "teams:delete",
         "users:read",
     )
+
+
+@pytest.mark.django_db
+def test_superuser_excluido_nao_atende_permission_de_superuser():
+    usuario = criar_usuario(is_superuser=True, is_staff=True)
+    usuario.is_deleted = True
+    request = type("Request", (), {"user": usuario})()
+
+    assert IsSuperUser().has_permission(request, view=None) is False
+
+
+@pytest.mark.django_db
+def test_superuser_excluido_nao_delega_scopes(registro_isolado):
+    usuario = criar_usuario(is_superuser=True, is_staff=True)
+    usuario.is_deleted = True
+
+    with pytest.raises(APIError) as exc:
+        validate_scope_delegation(usuario, ["*"])
+
+    assert exc.value.code == "auth.scope_not_delegable"
 
 
 @pytest.mark.django_db

@@ -53,6 +53,18 @@ def lock_user_account(user, *, using=None):
     return Usuario.all_objects.using(database_alias).select_for_update().get(pk=user_id)
 
 
+def lock_eligible_responsible(responsavel, database_alias: str):
+    """Bloqueia e recarrega o dono antes de criar uma credencial."""
+    user_model = type(responsavel)
+    try:
+        locked = user_model._base_manager.using(database_alias).select_for_update().get(pk=responsavel.pk)
+    except user_model.DoesNotExist as exc:
+        raise APIError(AuthErrorCode.RESPONSIBLE_INACTIVE, status_code=409) from exc
+    if not locked.is_active or getattr(locked, "is_deleted", False):
+        raise APIError(AuthErrorCode.RESPONSIBLE_INACTIVE, status_code=409)
+    return locked
+
+
 def lock_user_accounts(user_ids, *, using):
     """Bloqueia várias contas em ordem de PK e devolve-as indexadas por id."""
     from apps.usuarios.models import Usuario
@@ -121,7 +133,6 @@ def issue_token(
         APIError: Se a conta do responsável já tiver sido excluída.
     """
     auth_token_model = get_token_model()
-
     database_alias = resolve_database_alias(responsavel, using)
     with transaction.atomic(using=database_alias):
         # Segura a conta antes de escrever a credencial: se uma exclusão estiver

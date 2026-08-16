@@ -21,6 +21,13 @@ def validate_scope_delegation(user, scopes):
     Levanta `APIError(auth.scope_not_delegable)` no primeiro scope que o
     usuário não tem autoridade para conceder.
     """
+    if getattr(user, "is_deleted", False):
+        raise APIError(
+            AuthErrorCode.SCOPE_NOT_DELEGABLE,
+            status_code=403,
+            field="scopes",
+        )
+
     validated = []
 
     for scope in scopes:
