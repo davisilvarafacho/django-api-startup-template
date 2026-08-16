@@ -35,14 +35,10 @@ para todos os alvos, mas variáveis `DATABASE_*` já presentes no ambiente
 prevalecem. O `.env` não supre isso sob pytest: `load_dotenv()` roda em
 `manage.py`, `wsgi.py` e `asgi.py`, que o pytest não usa.
 
-Fora do Makefile, o grupo `test`, as variáveis `DATABASE_*` e o `--nomigrations`
-precisam ser explícitos — **sem `--nomigrations` a suíte roda as migrations de
-verdade e falha em massa** no `TRUNCATE` da FK de `auditlog_logentry`:
-
-```bash
-uv run --group test pytest --nomigrations apps/api/core/tests/test_lookup.py::test_nome -q
-uv run --group test pytest --nomigrations apps/organizacoes -k rls
-```
+Para executar testes, siga `docs/how-to/fluxo-de-desenvolvimento.md` e
+`CONTRIBUTING.md`. A suíte normal aplica migrations reais; use os defaults do
+Makefile ou declare `DATABASE_*` e `TEST_DATABASE_NAME` explicitamente quando
+rodar pytest fora dele.
 
 Dependências: `uv add <pacote>` / `uv remove <pacote>`; `pyproject.toml` e `uv.lock`
 entram no mesmo commit.

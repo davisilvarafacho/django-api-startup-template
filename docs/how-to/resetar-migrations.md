@@ -11,6 +11,8 @@ upgrade também for descartável. A aplicação só é aceita com
 make reset-migrations
 ```
 
+A saída lista seis etapas, incluindo as duas verificações de
+`makemigrations --check --dry-run`.
 Confira o banco, os arquivos marcados como `REMOVER` e a migration manual
 marcada como `PRESERVAR`.
 
@@ -33,5 +35,7 @@ make test
 ```
 
 Se a geração falhar antes do reset do schema, os arquivos antigos são
-restaurados. Depois que o schema for removido, corrija a causa indicada e rode
-`make migrate`; as migrations novas permanecem no working tree.
+restaurados. Depois que o schema for removido, o erro informa uma destas etapas:
+`recriar schema public`, `aplicar migrations`, `validar models e migrations` ou
+`exibir plano aplicado`. Corrija a causa indicada e continue com `make migrate`;
+as migrations novas permanecem no working tree.

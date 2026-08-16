@@ -47,6 +47,10 @@ Antes de abrir o PR, garanta o que o `CONTRIBUTING.md` exige: `make lint`,
 `make test` e `make docs` verdes. Os testes criam `base_test`, aplicam o grafo
 real de migrations e destroem o banco ao final.
 
+Execuções paralelas devem fornecer nomes distintos por `TEST_DATABASE_NAME`.
+O valor muda somente o banco efêmero de testes; o banco de desenvolvimento
+continua vindo de `DATABASE_NAME`.
+
 ## O pull request
 
 1. **CI** roda três jobs — `commits` (valida Conventional Commits do range),
