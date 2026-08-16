@@ -43,9 +43,8 @@ TABELA = RegistroRLS._meta.db_table
 def ambiente_rls(django_db_setup, django_db_blocker):
     """Cria a tabela do modelo de teste, liga o RLS e provisiona o papel comum.
 
-    A criação é idempotente porque, rodando com `--nomigrations`, o syncdb já
-    cria a tabela deste model (é um model Django comum, só declarado aqui no
-    teste) antes mesmo deste fixture rodar.
+    A tabela é recriada explicitamente porque este model existe apenas no módulo
+    de teste e não pertence ao histórico de migrations do app.
     """
     with django_db_blocker.unblock():
         with connection.cursor() as cursor:

@@ -32,8 +32,6 @@ jobs:
         run: uv run ruff check .
       - name: Versões do pacote e OpenAPI
         run: uv run python scripts/check_version.py
-      # O projeto fará um reset integral das migrations antes do lançamento.
-      # Restaure o gate `makemigrations --check --dry-run` junto com esse reset.
       - name: Documentação
         run: uv run mkdocs build --strict
 
@@ -64,6 +62,7 @@ jobs:
       DATABASE_PASSWORD: postgres
       DATABASE_HOST: 127.0.0.1
       DATABASE_PORT: 5432
+      TEST_DATABASE_NAME: base_test
       REDIS_HOST: 127.0.0.1
       REDIS_PORT: 6379
       AUTHORIZATION_REDIS_URL: redis://127.0.0.1:6379/4
@@ -74,8 +73,10 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --frozen
+      - name: Migrations sincronizadas
+        run: uv run python manage.py makemigrations --check --dry-run
       - name: Testes + cobertura
-        run: uv run pytest --nomigrations
+        run: uv run pytest
       - name: Upload cobertura (Codecov)
         uses: codecov/codecov-action@v7
         with:

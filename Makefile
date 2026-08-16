@@ -1,4 +1,4 @@
-.PHONY: help install hooks up down stack kuma-up kuma-down migrate run run-observed worker worker-observed beat test test-fast test-integration test-redis lint format check precommit shell docs docs-serve commitlint version-check obs-up obs-down dev-obs-up dev-obs-down nginx-test nginx-reload
+.PHONY: help install hooks up down stack kuma-up kuma-down migrate reset-migrations run run-observed worker worker-observed beat test test-fast test-integration test-redis lint format check precommit shell docs docs-serve commitlint version-check obs-up obs-down dev-obs-up dev-obs-down nginx-test nginx-reload
 
 help: ## Lista os comandos disponíveis
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "\033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -59,6 +59,9 @@ dev-obs-down: ## Derruba a observabilidade conectada ao devcontainer
 migrate: ## Aplica as migrações
 	uv run python manage.py migrate
 
+reset-migrations: ## Planeja o reset; use RESET_MIGRATIONS_ARGS='--apply --confirm-database base' para executar
+	uv run python manage.py reset_migrations $(RESET_MIGRATIONS_ARGS)
+
 # Dentro de um container (dev container) o runserver precisa escutar em 0.0.0.0
 # para o nginx alcançá-lo; no host, 127.0.0.1 evita expor a API na rede local.
 RUN_HOST ?= 127.0.0.1
@@ -84,20 +87,21 @@ DATABASE_USER ?= postgres
 DATABASE_PASSWORD ?= postgres
 DATABASE_HOST ?= 127.0.0.1
 DATABASE_PORT ?= 5432
+TEST_DATABASE_NAME ?= base_test
 
-export DATABASE_NAME DATABASE_USER DATABASE_PASSWORD DATABASE_HOST DATABASE_PORT
+export DATABASE_NAME DATABASE_USER DATABASE_PASSWORD DATABASE_HOST DATABASE_PORT TEST_DATABASE_NAME
 
-test: ## Roda a suíte com cobertura (sem migrations até o reset pré-lançamento)
-	uv run --group test pytest --nomigrations
+test: ## Roda a suíte com cobertura e migrations reais
+	uv run --group test pytest
 
 test-fast: ## Roda a suíte sem testes de integração
-	uv run --group test pytest --nomigrations -m "not integration"
+	uv run --group test pytest -m "not integration"
 
 test-integration: ## Roda somente testes de integração
-	uv run --group test pytest --nomigrations -m integration
+	uv run --group test pytest -m integration
 
 test-redis: ## Roda testes que exigem Redis real
-	uv run --group test pytest --nomigrations -m redis
+	uv run --group test pytest -m redis
 
 lint: ## Checa lint (ruff)
 	uv run ruff check .
