@@ -3,7 +3,9 @@ from rest_framework.exceptions import AuthenticationFailed
 import pytest
 
 from apps.api.autenticacao.authentications import TypedTokenAuthentication
+from apps.api.autenticacao.errors import AuthErrorCode
 from apps.api.autenticacao.models import AuthToken, TokenType
+from apps.api.core.errors import APIError
 
 
 class UsuarioFalso:
@@ -55,3 +57,14 @@ def test_autenticacao_trata_token_sem_tipo_explicito_como_sessao():
     token = TokenFalso()
 
     assert auth.validate_user(token) == (token.user, token)
+
+
+def test_autenticacao_recusa_responsavel_excluido():
+    token = TokenFalso(TokenType.TOKEN)
+    token.responsavel = UsuarioFalso(is_active=True, is_deleted=True)
+
+    with pytest.raises(APIError) as excinfo:
+        TypedTokenAuthentication().validate_user(token)
+
+    assert excinfo.value.code == AuthErrorCode.RESPONSIBLE_INACTIVE
+    assert excinfo.value.status_code == 401

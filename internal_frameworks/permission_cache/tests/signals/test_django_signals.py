@@ -188,8 +188,8 @@ def test_group_delete_bumps_django_and_guardian_global():
         assert_global_layer_bumps(bump)
 
 
-def test_user_active_or_superuser_change_bumps_all_user_layers():
-    for field in ("is_active", "is_superuser"):
+def test_user_authorization_state_change_bumps_all_user_layers():
+    for field in ("is_active", "is_superuser", "is_deleted"):
         user = criar_usuario()
         setattr(user, field, not getattr(user, field))
 
