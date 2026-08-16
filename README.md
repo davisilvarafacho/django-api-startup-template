@@ -34,6 +34,14 @@ Para validar o schema antes de publicar alterações:
 uv run python manage.py spectacular --validate --file schema.yml
 ```
 
+## Servidor MCP
+
+O template inclui a tool operacional `health` por `stdio` local e Streamable
+HTTP autenticado. O serviço remoto é opt-in pelo profile `mcp` e não altera o
+processo WSGI da API REST.
+
+Consulte [como configurar e usar o servidor MCP](docs/how-to/usar-servidor-mcp.md).
+
 ## Arquivos no Backblaze B2
 
 O storage padrão usa `b2sdk` e o backend `apps.api.core.b2_storage.BackblazeB2Storage`.

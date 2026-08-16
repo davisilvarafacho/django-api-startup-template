@@ -35,6 +35,11 @@ bind mount de arquivo — o container continuaria vendo o conteúdo antigo.
 | read timeout | 300s (aguenta breakpoint) | 60s |
 | `/metrics` | liberado | só faixas internas |
 
+O Compose de produção também possui um virtual host exato `mcp.localhost`,
+separado da API. Ele resolve o serviço opcional `mcp:8001` somente quando recebe
+uma request; por isso o Nginx continua iniciando com o profile `mcp` desligado.
+Veja [Usar o servidor MCP](usar-servidor-mcp.md).
+
 ## Headers enviados ao Django
 
 Definidos em `snippets/proxy.conf` e aplicados em todas as locations:
@@ -146,6 +151,11 @@ Alterações em `nginx.conf` (mount de arquivo, não de diretório) podem exigir
 
 `NGINX_PORT` muda a porta publicada no host; ao alterá-la, ajuste também
 `DJANGO_CSRF_TRUSTED_ORIGINS`.
+
+No virtual host MCP, `Host` e `X-Forwarded-Host` usam `$http_host`, preservando
+a porta pública de `http://mcp.localhost:8000/mcp`. O proxy não publica
+`/live`; encaminha apenas `/mcp` e a Protected Resource Metadata. Seus limites
+de corpo, conexão e taxa não afetam o virtual host da API REST.
 
 ## TLS
 

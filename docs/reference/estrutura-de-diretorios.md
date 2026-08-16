@@ -76,7 +76,7 @@ Código de produção nunca importa `tests`. Fixture específica de um app fica 
 
 - **Infraestrutura da API** (`apps/api/*`) — `base` (models, serializers e views
   base), `core` (registries, cache, erros, health, management commands),
-  `autenticacao` e `metadata`. É o que o template entrega pronto.
+  `autenticacao`, `mcp_server` e `metadata`. É o que o template entrega pronto.
 - **Identidade, tenancy e domínio** (`apps/organizacoes/`, `apps/usuarios/`,
   `apps/logs/`) — os apps que herdam de `BaseGlobal` por serem lidos antes de
   existir contexto RLS, mais o app de trilha de auditoria.
@@ -96,9 +96,10 @@ BUSINESS_APPS = [
     "apps.api.autenticacao",
     "apps.api.base",
     "apps.api.core",
+    "apps.api.mcp_server",
+    "apps.api.metadata",
     "apps.logs",
     "apps.organizacoes",
-    "apps.api.metadata",
     "apps.usuarios",
 ]
 ```
@@ -232,7 +233,7 @@ convenção rígida e não preferência de estilo.
 
 | Diretório | Conteúdo |
 |---|---|
-| `docker/nginx/` | `nginx.conf` (bloco http comum), `snippets/` (headers, proxy, websocket) e `sites/<ambiente>/`, montados sobre `/etc/nginx/conf.d`. |
+| `docker/nginx/` | `nginx.conf` (bloco http comum), `snippets/` (headers, proxy, websocket) e `sites/<ambiente>/`, incluindo o hostname MCP opcional, montados sobre `/etc/nginx/conf.d`. |
 | `observability/` | Prometheus, Loki, Tempo, Alloy e o provisionamento do Grafana (dashboards, datasources, alertas). |
 | `.devcontainer/` | Ambiente de desenvolvimento reproduzível. |
 | `.ci/` | `Jenkinsfile`, para quem roda CI fora do GitHub. |

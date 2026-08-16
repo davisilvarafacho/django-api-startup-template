@@ -27,6 +27,7 @@ nav:
       - Resetar migrations: how-to/resetar-migrations.md
       - Desenvolvimento local: how-to/desenvolvimento-local.md
       - Proxy reverso com nginx: how-to/proxy-nginx.md
+      - Servidor MCP: how-to/usar-servidor-mcp.md
       - Proteção contra força bruta: how-to/protecao-forca-bruta.md
       - Observabilidade local: how-to/observabilidade-local.md
       - Monitoramento e alertas com Uptime Kuma: how-to/uptime-kuma.md
