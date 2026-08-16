@@ -66,7 +66,7 @@ class AuthTokenManager(models.Manager):
             organization=kwargs.get("organization") or kwargs.get("organization_id"),
             name=name,
             scopes=kwargs.get("scopes", ()),
-            database_alias=database_alias,
+            database_alias=self.db,
         )
 
         plain_token = prefix + crypto.create_token_string()
@@ -91,7 +91,8 @@ def validate_token_configuration(
     organization,
     name,
     scopes,
-    database_alias: str | None = None,
+    database_alias=None,
+    using=None,
 ):
     """Valida os campos que diferenciam uma API key dos demais tokens."""
     if token_type != TokenType.API_KEY:
@@ -106,7 +107,7 @@ def validate_token_configuration(
         errors["name"] = "API key exige um nome."
     if created_by is None:
         errors["created_by"] = "API key exige o usuário que a criou."
-    if responsavel is None or not getattr(responsavel, "is_active", False) or getattr(responsavel, "is_deleted", False):
+    if responsavel is None or not getattr(responsavel, "is_active", False) or getattr(responsavel, "is_deleted", False) is True:
         errors["responsavel"] = "API key exige um responsável ativo."
 
     if not isinstance(scopes, (list, tuple)):
@@ -123,16 +124,15 @@ def validate_token_configuration(
     if organization is not None and responsavel is not None:
         from apps.organizacoes.models import Vinculo
 
-        database_alias = database_alias or getattr(getattr(responsavel, "_state", None), "db", None) or DEFAULT_DB_ALIAS
-        if (
-            not Vinculo.objects.using(database_alias)
-            .filter(
-                organizacao=organization,
-                usuario=responsavel,
-                is_active=True,
-            )
-            .exists()
-        ):
+        queryset = Vinculo.objects
+        effective_alias = database_alias or using
+        if effective_alias is not None:
+            queryset = queryset.using(effective_alias)
+        if not queryset.filter(
+            organizacao=organization,
+            usuario=responsavel,
+            is_active=True,
+        ).exists():
             errors["responsavel"] = "O responsável precisa ter vínculo ativo com a organização."
 
     if errors:

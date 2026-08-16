@@ -258,21 +258,10 @@ def consume_trusted_device(user, plain_token: str) -> PlainTrustedDevice | None:
         )
 
 
-def revoke_trusted_devices(user, *, using=None) -> int:
-    """Revoga os dispositivos confiáveis ainda válidos de `user`.
-
-    Último elo da ordem global de locks (`Usuario` → `AuthToken` →
-    `TrustedDevice`).
-
-    Args:
-        user: Dono dos dispositivos.
-        using: Alias do banco; por padrão, o alias do próprio `user`.
-
-    Returns:
-        Quantos dispositivos deixaram de valer.
-    """
-    database_alias = resolve_database_alias(user, using)
-    return TrustedDevice.objects.using(database_alias).filter(user=user, revoked_at__isnull=True).update(revoked_at=timezone.now())
+def revoke_trusted_devices(user, *, using=None, database_alias=None) -> int:
+    """Revoga dispositivos no mesmo banco da operação chamadora."""
+    effective_alias = database_alias or using or user._state.db or "default"
+    return TrustedDevice.objects.using(effective_alias).filter(user=user, revoked_at__isnull=True).update(revoked_at=timezone.now())
 
 
 @transaction.atomic

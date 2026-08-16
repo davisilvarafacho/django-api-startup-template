@@ -12,8 +12,10 @@ from django.db import connections, transaction
 import pytest
 
 from apps.api.autenticacao import mfa, services
+from apps.api.autenticacao.errors import AuthErrorCode
 from apps.api.autenticacao.models import AuthToken, TokenMetaData, TokenType
 from apps.api.autenticacao.passwords import issue_password_reset
+from apps.api.core.errors import APIError
 from apps.organizacoes.models import Organizacao, Vinculo
 from apps.usuarios.models import Usuario, UsuarioQuerySet
 from tests.support.usuarios import criar_usuario
@@ -283,6 +285,7 @@ def test_dispositivo_confiavel_concorrente_nao_sobrevive_a_exclusao():
     criador.join(timeout=10)
 
     assert bloqueado_durante_a_exclusao is True
-    assert resultado.get("erro") is None
-    assert resultado["dispositivo"] is None
+    assert "dispositivo" not in resultado
+    assert isinstance(resultado.get("erro"), APIError)
+    assert resultado["erro"].code == AuthErrorCode.RESPONSIBLE_INACTIVE.value
     assert not mfa.TrustedDevice.objects.filter(user=usuario, revoked_at__isnull=True).exists()
