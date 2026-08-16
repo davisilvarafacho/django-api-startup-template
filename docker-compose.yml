@@ -30,6 +30,7 @@ services:
       retries: 5
 
   web:
+    image: ${APP_IMAGE:-drf-base-api-app:local}
     build: .
     env_file: .env
     # Dentro da rede do compose, os serviços resolvem por nome.
@@ -50,6 +51,38 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  mcp:
+    profiles: ["mcp"]
+    image: ${APP_IMAGE:-drf-base-api-app:local}
+    build: .
+    command:
+      - uvicorn
+      - apps.api.mcp_server.asgi:create_asgi_app
+      - --factory
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8001"
+      - --workers
+      - "1"
+    env_file: .env
+    environment:
+      DATABASE_HOST: db
+      REDIS_HOST: redis
+    expose:
+      - "8001"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8001/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   nginx:
     image: nginx:1.29-alpine
@@ -84,6 +117,7 @@ services:
     restart: unless-stopped
 
   celery_worker:
+    image: ${APP_IMAGE:-drf-base-api-app:local}
     build: .
     command: celery -A api worker -l info
     env_file: .env
@@ -97,6 +131,7 @@ services:
         condition: service_healthy
 
   celery_beat:
+    image: ${APP_IMAGE:-drf-base-api-app:local}
     build: .
     command: celery -A api beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
     env_file: .env

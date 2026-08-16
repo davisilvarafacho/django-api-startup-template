@@ -54,8 +54,8 @@ USER django
 RUN DJANGO_SECRET_KEY=build-only-collectstatic-key \
     python manage.py collectstatic --noinput --clear
 
-# Expor porta
-EXPOSE 80
+# Portas dos processos alternativos da mesma imagem: Gunicorn REST e Uvicorn MCP.
+EXPOSE 80 8001
 
 # Healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
