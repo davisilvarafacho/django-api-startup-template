@@ -153,7 +153,7 @@ Expected: Ruff sem erros e todos os arquivos formatados.
 - Modify: `CLAUDE.md`
 
 **Interfaces:**
-- Consumes: decisão aprovada em `docs/superpowers/specs/2026-08-09-importacoes-entre-modulos-design.md`.
+- Consumes: decisão aprovada em `.ai/brainstorming/spec/2026-08-09-importacoes-entre-modulos-design.md`.
 - Produces: ADR 0006 publicado no portal e regras operacionais equivalentes para agentes de código.
 
 - [ ] **Step 1: Criar o ADR 0006**

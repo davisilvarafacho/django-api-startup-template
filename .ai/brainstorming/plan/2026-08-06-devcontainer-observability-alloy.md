@@ -347,8 +347,7 @@ Expected: all commands exit 0 and all four targets are listed.
 
 Update comments and documentation to say Alloy reads `logs/api.jsonl` and sends
 it to Loki. Explain that Jaeger was removed because Tempo is the sole traces
-backend. Leave historical `docs/superpowers/plans/` and
-`docs/superpowers/specs/` unchanged.
+backend. Preserve the historical documents in `.ai/brainstorming/` unchanged.
 
 - [ ] **Step 2: Document the devcontainer workflow**
 

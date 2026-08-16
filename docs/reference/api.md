@@ -39,7 +39,7 @@ Todo código é declarado como `models.TextChoices` em `<app>/errors.py` e
 registrado em `apps.api.core.errors.error_codes`; um system check falha o
 startup se houver formato inválido ou duplicidade. Ver a implementação em
 `apps/api/core/errors.py` e a spec normativa em
-`docs/superpowers/specs/2026-07-28-api-errors-design.md`.
+`.ai/brainstorming/spec/2026-07-28-api-errors-design.md`.
 
 ## Histórico de auditoria
 

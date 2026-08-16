@@ -305,6 +305,6 @@ confiável.
 
 A página precisa ser registrada na seção `how-to` do `nav` do `mkdocs.yml`
 (as demais how-to estão nas linhas 22-27). Os arquivos de
-`docs/superpowers/specs/` ficam fora do `nav` — como os oito já existentes — e
+`.ai/brainstorming/spec/` fica fora do `nav` — como os oito já existentes — e
 isso não quebra o `mkdocs build --strict`, que trata página ausente do `nav`
 como `INFO`, não como aviso.

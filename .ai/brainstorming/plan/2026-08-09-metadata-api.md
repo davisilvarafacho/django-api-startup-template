@@ -8,7 +8,7 @@
 
 **Stack:** Django 5.2, Django REST Framework, PostgreSQL com `django-rls`, pytest.
 
-**Spec:** [docs/superpowers/specs/2026-08-09-metadata-api-design.md](../specs/2026-08-09-metadata-api-design.md)
+**Spec:** `.ai/brainstorming/spec/2026-08-09-metadata-api-design.md`
 
 ## Restrições globais
 

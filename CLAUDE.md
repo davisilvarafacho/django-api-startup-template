@@ -248,8 +248,8 @@ documento de design, `plan/` para o plano de implementação. Nomeie os arquivos
 com a data no formato `AAAA-MM-DD-assunto.md`. Não escreva spec ou plan em
 `docs/`: são registro de trabalho, não documentação do produto.
 
-`docs/superpowers/` guarda os specs e plans anteriores a esta convenção; é
-histórico, não destino de arquivo novo.
+Specs e plans anteriores a esta convenção também vivem em
+`.ai/brainstorming/`; `docs/superpowers/` guarda apenas handoffs históricos.
 
 ## Versionamento
 

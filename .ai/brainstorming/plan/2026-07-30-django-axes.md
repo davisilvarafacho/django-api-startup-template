@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Design de referência: `docs/superpowers/specs/2026-07-30-django-axes-design.md`. Toda decisão já foi tomada lá; este plano não reabre nenhuma.
+- Design de referência: `.ai/brainstorming/spec/2026-07-30-django-axes-design.md`. Toda decisão já foi tomada lá; este plano não reabre nenhuma.
 - Trabalhar no worktree `.worktrees/django-axes`, branch `feat/django-axes`.
 - Código, comentários e documentação em **português**; nomes de migração em **inglês**.
 - Dependências e execução **sempre** via `uv`, nunca `pip`/`python` direto.
@@ -45,7 +45,7 @@ da branch: 191). Árvore limpa, nada pendente de commit.
 - **Task 7 — verificação final.** Suíte, migrations, documentação, `check` e fluxo
   manual executados; lint global ainda encontra dois `UP017` preexistentes.
 - **Revisão final da branch inteira** e a triagem dos Minor adiados listados abaixo.
-- **Atualizar a spec** (`docs/superpowers/specs/2026-07-30-django-axes-design.md`) com
+- **Atualizar a spec** (`.ai/brainstorming/spec/2026-07-30-django-axes-design.md`) com
   os dois desvios da Task 2, que ela ainda não reflete.
 
 ### Desvios do plano já aplicados no código
@@ -405,7 +405,7 @@ AUTHENTICATION_BACKENDS = [
 # Proteção contra força bruta no login. A chave de bloqueio é o par
 # usuário + IP (E lógico): bloquear só por usuário permitiria que qualquer um
 # trancasse a conta alheia, e bloquear só por IP puniria clientes atrás de NAT.
-# Ver docs/superpowers/specs/2026-07-30-django-axes-design.md.
+# Ver .ai/brainstorming/spec/2026-07-30-django-axes-design.md.
 AXES_ENABLED = get_bool_from_env("AXES_ENABLED", CONFIG_ENVIRONMENT != "test")
 AXES_LOCKOUT_PARAMETERS = [["username", "ip_address"]]
 AXES_FAILURE_LIMIT = int(get_env_var("AXES_FAILURE_LIMIT", 5))

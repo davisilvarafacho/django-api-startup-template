@@ -147,7 +147,7 @@ Regras:
 ficam obrigatoriamente em `<app>/errors.py` (nunca em `models.py`), registrados em
 `apps.api.core.errors.error_codes` via descoberta automática. Toda falha da API é
 levantada com `APIError(code, status_code=...)`, nunca com uma string solta — ver
-`docs/superpowers/specs/2026-07-28-api-errors-design.md`.
+`.ai/brainstorming/spec/2026-07-28-api-errors-design.md`.
 
 ### 2.2. Ordem dos Argumentos dos Fields
 

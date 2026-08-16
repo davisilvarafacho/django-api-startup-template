@@ -3,7 +3,7 @@
 ## Status e contexto
 
 Esta spec substitui
-`docs/superpowers/specs/2026-08-13-mini-mcp-django-health-design.md`. A proposta
+`.ai/brainstorming/spec/2026-08-13-mini-mcp-django-health-design.md`. A proposta
 anterior tratava o MCP como uma ferramenta exclusivamente local, executada por
 `stdio`. O objetivo aprovado é diferente: todo projeto criado a partir do
 template deve nascer capaz de servir MCP em produção, mantendo também uma entrada

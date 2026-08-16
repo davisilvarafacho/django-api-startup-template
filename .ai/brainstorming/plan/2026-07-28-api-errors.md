@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- A spec normativa é `docs/superpowers/specs/2026-07-28-api-errors-design.md`.
+- A spec normativa é `.ai/brainstorming/spec/2026-07-28-api-errors-design.md`.
 - Códigos usam `dominio.erro`, em inglês, e só podem vir de `models.TextChoices` registrados.
 - Cada app mantém seus códigos em `<app>/errors.py`.
 - Mensagens são traduzíveis; clientes tomam decisões pelo código.

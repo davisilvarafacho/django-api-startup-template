@@ -15,7 +15,8 @@ A chave combina usuário e IP de propósito. Bloquear apenas pelo usuário
 permitiria que qualquer pessoa trancasse a conta alheia; bloquear apenas pelo IP
 puniria clientes que compartilham NAT. Essa escolha ainda deixa aceitas as
 lacunas de credential stuffing distribuído e de varredura de vários usuários
-por um único IP, descritas na [spec de design](../superpowers/specs/2026-07-30-django-axes-design.md).
+por um único IP, descritas na spec de design histórica em
+`.ai/brainstorming/spec/2026-07-30-django-axes-design.md`.
 
 ## Resposta de bloqueio
 

@@ -58,7 +58,7 @@ O Ruff global ainda encontra dois `UP017` preexistentes, sem diff contra
    - pacote: `.superpowers/sdd/2026-07-29-auth-token-foundation/review-93ac23b..d076cb5.diff`.
 2. Se o gate estiver limpo, registrar a tarefa 5 em
    `.superpowers/sdd/progress.md`.
-3. Iniciar a tarefa 1 de `docs/superpowers/plans/2026-07-29-mfa-api.md`.
+3. Iniciar a tarefa 1 de `.ai/brainstorming/plan/2026-07-29-mfa-api.md`.
 
 Os arquivos em `.superpowers/sdd/` sao deliberadamente ignorados pelo Git e
 existem apenas nesta worktree.
@@ -100,7 +100,7 @@ Plano de senha/HIBP, 5 tarefas:
 
 ## Referencias
 
-- Design aprovado: `docs/superpowers/specs/2026-07-29-mfa-password-security-design.md`
-- Fundacao: `docs/superpowers/plans/2026-07-29-auth-token-foundation.md`
-- MFA: `docs/superpowers/plans/2026-07-29-mfa-api.md`
-- Senhas/HIBP: `docs/superpowers/plans/2026-07-29-password-security-hibp.md`
+- Design aprovado: `.ai/brainstorming/spec/2026-07-29-mfa-password-security-design.md`
+- Fundacao: `.ai/brainstorming/plan/2026-07-29-auth-token-foundation.md`
+- MFA: `.ai/brainstorming/plan/2026-07-29-mfa-api.md`
+- Senhas/HIBP: `.ai/brainstorming/plan/2026-07-29-password-security-hibp.md`

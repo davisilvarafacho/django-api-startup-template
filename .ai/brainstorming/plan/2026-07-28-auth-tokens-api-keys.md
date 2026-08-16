@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- A spec normativa é `docs/superpowers/specs/2026-07-28-auth-tokens-api-keys-design.md`.
+- A spec normativa é `.ai/brainstorming/spec/2026-07-28-auth-tokens-api-keys-design.md`.
 - Executar primeiro `2026-07-28-api-errors.md` e `2026-07-28-base-resource-permissions.md`.
 - Preservar `Authorization: Token ...`, expiração e contrato externo do Knox.
 - Tipos: sessão `1`, reset `2`, API key `999`.

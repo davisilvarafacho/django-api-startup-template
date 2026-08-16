@@ -871,7 +871,7 @@ uv run mkdocs build --strict
 rg -n "sem migrations|--nomigrations|reset integral pré-lançamento|migrations permanecem congeladas|gate .*suspenso" Makefile .github docs --glob '!docs/superpowers/**'
 ```
 
-Expected: MkDocs exits 0; the search returns no live-policy references outside historical `docs/superpowers/`.
+Expected: MkDocs exits 0; the search returns no live-policy references outside historical `.ai/brainstorming/`.
 
 - [ ] **Step 4: Commitar documentação operacional**
 

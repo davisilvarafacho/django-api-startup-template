@@ -8,7 +8,7 @@
 
 **Tech Stack:** Django 5.2.8, Python 3.12, pytest + pytest-django, ruff, uv.
 
-**Spec:** `docs/superpowers/specs/2026-07-29-start-api-app-design.md`
+**Spec:** `.ai/brainstorming/spec/2026-07-29-start-api-app-design.md`
 
 ## Global Constraints
 

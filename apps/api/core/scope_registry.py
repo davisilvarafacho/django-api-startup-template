@@ -4,7 +4,7 @@ Todo model de negócio pode declarar `api_scope_resource = "recurso"`; o
 registry traduz esse contrato estável (`resource:action`) para os codenames
 internos do Django (`app_label.action_model`), usados por scopes de API key e
 por `user.has_perm()`. Ver a spec normativa em
-`docs/superpowers/specs/2026-07-28-auth-tokens-api-keys-design.md`.
+`.ai/brainstorming/spec/2026-07-28-auth-tokens-api-keys-design.md`.
 """
 
 import re

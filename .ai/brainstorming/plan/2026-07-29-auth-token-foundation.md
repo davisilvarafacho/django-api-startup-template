@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Spec normativa: `docs/superpowers/specs/2026-07-29-mfa-password-security-design.md`.
+- Spec normativa: `.ai/brainstorming/spec/2026-07-29-mfa-password-security-design.md`.
 - Branch: `feat/mfa-2fa-hibp`; sincronizar `main` antes de alterar código.
 - Tipos: `TOKEN=1`, `RESET_PASSWORD=2`, `PRE_AUTH=3`, `API_KEY=999`.
 - `AuthToken.EPHEMERAL_TYPES` contém somente `PRE_AUTH` e `RESET_PASSWORD`.

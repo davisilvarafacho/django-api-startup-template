@@ -35,8 +35,8 @@ agents has a single copy in `docs/`, pointed to from here.
 **Brainstorming output goes to `.ai/brainstorming/`**: design documents in
 `spec/`, implementation plans in `plan/`, named `YYYY-MM-DD-topic.md`. Never
 write a spec or a plan under `docs/` — they are work records, not product
-documentation. `docs/superpowers/` holds the specs and plans that predate this
-convention; it is history, not a destination for new files.
+documentation. Specs and plans that predate this convention were migrated to
+`.ai/brainstorming/`; `docs/superpowers/` retains only historical handoffs.
 
 ## Import Architecture
 

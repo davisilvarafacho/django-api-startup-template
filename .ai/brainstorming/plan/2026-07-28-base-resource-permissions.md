@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- A spec normativa é `docs/superpowers/specs/2026-07-28-auth-tokens-api-keys-design.md`, seções “Campos comuns da Base”, “Permissions humanas” e “Scopes”.
+- A spec normativa é `.ai/brainstorming/spec/2026-07-28-auth-tokens-api-keys-design.md`, seções “Campos comuns da Base”, “Permissions humanas” e “Scopes”.
 - Campos finais: `created_by`, `created_at`, `last_modified_at`; remover `owner` e os quatro campos separados de data/hora.
 - Não existe `last_modified_by`.
 - `resource:action` é a interface pública; codenames Django permanecem internos.

@@ -5,7 +5,7 @@ Todo código de erro é um valor de `models.TextChoices` registrado em
 `api_exception_handler` converge qualquer exceção (DRF, Django ou inesperada)
 para o mesmo envelope `{"errors": [...], "request_id": ...}`.
 
-Ver a spec normativa em `docs/superpowers/specs/2026-07-28-api-errors-design.md`.
+Ver a spec normativa em `.ai/brainstorming/spec/2026-07-28-api-errors-design.md`.
 """
 
 import logging

@@ -3,7 +3,7 @@
 - Branch: `feature/permission-cache`
 - Worktree: `.worktrees/permission-cache`
 - Data: 2026-07-31
-- Plano: [`2026-07-30-permission-cache.md`](../plans/2026-07-30-permission-cache.md)
+- Plano: `.ai/brainstorming/plan/2026-07-30-permission-cache.md`
 
 ## Estado
 

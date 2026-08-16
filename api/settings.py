@@ -304,7 +304,7 @@ ANONYMOUS_USER_NAME = None
 # Proteção contra força bruta no login. A chave de bloqueio é o par
 # usuário + IP (E lógico): bloquear só por usuário permitiria que qualquer um
 # trancasse a conta alheia, e bloquear só por IP puniria clientes atrás de NAT.
-# Ver docs/superpowers/specs/2026-07-30-django-axes-design.md.
+# Ver .ai/brainstorming/spec/2026-07-30-django-axes-design.md.
 AXES_ENABLED = get_bool_from_env("AXES_ENABLED", CONFIG_ENVIRONMENT != "test")
 # Sem isso o axes usa `USERNAME_FIELD` do model ("email") como chave nas
 # credenciais. O `AuthTokenSerializer` padrão do DRF sempre chama

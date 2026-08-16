@@ -188,7 +188,7 @@ make docs
 rg -n 'public_routes\.py|módulo `public_routes`|public_routes\.PUBLIC_ROUTES' apps docs/explanation CLAUDE.md
 ```
 
-Expected: Ruff e a validação MkDocs passam; a busca não retorna referência ativa à antiga convenção. Referências históricas em `docs/superpowers/plans/` e `docs/superpowers/specs/` não são alteradas nesta tarefa.
+Expected: Ruff e a validação MkDocs passam; a busca não retorna referência ativa à antiga convenção. Referências históricas em `.ai/brainstorming/plan/` e `.ai/brainstorming/spec/` não são alteradas nesta tarefa.
 
 - [ ] **Step 5: Executar a verificação final focada**
 

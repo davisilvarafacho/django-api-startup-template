@@ -18,7 +18,7 @@ Não fazem parte deste trabalho:
 - iniciar a observabilidade automaticamente ao abrir o devcontainer;
 - alterar a arquitetura de observabilidade de produção;
 - atualizar imagens não relacionadas à migração do Promtail;
-- reescrever planos e especificações históricas em `docs/superpowers/`.
+- reescrever planos e especificações históricas em `.ai/brainstorming/`.
 
 ## Arquitetura
 
