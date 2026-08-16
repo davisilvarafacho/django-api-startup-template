@@ -6,8 +6,38 @@ from django.conf import settings
 from django.db.migrations.loader import MigrationLoader
 
 
+def _read_test_database_name(override: str | None) -> str:
+    environment = {
+        **os.environ,
+        "DJANGO_ENVIRONMENT": "test",
+        "DJANGO_SECRET_KEY": "test-secret",
+        "DJANGO_SETTINGS_MODULE": "api.settings",
+    }
+    environment.pop("TEST_DATABASE_NAME", None)
+    if override is not None:
+        environment["TEST_DATABASE_NAME"] = override
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from django.conf import settings; print(settings.DATABASES['default']['TEST']['NAME'])",
+        ],
+        check=True,
+        capture_output=True,
+        cwd=settings.BASE_DIR,
+        env=environment,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
 def test_default_test_database_name_is_isolated():
-    assert settings.DATABASES["default"]["TEST"]["NAME"] == "base_test"
+    assert _read_test_database_name(None) == "base_test"
+
+
+def test_test_database_name_honors_environment_override():
+    assert _read_test_database_name("test_parallel_worker_1") == "test_parallel_worker_1"
 
 
 def test_rls_connection_context_reset_is_disabled_during_tests():
