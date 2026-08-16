@@ -83,8 +83,12 @@ usuario_opcional = ContextVariable[Usuario | None].from_var("usuario_opcional")
 usuario_opcional.set(None)
 ```
 
-`clear()` voltará a variável ao estado ausente apenas no contexto de execução
-corrente. Uma leitura posterior observará novamente o `default`.
+`clear()` representará o estado ausente por meio do mesmo sentinela privado
+usado nas leituras. Uma leitura posterior observará novamente o `default`.
+`ContextVar` não oferece uma operação para remover arbitrariamente um valor:
+ela só restaura o estado anterior a partir do token de um `set()`. Portanto,
+o sentinela é um detalhe de implementação necessário para que `clear()` e a
+limpeza coletiva não precisem reter tokens de todos os escritores.
 
 ## Tipagem e IntelliSense
 
@@ -134,6 +138,14 @@ instância. A operação:
 - não modificará os valores padrão das instâncias;
 - retornará `None` e será segura quando nenhuma variável estiver definida.
 
+`clear_context()` é uma barreira de ciclo de vida, não uma forma de invalidar
+tokens emitidos antes dela. Um `reset(token)` posterior continua com a semântica
+nativa de `ContextVar` e pode restaurar um valor anterior. Assim, um consumidor
+não pode reter tokens entre a limpeza coletiva: todo `reset()` pendente precisa
+ocorrer antes de `clear_context()`. Os context managers produzidos por `use()`
+respeitam essa regra porque encerram o escopo antes de o middleware externo
+executar sua limpeza final.
+
 O custo será linear na quantidade de instâncias vivas. Essa escolha mantém uma
 `ContextVar` real por instância e evita o estado mutável compartilhado que seria
 necessário para guardar todas as variáveis em um único dicionário contextual.
@@ -150,7 +162,10 @@ de uma variável ausente. A mensagem identificará o nome recebido por
 
 `reset()` delegará ao `ContextVar` encapsulado as validações de token. Dessa
 forma, token pertencente a outra variável, token criado em outro contexto e
-token reutilizado manterão os erros nativos da biblioteca padrão.
+token reutilizado manterão os erros nativos da biblioteca padrão. O consumidor
+também é responsável por não chamar `reset()` depois de `clear()` ou
+`clear_context()`; esse uso pode restaurar estado anterior, como previsto por
+`ContextVar`.
 
 Erros de tipo em valores são responsabilidade da análise estática; o framework
 não executará validação por `isinstance` nem receberá uma classe de tipo em
@@ -184,8 +199,10 @@ def __call__(self, request):
 
 O middleware ficará externamente aos middlewares que publicam `request_id`,
 usuário e token. Assim, seu `finally` abrangerá respostas normais, respostas
-antecipadas de autenticação e exceções. O framework continuará independente de
-Django; somente o middleware importará tanto Django quanto a classe genérica.
+antecipadas de autenticação e exceções, mas só executará depois de os
+middlewares internos terem restaurado os tokens que criaram. O framework
+continuará independente de Django; somente o middleware importará tanto Django
+quanto a classe genérica.
 
 A limpeza coletiva será uma barreira final contra vazamentos, não um mecanismo
 de propagação. Valores que precisem atravessar a fronteira para uma task Celery
@@ -207,8 +224,10 @@ classe genérica:
 6. `request_id.py` usará a instância genérica internamente e preservará seus
    helpers públicos atuais, evitando uma mudança de API sem relação com o
    objetivo;
-7. os sinais do Celery continuarão propagando o request ID explicitamente e
-   limparão o contexto ao encerrar a task;
+7. os sinais do Celery continuarão propagando o request ID explicitamente e,
+   no encerramento da task, restaurarão primeiro o token do request ID e só
+   então chamarão `clear_context()` para remover qualquer outra variável criada
+   durante a execução;
 8. testes que hoje manipulam `set_current_user()` ou
    `set_thread_variable()` passarão a usar as instâncias, preferencialmente por
    meio de `use()`;
@@ -248,6 +267,8 @@ Os testes unitários do framework cobrirão:
 - restauração por `use()` na saída normal, em blocos aninhados e após exceção;
 - independência de instâncias com o mesmo nome;
 - erros nativos ao usar token inválido ou reutilizado;
+- restauração de estado anterior por um token usado indevidamente após `clear()`,
+  documentando que tokens não atravessam a barreira de limpeza;
 - limpeza de todas as instâncias vivas no contexto corrente;
 - remoção automática de instâncias sem referências do registro fraco;
 - isolamento de valores e da limpeza entre threads;
