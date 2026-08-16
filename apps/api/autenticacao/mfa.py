@@ -15,7 +15,7 @@ import pyotp
 from knox.settings import knox_settings
 
 from .models import AuthToken, MFAChallenge, MFAChallengePurpose, MFAFactor, MFAFactorType, MFARecoveryCode, MFAResetAudit, TokenType, TrustedDevice
-from .services import issue_token, lock_eligible_responsible, lock_user_account, resolve_database_alias, revoke_all_sessions
+from .services import issue_token, lock_eligible_responsible, lock_responsible, revoke_all_sessions
 
 OTP_LIFETIME = timedelta(minutes=5)
 OTP_COOLDOWN = timedelta(seconds=60)
@@ -88,7 +88,13 @@ def schedule_otp_delivery(challenge: MFAChallenge) -> None:
 
 
 def active_factors(user):
-    return MFAFactor.objects.filter(user=user, confirmed_at__isnull=False, enabled_at__isnull=False, disabled_at__isnull=True)
+    database_alias = user._state.db or "default"
+    return MFAFactor.objects.using(database_alias).filter(
+        user=user,
+        confirmed_at__isnull=False,
+        enabled_at__isnull=False,
+        disabled_at__isnull=True,
+    )
 
 
 def available_methods(user) -> list[str]:
@@ -150,61 +156,70 @@ def start_enrollment(user, factor_type: MFAFactorType) -> EnrollmentResult:
     return EnrollmentResult(factor=factor)
 
 
-@transaction.atomic
 def confirm_enrollment(user, factor_type: MFAFactorType, code: str) -> ConfirmResult:
     """Confirma um fator e cria recovery codes somente no primeiro enrollment."""
-    user = _lock_eligible_user(user)
-    factor = MFAFactor.objects.select_for_update().get(user=user, type=factor_type)
-    if factor_type == MFAFactorType.TOTP:
-        valid = consume_totp(factor, code)
-    else:
-        challenge = (
-            MFAChallenge.objects.select_for_update()
-            .filter(user=user, factor=factor, purpose=MFAChallengePurpose.ENROLLMENT, consumed_at__isnull=True)
-            .order_by("-created_at")
-            .first()
+    database_alias = user._state.db or "default"
+    with transaction.atomic(using=database_alias):
+        locked_user = lock_eligible_responsible(user, database_alias)
+        revoke_trusted_devices(locked_user)
+        factor = MFAFactor.objects.using(database_alias).select_for_update().get(user=locked_user, type=factor_type)
+        if factor_type == MFAFactorType.TOTP:
+            valid = consume_totp(factor, code)
+        else:
+            challenge = (
+                MFAChallenge.objects.using(database_alias)
+                .select_for_update()
+                .filter(user=locked_user, factor=factor, purpose=MFAChallengePurpose.ENROLLMENT, consumed_at__isnull=True)
+                .order_by("-created_at")
+                .first()
+            )
+            valid = (
+                bool(challenge)
+                and not challenge.is_expired
+                and challenge.delivery_status == "sent"
+                and hmac.compare_digest(challenge.otp_digest, _otp_digest(code))
+            )
+            if valid:
+                challenge.consumed_at = timezone.now()
+                challenge.save(update_fields=["consumed_at"])
+
+        if not valid:
+            raise ValueError("Código MFA inválido ou expirado.")
+
+        had_confirmed_factor = (
+            MFAFactor.objects.using(database_alias)
+            .filter(user=locked_user, confirmed_at__isnull=False, disabled_at__isnull=True)
+            .exclude(pk=factor.pk)
+            .exists()
         )
-        valid = (
-            bool(challenge)
-            and not challenge.is_expired
-            and challenge.delivery_status == "sent"
-            and hmac.compare_digest(challenge.otp_digest, _otp_digest(code))
-        )
-        if valid:
-            challenge.consumed_at = timezone.now()
-            challenge.save(update_fields=["consumed_at"])
+        factor.confirmed_at = timezone.now()
+        factor.enabled_at = factor.confirmed_at
+        factor.disabled_at = None
+        factor.save(update_fields=["confirmed_at", "enabled_at", "disabled_at"])
 
-    if not valid:
-        raise ValueError("Código MFA inválido ou expirado.")
+        if had_confirmed_factor:
+            return ConfirmResult(factor=factor, recovery_codes=[])
 
-    had_confirmed_factor = MFAFactor.objects.filter(user=user, confirmed_at__isnull=False, disabled_at__isnull=True).exclude(pk=factor.pk).exists()
-    factor.confirmed_at = timezone.now()
-    factor.enabled_at = factor.confirmed_at
-    factor.disabled_at = None
-    factor.save(update_fields=["confirmed_at", "enabled_at", "disabled_at"])
-    revoke_trusted_devices(user)
-
-    if had_confirmed_factor:
-        return ConfirmResult(factor=factor, recovery_codes=[])
-
-    recovery_codes = regenerate_recovery_codes(user)
-    return ConfirmResult(factor=factor, recovery_codes=recovery_codes)
+        recovery_codes = regenerate_recovery_codes(locked_user)
+        return ConfirmResult(factor=factor, recovery_codes=recovery_codes)
 
 
 def regenerate_recovery_codes(user) -> list[str]:
     """Substitui o lote anterior por códigos de recuperação de uso único."""
+    database_alias = user._state.db or "default"
     codes = [secrets.token_urlsafe(9) for _ in range(RECOVERY_CODE_COUNT)]
-    MFARecoveryCode.objects.filter(user=user).delete()
-    MFARecoveryCode.objects.bulk_create([MFARecoveryCode(user=user, digest=make_password(code)) for code in codes])
+    MFARecoveryCode.objects.using(database_alias).filter(user=user).delete()
+    MFARecoveryCode.objects.using(database_alias).bulk_create([MFARecoveryCode(user=user, digest=make_password(code)) for code in codes])
     return codes
 
 
-@transaction.atomic
 def remove_factor(user, factor_type: MFAFactorType) -> None:
-    user = _lock_eligible_user(user)
-    factor = MFAFactor.objects.select_for_update().get(user=user, type=factor_type)
-    factor.delete()
-    revoke_trusted_devices(user)
+    database_alias = user._state.db or "default"
+    with transaction.atomic(using=database_alias):
+        locked_user = lock_eligible_responsible(user, database_alias)
+        revoke_trusted_devices(locked_user)
+        factor = MFAFactor.objects.using(database_alias).select_for_update().get(user=locked_user, type=factor_type)
+        factor.delete()
 
 
 def create_trusted_device(user, metadata: dict) -> PlainTrustedDevice:
@@ -273,7 +288,8 @@ def start_login_challenge(pre_auth: AuthToken, factor_type: str) -> MFAChallenge
 
 
 def _consume_recovery_code(user, code: str) -> bool:
-    for recovery in MFARecoveryCode.objects.select_for_update().filter(user=user, consumed_at__isnull=True):
+    database_alias = user._state.db or "default"
+    for recovery in MFARecoveryCode.objects.using(database_alias).select_for_update().filter(user=user, consumed_at__isnull=True):
         if check_password(code, recovery.digest):
             recovery.consumed_at = timezone.now()
             recovery.save(update_fields=["consumed_at"])
@@ -281,44 +297,54 @@ def _consume_recovery_code(user, code: str) -> bool:
     return False
 
 
-@transaction.atomic
 def verify_login_challenge(pre_auth: AuthToken, code: str, factor_type: str, *, trust_device: bool, metadata: dict) -> LoginResult:
-    if pre_auth.type != TokenType.PRE_AUTH or pre_auth.is_expired:
-        raise ValueError("Pré-autenticação inválida ou expirada.")
-    user = _lock_eligible_user(pre_auth.responsavel)
-    valid = False
-    if factor_type == "recovery":
-        valid = _consume_recovery_code(user, code)
-    else:
-        factor = active_factors(user).select_for_update().get(type=MFAFactorType(factor_type))
-        challenge = (
-            MFAChallenge.objects.select_for_update()
-            .filter(token=pre_auth, factor=factor, purpose=MFAChallengePurpose.LOGIN, consumed_at__isnull=True)
-            .order_by("-created_at")
-            .first()
+    user = pre_auth.responsavel
+    database_alias = pre_auth._state.db or user._state.db or "default"
+    with transaction.atomic(using=database_alias):
+        locked_user = lock_eligible_responsible(user, database_alias)
+        try:
+            pre_auth = AuthToken.objects.using(database_alias).select_for_update().get(pk=pre_auth.pk, responsavel=locked_user)
+        except AuthToken.DoesNotExist as exc:
+            raise ValueError("Pré-autenticação inválida ou expirada.") from exc
+        if pre_auth.type != TokenType.PRE_AUTH or pre_auth.is_expired:
+            raise ValueError("Pré-autenticação inválida ou expirada.")
+
+        valid = False
+        if factor_type == "recovery":
+            valid = _consume_recovery_code(locked_user, code)
+        else:
+            factor = active_factors(locked_user).select_for_update().get(type=MFAFactorType(factor_type))
+            challenge = (
+                MFAChallenge.objects.using(database_alias)
+                .select_for_update()
+                .filter(token=pre_auth, factor=factor, purpose=MFAChallengePurpose.LOGIN, consumed_at__isnull=True)
+                .order_by("-created_at")
+                .first()
+            )
+            if challenge and not challenge.is_expired and challenge.attempts < 5:
+                valid = (
+                    consume_totp(factor, code) if factor.type == MFAFactorType.TOTP else hmac.compare_digest(challenge.otp_digest, _otp_digest(code))
+                )
+                challenge.attempts += 1
+                if valid:
+                    challenge.consumed_at = timezone.now()
+                    factor.last_used_at = timezone.now()
+                    factor.save(update_fields=["last_used_at"])
+                elif challenge.attempts >= 5:
+                    challenge.consumed_at = timezone.now()
+                challenge.save(update_fields=["attempts", "consumed_at"])
+        if not valid:
+            raise ValueError("Código MFA inválido ou expirado.")
+        issued = issue_token(
+            responsavel=locked_user,
+            token_type=TokenType.TOKEN,
+            created_by=locked_user,
+            expiry=knox_settings.TOKEN_TTL,
+            metadata_input={**metadata, "reauthenticated_at": timezone.now()},
         )
-        if challenge and not challenge.is_expired and challenge.attempts < 5:
-            valid = consume_totp(factor, code) if factor.type == MFAFactorType.TOTP else hmac.compare_digest(challenge.otp_digest, _otp_digest(code))
-            challenge.attempts += 1
-            if valid:
-                challenge.consumed_at = timezone.now()
-                factor.last_used_at = timezone.now()
-                factor.save(update_fields=["last_used_at"])
-            elif challenge.attempts >= 5:
-                challenge.consumed_at = timezone.now()
-            challenge.save(update_fields=["attempts", "consumed_at"])
-    if not valid:
-        raise ValueError("Código MFA inválido ou expirado.")
-    issued = issue_token(
-        responsavel=user,
-        token_type=TokenType.TOKEN,
-        created_by=user,
-        expiry=knox_settings.TOKEN_TTL,
-        metadata_input={**metadata, "reauthenticated_at": timezone.now()},
-    )
-    pre_auth.delete()
-    trusted = create_trusted_device(user, metadata) if trust_device else None
-    return LoginResult(issued.plain_token, issued.instance, trusted.plain_token if trusted else "")
+        pre_auth.delete(using=database_alias)
+        trusted = create_trusted_device(locked_user, metadata) if trust_device else None
+        return LoginResult(issued.plain_token, issued.instance, trusted.plain_token if trusted else "")
 
 
 @transaction.atomic
@@ -386,7 +412,7 @@ def reset_user_mfa(*, target, actor, reason: str) -> None:
         raise ValueError("A justificativa é obrigatória.")
     database_alias = target._state.db or "default"
     with transaction.atomic(using=database_alias):
-        locked_target = lock_eligible_responsible(target, database_alias)
+        locked_target = lock_responsible(target, database_alias)
         # Revogação lógica: o registro fica para auditoria. Os `PRE_AUTH`
         # pendentes são efêmeros e não podem sobreviver ao reset.
         revoke_all_sessions(locked_target, actor=actor)

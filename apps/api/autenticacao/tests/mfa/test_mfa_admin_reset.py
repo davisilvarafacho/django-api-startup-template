@@ -51,12 +51,25 @@ def test_reset_user_mfa_bloqueia_usuario_antes_de_token_e_dispositivo(usuario):
 
 
 @pytest.mark.django_db
+def test_reset_user_mfa_aceita_usuario_inativo(usuario):
+    target = criar_usuario()
+    start_enrollment(target, MFAFactorType.TOTP)
+    target.is_active = False
+    target.save(update_fields=["is_active"])
+
+    reset_user_mfa(target=target, actor=usuario, reason="Suporte verificado")
+
+    assert not target.mfa_factors.exists()
+    assert MFAResetAudit.objects.filter(actor=usuario, target=target).exists()
+
+
+@pytest.mark.django_db
 def test_reset_user_mfa_propaga_alias_do_usuario(usuario):
     usuario._state.db = "mfa_alias"
 
     with (
         patch("apps.api.autenticacao.mfa.transaction.atomic") as atomic,
-        patch("apps.api.autenticacao.mfa.lock_eligible_responsible", return_value=usuario),
+        patch("apps.api.autenticacao.mfa.lock_responsible", return_value=usuario),
         patch.object(AuthToken.objects, "using") as auth_tokens_using,
         patch.object(TrustedDevice.objects, "using") as trusted_devices_using,
         patch("apps.api.autenticacao.mfa.MFAFactor.objects.using") as factors_using,

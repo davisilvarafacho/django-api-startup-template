@@ -53,14 +53,18 @@ def lock_user_account(user, *, using=None):
     return Usuario.all_objects.using(database_alias).select_for_update().get(pk=user_id)
 
 
+def lock_responsible(responsavel, database_alias: str):
+    """Bloqueia a conta alvo, recusando somente uma conta já excluída."""
+    locked = lock_user_account(responsavel, using=database_alias)
+    if locked.is_deleted:
+        raise APIError(AuthErrorCode.RESPONSIBLE_INACTIVE, status_code=409)
+    return locked
+
+
 def lock_eligible_responsible(responsavel, database_alias: str):
-    """Bloqueia e recarrega o dono antes de criar uma credencial."""
-    user_model = type(responsavel)
-    try:
-        locked = user_model._base_manager.using(database_alias).select_for_update().get(pk=responsavel.pk)
-    except user_model.DoesNotExist as exc:
-        raise APIError(AuthErrorCode.RESPONSIBLE_INACTIVE, status_code=409) from exc
-    if not locked.is_active or getattr(locked, "is_deleted", False):
+    """Bloqueia e recarrega um dono apto a receber novas credenciais."""
+    locked = lock_responsible(responsavel, database_alias)
+    if not locked.is_active:
         raise APIError(AuthErrorCode.RESPONSIBLE_INACTIVE, status_code=409)
     return locked
 
