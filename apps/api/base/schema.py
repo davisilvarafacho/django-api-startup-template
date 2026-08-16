@@ -26,8 +26,7 @@ ACOES_DESCRIPTION = (
 )
 
 CHANGES_DESCRIPTION = (
-    "`changes` é um objeto `{campo: [valor_antes, valor_depois]}`. Campos "
-    "sensíveis aparecem mascarados e campos técnicos ficam de fora."
+    "`changes` é um objeto `{campo: [valor_antes, valor_depois]}`. Campos sensíveis aparecem mascarados e campos técnicos ficam de fora."
 )
 
 SOMENTE_LEITURA_DESCRIPTION = (

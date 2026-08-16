@@ -9,7 +9,8 @@ from django.utils.translation import gettext_lazy as _
 from auditlog.models import AuditlogHistoryField
 from django_rls.models import RLSModel, RLSQuerySet
 from django_rls.policies import TenantPolicy
-from threadlocals.threadlocals import get_current_user
+
+from apps.api.core.context import request_atual, usuario_atual
 
 
 class Estados(models.IntegerChoices):
@@ -107,7 +108,10 @@ class CreatedByMixin(models.Model):
 
     def save(self, *args, **kwargs):
         if self._state.adding and self.created_by_id is None:
-            current_user = get_current_user()
+            current_user = usuario_atual.get()
+            if current_user is None:
+                request = request_atual.get()
+                current_user = getattr(request, "user", None)
             if current_user and current_user.is_authenticated:
                 self.created_by = current_user
 
@@ -243,7 +247,7 @@ class CloneMixin(models.Model):
         for chave, valor in fields.items():
             setattr(clone, chave, valor)
 
-        clone.created_by = get_current_user()
+        clone.created_by = usuario_atual.get()
         clone.modify_before_cloning()
 
         if commit:

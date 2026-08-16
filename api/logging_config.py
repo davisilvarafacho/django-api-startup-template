@@ -63,14 +63,13 @@ class ContextFilter(logging.Filter):
     def _get_request_context(self):
         """Lê usuário e organização da request corrente.
 
-        Reaproveita o `ThreadLocalMiddleware` que a base já usa. A leitura é
-        preguiçosa de propósito: com autenticação por token o `request.user` só
-        é resolvido no dispatch da view, então fixar o valor em um middleware
-        pegaria sempre um usuário anônimo.
+        Lê a request publicada pelo contexto de execução. A leitura é preguiçosa
+        de propósito: com autenticação por token o usuário pode ser resolvido
+        depois da entrada na cadeia de middlewares.
         """
-        from threadlocals.threadlocals import get_current_request
+        from apps.api.core.context import request_atual
 
-        request = get_current_request()
+        request = request_atual.get()
         if request is None:
             return None, None
 

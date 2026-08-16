@@ -4,10 +4,10 @@ from rest_framework.test import APIClient
 
 import pytest
 from knox.models import get_token_model
-from threadlocals.threadlocals import set_current_user, set_thread_variable
 
 from apps.api.autenticacao.models import TokenMetaData, TokenType
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
+from internal_frameworks.context import ContextVariable
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
@@ -17,11 +17,9 @@ AuthToken = get_token_model()
 
 @pytest.fixture(autouse=True)
 def _limpar_thread_locals():
-    set_current_user(None)
-    set_thread_variable("request", None)
+    ContextVariable.clear_context()
     yield
-    set_current_user(None)
-    set_thread_variable("request", None)
+    ContextVariable.clear_context()
 
 
 @pytest.fixture

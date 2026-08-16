@@ -5,9 +5,9 @@ from django.core.cache import cache
 from rest_framework.test import APIClient
 
 import pytest
-from threadlocals.threadlocals import set_current_user, set_thread_variable
 
 from apps.api.autenticacao.views import LoginView
+from internal_frameworks.context import ContextVariable
 
 
 @pytest.fixture(autouse=True)
@@ -41,12 +41,10 @@ def ambiente_axes(settings):
     }
     throttle_classes = LoginView.throttle_classes
     LoginView.throttle_classes = []
-    set_current_user(None)
-    set_thread_variable("request", None)
+    ContextVariable.clear_context()
     yield
     LoginView.throttle_classes = throttle_classes
-    set_current_user(None)
-    set_thread_variable("request", None)
+    ContextVariable.clear_context()
 
 
 @pytest.fixture

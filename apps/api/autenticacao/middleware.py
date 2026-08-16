@@ -16,6 +16,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import AuthenticationFailed
 
+from apps.api.core.context import token_atual, usuario_atual
 from apps.api.core.errors import APIError, error_response, error_response_for_api_error
 from apps.api.core.route_markers import MARCADOR_PUBLICA, tem_marcador, view_do_path
 from apps.api.core.routes_registry import routes_registry
@@ -93,11 +94,10 @@ class AuthenticationMiddleware:
                 message="Pré-autenticação não permite acesso a esta rota.",
             )
 
-        # Não usamos `set_current_user`: ele grava num global da thread que nunca é
-        # limpo, e `get_current_user()` já resolve `request.user` a partir da request
-        # que o ThreadLocalMiddleware guarda por requisição.
         request.user = user
         request.auth = auth_token
+        usuario_atual.set(user)
+        token_atual.set(auth_token)
         setattr(request, REQUEST_ATTR_RESOLVED, RESOLVED_PRIVATE)
 
         return None

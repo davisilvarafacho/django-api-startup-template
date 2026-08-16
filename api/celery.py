@@ -72,10 +72,12 @@ def aplicar_request_id(task_id=None, task=None, **kwargs):
 def limpar_request_id(task_id=None, **kwargs):
     """Libera o contexto ao fim da task."""
     from apps.api.core.request_id import reset_request_id
+    from internal_frameworks.context import ContextVariable
 
     token = _tokens.pop(task_id, None)
     if token is not None:
         reset_request_id(token)
+    ContextVariable.clear_context()
 
 
 @before_task_publish.connect

@@ -31,7 +31,6 @@ dependencies = [
     "django-rest-knox==5.0.2",
     "django-rls>=2.0.0",
     "django-scalar==0.2.0",
-    "django-threadlocals==0.10",
     "django-unfold==0.81.0",
     "django-waffle>=5.0.0",
     "djangorestframework==3.16.1",

@@ -5,14 +5,15 @@ from django.db import models
 import pytest
 from auditlog import get_logentry_model
 from auditlog.registry import auditlog
-from threadlocals.threadlocals import set_current_user
 
 import apps.api.base.models as base_models
 from apps.api.autenticacao.models import MFAChallenge, MFAFactor, MFARecoveryCode, MFAResetAudit, TokenMetaData, TrustedDevice
 from apps.api.base.models import Base, BaseTenantless
+from apps.api.core.context import usuario_atual
 from apps.logs.models import LogAlteracao
 from apps.organizacoes.models import Convite, Organizacao, Time, Vinculo
 from apps.usuarios.models import Usuario
+from internal_frameworks.context import ContextVariable
 from tests.support.usuarios import criar_usuario
 
 
@@ -78,14 +79,15 @@ def test_internal_e_read_only_fields_usam_os_novos_nomes():
 
 @pytest.fixture(autouse=True)
 def _limpar_usuario_atual():
+    ContextVariable.clear_context()
     yield
-    set_current_user(None)
+    ContextVariable.clear_context()
 
 
 @pytest.mark.django_db
 def test_created_by_e_preenchido_automaticamente_pelo_usuario_atual():
     autor = criar_usuario()
-    set_current_user(autor)
+    usuario_atual.set(autor)
     organizacao = Organizacao.objects.create(nome="Org", slug="org-audit-autor")
     time = Time.objects.create(organizacao=organizacao, nome="Produto")
 
@@ -95,7 +97,7 @@ def test_created_by_e_preenchido_automaticamente_pelo_usuario_atual():
 
 @pytest.mark.django_db
 def test_created_by_fica_none_quando_criado_pelo_sistema():
-    set_current_user(None)
+    usuario_atual.clear()
     organizacao = Organizacao.objects.create(nome="Org", slug="org-audit-sistema")
     time = Time.objects.create(organizacao=organizacao, nome="Produto")
 
@@ -108,10 +110,10 @@ def test_clonar_atribui_created_by_do_usuario_atual_e_reseta_timestamps():
     clonador = criar_usuario()
     organizacao = Organizacao.objects.create(nome="Org", slug="org-audit-clone")
 
-    set_current_user(criador)
+    usuario_atual.set(criador)
     time = Time.objects.create(organizacao=organizacao, nome="Produto")
 
-    set_current_user(clonador)
+    usuario_atual.set(clonador)
     clone = time.clonar(nome="Produto (cópia)")
 
     assert clone.pk != time.pk

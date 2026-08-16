@@ -14,7 +14,7 @@
 1. django-hijack
 1. django-rest-knox
 1. django-silk
-1. django-threadlocals
+1. `internal_frameworks.context`
 1. django-zeal
 1. drf-api-logger
 

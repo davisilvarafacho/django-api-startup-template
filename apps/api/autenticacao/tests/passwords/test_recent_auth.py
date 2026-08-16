@@ -9,13 +9,13 @@ from rest_framework.throttling import ScopedRateThrottle, UserRateThrottle
 
 import pytest
 from knox.models import get_token_model
-from threadlocals.threadlocals import set_current_user, set_thread_variable
 
 from apps.api.autenticacao.errors import AuthErrorCode
 from apps.api.autenticacao.models import TokenMetaData, TokenType
 from apps.api.autenticacao.recent_auth import RecentAuthenticationPermission, require_recent_auth
 from apps.api.autenticacao.views import ReauthenticateView
 from apps.api.core.errors import APIError
+from internal_frameworks.context import ContextVariable
 from tests.support.usuarios import criar_usuario
 
 AuthToken = get_token_model()
@@ -29,11 +29,9 @@ def _limpar_thread_locals():
     usuário desta request vazaria como `get_current_user()` para o próximo
     teste que rodar na mesma thread.
     """
-    set_current_user(None)
-    set_thread_variable("request", None)
+    ContextVariable.clear_context()
     yield
-    set_current_user(None)
-    set_thread_variable("request", None)
+    ContextVariable.clear_context()
 
 
 class MetadataFalsa:

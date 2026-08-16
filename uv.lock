@@ -1107,15 +1107,6 @@ wheels = [
 ]
 
 [[package]]
-name = "django-threadlocals"
-version = "0.10"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/60/b4/8defa1d5de9efa81b75b90baccd8607de1a2abd24c0d25a630d9183a1b6f/django-threadlocals-0.10.tar.gz", hash = "sha256:c06a4c6701a56bcca2acd0bd655aaa136501ab7e5e6327ab7245be629906432a", size = 5655, upload-time = "2019-01-31T22:56:00.923Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/0b/02/181f5c3e8f6da800bc8ee4089a38878842d6f1c65054f0ffc0bd042aad47/django_threadlocals-0.10-py3-none-any.whl", hash = "sha256:fd5e2cb36224163a53f326baddfc36251d150466234a16d8f97f54ad92bce89d", size = 6685, upload-time = "2019-01-31T22:55:59.717Z" },
-]
-
-[[package]]
 name = "django-timezone-field"
 version = "7.2.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1217,7 +1208,6 @@ dependencies = [
     { name = "django-rest-knox" },
     { name = "django-rls" },
     { name = "django-scalar" },
-    { name = "django-threadlocals" },
     { name = "django-unfold" },
     { name = "django-waffle" },
     { name = "djangorestframework" },
@@ -1334,7 +1324,6 @@ requires-dist = [
     { name = "django-rest-knox", specifier = "==5.0.2" },
     { name = "django-rls", specifier = ">=2.0.0" },
     { name = "django-scalar", specifier = "==0.2.0" },
-    { name = "django-threadlocals", specifier = "==0.10" },
     { name = "django-unfold", specifier = "==0.81.0" },
     { name = "django-waffle", specifier = ">=5.0.0" },
     { name = "djangorestframework", specifier = "==3.16.1" },

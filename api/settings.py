@@ -159,8 +159,11 @@ MIDDLEWARE = (
         # demais middlewares.
         "django_prometheus.middleware.PrometheusBeforeMiddleware",
         "django.middleware.security.SecurityMiddleware",
-        # Logo após o SecurityMiddleware para que todo log emitido daqui em diante
-        # já carregue o correlation id.
+        # Publica a request e limpa todas as ContextVars na saída, depois de os
+        # middlewares internos restaurarem seus próprios tokens.
+        "apps.api.core.context.RequestContextMiddleware",
+        # Logo após o middleware de contexto para que todo log emitido daqui em
+        # diante já carregue o correlation id.
         "apps.api.core.request_id.RequestIDMiddleware",
         "django.middleware.gzip.GZipMiddleware",
         "django.contrib.sessions.middleware.SessionMiddleware",
@@ -170,10 +173,9 @@ MIDDLEWARE = (
         "django.contrib.messages.middleware.MessageMiddleware",
         "django.middleware.clickjacking.XFrameOptionsMiddleware",
         "django.middleware.locale.LocaleMiddleware",
-        "threadlocals.middleware.ThreadLocalMiddleware",
         "corsheaders.middleware.CorsMiddleware",
         # Resolve o token antes dos middlewares que dependem de `request.user`
-        # (auditlog, PostHog, tenancy). Precisa vir depois do ThreadLocalMiddleware.
+        # (auditlog, PostHog, tenancy).
         "apps.api.autenticacao.middleware.AuthenticationMiddleware",
         "auditlog.middleware.AuditlogMiddleware",
         "posthog.integrations.django.PosthogContextMiddleware",

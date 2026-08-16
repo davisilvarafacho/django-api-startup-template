@@ -10,8 +10,7 @@ from rest_framework.permissions import DjangoModelPermissions
 from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet, ModelViewSet
 
-from threadlocals.threadlocals import get_request_variable
-
+from apps.api.core.context import token_atual
 from apps.api.core.errors import APIError, CoreErrorCode
 from apps.api.core.scope_mixins import ScopeResourceMixin
 from apps.api.metadata.handlers import aplicar_metadata
@@ -103,7 +102,7 @@ class SerializerViewSetMixin:
     def get_serializer_context(self):
         context = super().get_serializer_context()
         aditional_context = self.get_aditional_serializer_context()
-        return {"action": self.action, "token": get_request_variable("token"), **context, **aditional_context}
+        return {"action": self.action, "token": token_atual.get(), **context, **aditional_context}
 
 
 class GenericActionViewSetMixin:

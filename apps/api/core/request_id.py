@@ -13,9 +13,10 @@ a mesma thread do pool.
 import logging
 import time
 import uuid
-from contextvars import ContextVar
 
 from django.utils.deprecation import MiddlewareMixin
+
+from internal_frameworks.context import ContextVariable
 
 # Header aceito na entrada e sempre devolvido na resposta. Se o proxy/gateway já
 # gera um id (nginx, ALB, Cloudflare), ele é reaproveitado.
@@ -23,7 +24,7 @@ HEADER_REQUEST_ID = "X-Request-ID"
 
 META_HEADER_REQUEST_ID = "HTTP_X_REQUEST_ID"
 
-_request_id = ContextVar("request_id", default=None)
+_request_id = ContextVariable[str].from_var("request_id")
 
 access_logger = logging.getLogger("api.access")
 

@@ -8,10 +8,10 @@ from rest_framework.test import APIClient
 from rest_framework.throttling import AnonRateThrottle, ScopedRateThrottle
 
 import pytest
-from threadlocals.threadlocals import set_current_user, set_thread_variable
 
 from apps.api.autenticacao.models import AuthToken, TokenMetaData, TokenType
 from apps.api.autenticacao.views import LoginView
+from internal_frameworks.context import ContextVariable
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
@@ -25,11 +25,9 @@ def _limpar_thread_locals():
     usuário desta request vazaria como `get_current_user()` para o próximo
     teste que rodar na mesma thread.
     """
-    set_current_user(None)
-    set_thread_variable("request", None)
+    ContextVariable.clear_context()
     yield
-    set_current_user(None)
-    set_thread_variable("request", None)
+    ContextVariable.clear_context()
 
 
 @pytest.fixture
