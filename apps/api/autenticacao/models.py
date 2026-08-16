@@ -2,7 +2,7 @@ import uuid as uuid_lib
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured, ValidationError
-from django.db import models
+from django.db import DEFAULT_DB_ALIAS, models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
@@ -52,6 +52,7 @@ class AuthTokenManager(models.Manager):
 
     def create(self, user=None, expiry=knox_settings.TOKEN_TTL, prefix=knox_settings.TOKEN_PREFIX, **kwargs):
         responsavel = kwargs.pop("responsavel", user)
+        database_alias = self._db or getattr(getattr(responsavel, "_state", None), "db", None) or DEFAULT_DB_ALIAS
         token_type = kwargs.get("type", TokenType.TOKEN)
         name = kwargs.get("name", "")
         if isinstance(name, str):
@@ -65,7 +66,7 @@ class AuthTokenManager(models.Manager):
             organization=kwargs.get("organization") or kwargs.get("organization_id"),
             name=name,
             scopes=kwargs.get("scopes", ()),
-            using=self.db,
+            database_alias=database_alias,
         )
 
         plain_token = prefix + crypto.create_token_string()
@@ -90,7 +91,7 @@ def validate_token_configuration(
     organization,
     name,
     scopes,
-    using=None,
+    database_alias: str | None = None,
 ):
     """Valida os campos que diferenciam uma API key dos demais tokens."""
     if token_type != TokenType.API_KEY:
@@ -122,14 +123,16 @@ def validate_token_configuration(
     if organization is not None and responsavel is not None:
         from apps.organizacoes.models import Vinculo
 
-        queryset = Vinculo.objects
-        if using is not None:
-            queryset = queryset.using(using)
-        if not queryset.filter(
-            organizacao=organization,
-            usuario=responsavel,
-            is_active=True,
-        ).exists():
+        database_alias = database_alias or getattr(getattr(responsavel, "_state", None), "db", None) or DEFAULT_DB_ALIAS
+        if (
+            not Vinculo.objects.using(database_alias)
+            .filter(
+                organizacao=organization,
+                usuario=responsavel,
+                is_active=True,
+            )
+            .exists()
+        ):
             errors["responsavel"] = "O responsável precisa ter vínculo ativo com a organização."
 
     if errors:

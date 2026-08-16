@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from django.contrib.auth.models import Permission
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
@@ -6,7 +8,7 @@ from django.utils import timezone
 import pytest
 
 from apps.api.autenticacao.mfa import create_trusted_device, reset_user_mfa, start_enrollment
-from apps.api.autenticacao.models import MFAFactorType, MFAResetAudit, TokenType
+from apps.api.autenticacao.models import AuthToken, MFAFactorType, MFAResetAudit, TokenType, TrustedDevice
 from apps.api.autenticacao.services import issue_token
 from tests.support.usuarios import criar_usuario
 
@@ -33,22 +35,39 @@ def test_admin_reset_exige_permissao_reauth_e_justificativa(api_client, usuario,
 
 
 @pytest.mark.django_db
-def test_admin_reset_respeita_ordem_global_usuario_token_dispositivo(usuario):
+def test_reset_user_mfa_bloqueia_usuario_antes_de_token_e_dispositivo(usuario):
     target = criar_usuario()
-    start_enrollment(target, MFAFactorType.TOTP)
-    issue_token(responsavel=target, token_type=TokenType.TOKEN, created_by=target, expiry=None, metadata_input={})
+    AuthToken.objects.create(responsavel=target, type=TokenType.TOKEN)
+    AuthToken.objects.create(responsavel=target, type=TokenType.PRE_AUTH)
     create_trusted_device(target, {})
 
     with CaptureQueriesContext(connection) as queries:
-        reset_user_mfa(target=target, actor=usuario, reason="Incidente")
+        reset_user_mfa(target=target, actor=usuario, reason="Suporte verificado")
 
-    statements = [query["sql"].lower() for query in queries]
-    user_lock = next(index for index, sql in enumerate(statements) if 'from "usuario"' in sql and "for update" in sql)
-    prior_row_locks = [sql for sql in statements[:user_lock] if "for update" in sql]
-    token_write = next(
-        index for index, sql in enumerate(statements) if index > user_lock and '"auth_token"' in sql and sql.startswith(("update", "delete"))
-    )
-    device_write = next(index for index, sql in enumerate(statements) if 'update "trusted_device"' in sql)
-
-    assert prior_row_locks == []
+    user_lock = next(index for index, query in enumerate(queries) if 'FROM "usuario"' in query["sql"] and "FOR UPDATE" in query["sql"])
+    token_write = next(index for index, query in enumerate(queries) if query["sql"].startswith(('UPDATE "auth_token"', 'DELETE FROM "auth_token"')))
+    device_write = next(index for index, query in enumerate(queries) if query["sql"].startswith('UPDATE "trusted_device"'))
     assert user_lock < token_write < device_write
+
+
+@pytest.mark.django_db
+def test_reset_user_mfa_propaga_alias_do_usuario(usuario):
+    usuario._state.db = "mfa_alias"
+
+    with (
+        patch("apps.api.autenticacao.mfa.transaction.atomic") as atomic,
+        patch("apps.api.autenticacao.mfa.lock_eligible_responsible", return_value=usuario),
+        patch.object(AuthToken.objects, "using") as auth_tokens_using,
+        patch.object(TrustedDevice.objects, "using") as trusted_devices_using,
+        patch("apps.api.autenticacao.mfa.MFAFactor.objects.using") as factors_using,
+        patch("apps.api.autenticacao.mfa.MFARecoveryCode.objects.using") as recovery_codes_using,
+        patch("apps.api.autenticacao.mfa.MFAResetAudit.objects.using") as reset_audit_using,
+    ):
+        reset_user_mfa(target=usuario, actor=usuario, reason="Suporte verificado")
+
+    atomic.assert_called_once_with(using="mfa_alias")
+    assert auth_tokens_using.call_count == 2
+    trusted_devices_using.assert_called_once_with("mfa_alias")
+    factors_using.assert_called_once_with("mfa_alias")
+    recovery_codes_using.assert_called_once_with("mfa_alias")
+    reset_audit_using.assert_called_once_with("mfa_alias")

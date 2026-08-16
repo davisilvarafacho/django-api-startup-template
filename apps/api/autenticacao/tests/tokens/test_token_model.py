@@ -1,12 +1,14 @@
 """Contrato do modelo de token próprio, compatível com o Knox."""
 
 from datetime import timedelta
+from unittest.mock import Mock, patch
 
 from django.core.exceptions import ValidationError
+from django.db import models
 
 import pytest
 
-from apps.api.autenticacao.models import AuthToken, TokenType
+from apps.api.autenticacao.models import AuthToken, TokenType, validate_token_configuration
 from apps.organizacoes.models import Organizacao, Vinculo
 from tests.support.usuarios import criar_usuario
 
@@ -40,6 +42,39 @@ def test_manager_aceita_responsavel_diretamente(usuario):
     instance, _plain = AuthToken.objects.create(responsavel=usuario)
 
     assert instance.responsavel == usuario
+
+
+def test_manager_propaga_alias_para_validacao():
+    responsavel = Mock(is_active=True)
+    instance = Mock()
+
+    with (
+        patch("apps.api.autenticacao.models.validate_token_configuration") as validate,
+        patch.object(models.Manager, "create", return_value=instance),
+    ):
+        created, _plain_token = AuthToken.objects.db_manager("auth_alias").create(responsavel=responsavel)
+
+    assert created is instance
+    assert validate.call_args.kwargs["database_alias"] == "auth_alias"
+
+
+def test_validate_token_configuration_consulta_vinculo_no_alias():
+    responsavel = Mock(is_active=True)
+    organization = Mock()
+
+    with patch("apps.organizacoes.models.Vinculo.objects.using") as using:
+        using.return_value.filter.return_value.exists.return_value = True
+        validate_token_configuration(
+            responsavel=responsavel,
+            token_type=TokenType.API_KEY,
+            created_by=responsavel,
+            organization=organization,
+            name="Integração",
+            scopes=[],
+            database_alias="auth_alias",
+        )
+
+    using.assert_called_once_with("auth_alias")
 
 
 @pytest.mark.django_db

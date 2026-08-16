@@ -381,19 +381,17 @@ def verify_reauthentication(session: AuthToken, code: str, factor_type: str) -> 
     session.metadata.save(update_fields=["reauthenticated_at"])
 
 
-def reset_user_mfa(*, target, actor, reason: str, using=None) -> None:
+def reset_user_mfa(*, target, actor, reason: str) -> None:
     if not reason.strip():
         raise ValueError("A justificativa é obrigatória.")
-    database_alias = resolve_database_alias(target, using)
+    database_alias = target._state.db or "default"
     with transaction.atomic(using=database_alias):
-        conta = lock_user_account(target, using=database_alias)
-        # A conta é sempre o primeiro lock: troca de senha e verificação MFA
-        # também seguem user → factor/challenge/token → device.
-        MFAFactor.objects.using(database_alias).select_for_update().filter(user=conta).delete()
-        MFARecoveryCode.objects.using(database_alias).filter(user=conta).delete()
-        revoke_all_sessions(conta, actor=actor, using=database_alias)
+        locked_target = lock_eligible_responsible(target, database_alias)
         # Revogação lógica: o registro fica para auditoria. Os `PRE_AUTH`
-        # pendentes não podem sobreviver ao reset e são removidos.
-        AuthToken.objects.using(database_alias).filter(responsavel=conta, type=TokenType.PRE_AUTH).delete()
-        TrustedDevice.objects.using(database_alias).filter(user=conta, revoked_at__isnull=True).update(revoked_at=timezone.now())
-        MFAResetAudit.objects.using(database_alias).create(actor=actor, target=conta, reason=reason.strip())
+        # pendentes são efêmeros e não podem sobreviver ao reset.
+        revoke_all_sessions(locked_target, actor=actor)
+        AuthToken.objects.using(database_alias).filter(responsavel=locked_target, type=TokenType.PRE_AUTH).delete()
+        TrustedDevice.objects.using(database_alias).filter(user=locked_target).update(revoked_at=timezone.now())
+        MFAFactor.objects.using(database_alias).select_for_update().filter(user=locked_target).delete()
+        MFARecoveryCode.objects.using(database_alias).filter(user=locked_target).delete()
+        MFAResetAudit.objects.using(database_alias).create(actor=actor, target=locked_target, reason=reason.strip())
