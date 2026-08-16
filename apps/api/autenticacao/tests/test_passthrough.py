@@ -20,6 +20,7 @@ from apps.api.autenticacao.constants import (
 )
 from apps.api.autenticacao.errors import AuthErrorCode
 from apps.api.autenticacao.middleware import AuthenticationMiddleware
+from apps.api.core.context import RequestContextMiddleware, token_atual, usuario_atual
 
 
 class UsuarioFalso:
@@ -136,6 +137,26 @@ def test_rota_privada_com_token_valido_resolve_o_usuario(rf, rota_privada):
     assert request.user is usuario
     assert request.auth == "token-obj"
     assert getattr(request, REQUEST_ATTR_RESOLVED) == RESOLVED_PRIVATE
+
+
+def test_autenticacao_publica_contexto_e_o_middleware_externo_o_limpa(rf, rota_privada):
+    usuario = UsuarioFalso()
+    token = object()
+    contexto_da_view = {}
+
+    def get_response(request):
+        contexto_da_view["usuario"] = usuario_atual.get()
+        contexto_da_view["token"] = token_atual.get()
+        return "resposta-da-view"
+
+    autenticacao = AuthenticationMiddleware(get_response)
+    autenticacao.authenticators = [AutenticadorFalso(resultado=(usuario, token))]
+    middleware = RequestContextMiddleware(autenticacao)
+
+    assert middleware(rf.get("/v1/pedidos/")) == "resposta-da-view"
+    assert contexto_da_view == {"usuario": usuario, "token": token}
+    assert not usuario_atual.is_set()
+    assert not token_atual.is_set()
 
 
 def test_usa_o_proximo_autenticador_quando_o_primeiro_devolve_none(rf, rota_privada):
