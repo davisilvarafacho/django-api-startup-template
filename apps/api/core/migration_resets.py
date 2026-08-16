@@ -54,12 +54,14 @@ def _installed_app_configs():
 
 
 def _ensure_no_first_party_migration_conflicts(app_labels: tuple[str, ...] | list[str]) -> None:
-    conflicts = MigrationLoader(None, ignore_no_migrations=True).detect_conflicts()
+    loader = MigrationLoader(None, ignore_no_migrations=True)
+    conflicts = loader.detect_conflicts()
     first_party_conflicts = {label: tuple(names) for label, names in conflicts.items() if label in app_labels}
     if not first_party_conflicts:
         return
 
-    details = "; ".join(f"{label}: {', '.join(names)}" for label, names in sorted(first_party_conflicts.items()))
+    formatted_conflicts = (f"{label}: {', '.join(names)}" for label, names in sorted(first_party_conflicts.items()))
+    details = "; ".join(formatted_conflicts)
     raise MigrationResetError(f"conflitos no grafo de migrations próprias: {details}")
 
 

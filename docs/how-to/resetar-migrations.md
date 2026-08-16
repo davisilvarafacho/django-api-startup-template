@@ -35,7 +35,18 @@ make test
 ```
 
 Se a geração falhar antes do reset do schema, os arquivos antigos são
-restaurados. Depois que o schema for removido, o erro informa uma destas etapas:
-`recriar schema public`, `aplicar migrations`, `validar models e migrations` ou
-`exibir plano aplicado`. Corrija a causa indicada e continue com `make migrate`;
-as migrations novas permanecem no working tree.
+restaurados. Nas etapas seguintes, as migrations novas permanecem no working
+tree. Recupere conforme a etapa indicada no erro:
+
+- `recriar schema public`: corrija a causa e repita o reset protegido completo
+  com
+  `make reset-migrations RESET_MIGRATIONS_ARGS='--apply --confirm-database base'`;
+- `aplicar migrations`: corrija a causa e execute `make migrate`;
+- `validar models e migrations`: execute
+  `uv run python manage.py makemigrations --check --dry-run`;
+- `exibir plano aplicado`: execute
+  `uv run python manage.py showmigrations --plan`.
+
+A recriação do schema ocorre em uma transação. Se ela falhar, o schema e o
+histórico anteriores podem ser restaurados, mesmo que as migrations novas
+continuem no working tree.

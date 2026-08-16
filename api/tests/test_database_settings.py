@@ -6,6 +6,22 @@ from django.conf import settings
 from django.db.migrations.loader import MigrationLoader
 
 
+def _read_setting(expression: str, environment: dict[str, str]) -> str:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            f"from django.conf import settings; print({expression})",
+        ],
+        check=True,
+        capture_output=True,
+        cwd=settings.BASE_DIR,
+        env=environment,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
 def _read_test_database_name(override: str | None) -> str:
     environment = {
         **os.environ,
@@ -17,19 +33,7 @@ def _read_test_database_name(override: str | None) -> str:
     if override is not None:
         environment["TEST_DATABASE_NAME"] = override
 
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from django.conf import settings; print(settings.DATABASES['default']['TEST']['NAME'])",
-        ],
-        check=True,
-        capture_output=True,
-        cwd=settings.BASE_DIR,
-        env=environment,
-        text=True,
-    )
-    return result.stdout.strip()
+    return _read_setting("settings.DATABASES['default']['TEST']['NAME']", environment)
 
 
 def test_default_test_database_name_is_isolated():
@@ -60,17 +64,6 @@ def test_rls_connection_context_reset_remains_enabled_in_production():
         "DJANGO_SECRET_KEY": "test-secret",
         "DJANGO_SETTINGS_MODULE": "api.settings",
     }
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from django.conf import settings; print(settings.DJANGO_RLS['RESET_CONTEXT_ON_CONNECT'])",
-        ],
-        check=True,
-        capture_output=True,
-        cwd=settings.BASE_DIR,
-        env=environment,
-        text=True,
-    )
+    reset_context_on_connect = _read_setting("settings.DJANGO_RLS['RESET_CONTEXT_ON_CONNECT']", environment)
 
-    assert result.stdout.strip() == "True"
+    assert reset_context_on_connect == "True"
