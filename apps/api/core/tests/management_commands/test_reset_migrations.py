@@ -88,6 +88,33 @@ def test_plano_remove_so_migrations_dos_business_apps(settings, monkeypatch, tmp
     assert all(path.name != "__init__.py" for path in (*plan.remove, *plan.preserve))
 
 
+def test_plano_recusa_conflito_em_migration_de_app_proprio(settings, monkeypatch, tmp_path):
+    auth = criar_app(tmp_path, "apps.api.autenticacao", "0001_initial.py")
+    configurar_plano(settings, monkeypatch, tmp_path, [auth])
+    loader = MagicMock()
+    loader.detect_conflicts.return_value = {
+        "autenticacao": ["0002_branch_a", "0002_branch_b"],
+    }
+    monkeypatch.setattr(migration_resets, "MigrationLoader", lambda *_args, **_kwargs: loader)
+
+    with pytest.raises(migration_resets.MigrationResetError, match="autenticacao"):
+        migration_resets.build_migration_reset_plan()
+
+
+def test_plano_ignora_conflito_de_app_externo(settings, monkeypatch, tmp_path):
+    auth = criar_app(tmp_path, "apps.api.autenticacao", "0001_initial.py")
+    configurar_plano(settings, monkeypatch, tmp_path, [auth])
+    loader = MagicMock()
+    loader.detect_conflicts.return_value = {
+        "third_party": ["0002_branch_a", "0002_branch_b"],
+    }
+    monkeypatch.setattr(migration_resets, "MigrationLoader", lambda *_args, **_kwargs: loader)
+
+    plan = migration_resets.build_migration_reset_plan()
+
+    assert plan.app_labels == ("autenticacao",)
+
+
 def test_plano_recusa_app_fora_de_apps(settings, monkeypatch, tmp_path):
     externo = criar_app(tmp_path, "vendor.externo", "0001_initial.py")
     configurar_plano(settings, monkeypatch, tmp_path, [externo])

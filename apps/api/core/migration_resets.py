@@ -11,6 +11,7 @@ from tempfile import TemporaryDirectory
 from django.apps import apps as django_apps
 from django.conf import settings
 from django.db import connections, transaction
+from django.db.migrations.loader import MigrationLoader
 from django.db.utils import DatabaseError
 
 MIGRATION_FILENAME = re.compile(r"^\d{4}_[a-z0-9_]+\.py$")
@@ -40,6 +41,16 @@ def _installed_app_configs():
         return [by_name[name] for name in settings.BUSINESS_APPS]
     except KeyError as exc:
         raise MigrationResetError(f"BUSINESS_APPS contém app não instalado: {exc.args[0]}") from exc
+
+
+def _ensure_no_first_party_migration_conflicts(app_labels: tuple[str, ...] | list[str]) -> None:
+    conflicts = MigrationLoader(None, ignore_no_migrations=True).detect_conflicts()
+    first_party_conflicts = {label: tuple(names) for label, names in conflicts.items() if label in app_labels}
+    if not first_party_conflicts:
+        return
+
+    details = "; ".join(f"{label}: {', '.join(names)}" for label, names in sorted(first_party_conflicts.items()))
+    raise MigrationResetError(f"conflitos no grafo de migrations próprias: {details}")
 
 
 def build_migration_reset_plan() -> MigrationResetPlan:
@@ -84,6 +95,8 @@ def build_migration_reset_plan() -> MigrationResetPlan:
             if not MIGRATION_FILENAME.fullmatch(path.name):
                 raise MigrationResetError(f"arquivo inesperado em migrations/: {path}")
             remove.append(path)
+
+    _ensure_no_first_party_migration_conflicts(labels)
 
     return MigrationResetPlan(
         base_dir=base_dir,
@@ -143,12 +156,8 @@ def apply_migration_reset(plan: MigrationResetPlan, *, confirmed_database: str |
     if confirmed_database != RESETTABLE_DATABASE_NAME:
         raise MigrationResetError(f"confirmação inválida; informe exatamente '{RESETTABLE_DATABASE_NAME}'.")
     connection_settings = connections["default"].settings_dict
-    if connection_settings.get("NAME") != RESETTABLE_DATABASE_NAME or not str(
-        connection_settings.get("ENGINE", "")
-    ).endswith(".postgresql"):
-        raise MigrationResetError(
-            f"a conexão efetiva deve ser PostgreSQL no banco '{RESETTABLE_DATABASE_NAME}'."
-        )
+    if connection_settings.get("NAME") != RESETTABLE_DATABASE_NAME or not str(connection_settings.get("ENGINE", "")).endswith(".postgresql"):
+        raise MigrationResetError(f"a conexão efetiva deve ser PostgreSQL no banco '{RESETTABLE_DATABASE_NAME}'.")
 
     with TemporaryDirectory(prefix="migration-reset-") as temporary:
         backup_root = Path(temporary)
