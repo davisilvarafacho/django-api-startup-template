@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import call, patch
 
 from django.apps import apps
+from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group, Permission
 from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
@@ -16,6 +17,8 @@ from internal_frameworks.permission_cache.signals.django import _affected_user_i
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db(transaction=True)
+
+Usuario = get_user_model()
 
 
 @contextmanager
@@ -220,6 +223,9 @@ def test_user_delete_bumps_all_user_layers():
                 bump.assert_not_called()
 
         assert_user_layer_bumps(bump, (user_id,), ("django", "tenant", "guardian"))
+    user.refresh_from_db(from_queryset=Usuario.all_objects.all())
+    assert user.is_deleted is True
+    assert user.is_active is False
 
     # O epoch é defesa secundária: o estado que a invalidação anuncia precisa
     # estar de fato persistido na linha do usuário.

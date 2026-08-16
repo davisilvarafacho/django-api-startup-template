@@ -108,6 +108,22 @@ def test_inactive_anonymous_unsaved_object_and_superuser_match_modelbackend():
     assert "organizacoes.view_organizacao" in backend.get_group_permissions(superuser)
 
 
+def test_usuario_excluido_nao_tem_permissoes_de_modelo_nem_objeto():
+    user = criar_usuario()
+    organization = Organizacao.objects.create(nome="Org", slug="org-permissoes-conta-excluida")
+    user.user_permissions.add(permission("view_organizacao"))
+    assign_perm("view_organizacao", user, organization)
+    user.delete()
+    user.refresh_from_db(from_queryset=Usuario.all_objects.all())
+    model_backend = CachedModelBackend()
+    object_backend = CachedObjectPermissionBackend()
+
+    assert model_backend.get_all_permissions(user) == set()
+    assert model_backend.has_perm(user, "organizacoes.view_organizacao") is False
+    assert object_backend.get_all_permissions(user, organization) == set()
+    assert object_backend.has_perm(user, "organizacoes.view_organizacao", organization) is False
+
+
 def test_async_methods_use_same_semantic_snapshot_without_l1_attributes():
     user = criar_usuario()
     user.user_permissions.add(permission("view_organizacao"))
