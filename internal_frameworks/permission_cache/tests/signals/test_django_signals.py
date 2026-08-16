@@ -11,6 +11,7 @@ from django.db.models.signals import post_migrate
 
 import pytest
 
+from apps.usuarios.models import Usuario
 from internal_frameworks.permission_cache.signals.django import _affected_user_ids, _capture_reverse_clear_user_ids
 from tests.support.usuarios import criar_usuario
 
@@ -197,6 +198,17 @@ def test_user_active_or_superuser_change_bumps_all_user_layers():
             assert_user_layer_bumps(bump, (user.pk,), ("django", "tenant", "guardian"))
 
 
+def test_bulk_update_de_flags_bumps_all_user_layers_after_commit():
+    user = criar_usuario()
+
+    with patch("internal_frameworks.permission_cache.invalidation.bump_epoch_scopes") as bump:
+        with transaction.atomic():
+            Usuario.all_objects.filter(pk=user.pk).update(is_active=False)
+            bump.assert_not_called()
+
+        assert_user_layer_bumps(bump, (user.pk,), ("django", "tenant", "guardian"))
+
+
 def test_user_delete_bumps_all_user_layers():
     user = criar_usuario()
     user_id = user.pk
@@ -208,6 +220,12 @@ def test_user_delete_bumps_all_user_layers():
                 bump.assert_not_called()
 
         assert_user_layer_bumps(bump, (user_id,), ("django", "tenant", "guardian"))
+
+    # O epoch é defesa secundária: o estado que a invalidação anuncia precisa
+    # estar de fato persistido na linha do usuário.
+    excluido = Usuario.all_objects.get(pk=user_id)
+    assert excluido.is_deleted is True
+    assert excluido.is_active is False
 
 
 def test_permission_and_content_type_changes_bump_global_layers():

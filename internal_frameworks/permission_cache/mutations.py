@@ -345,7 +345,6 @@ def update_user_authorization_state(queryset: QuerySet[Usuario], **changes: bool
 
     database_alias = queryset.db
     with transaction.atomic(using=database_alias):
-        user_ids = tuple(queryset.values_list("pk", flat=True))
-        updated = queryset.update(**changes)
-        _schedule_user_scopes(user_ids, database_alias, ("django", "tenant", "guardian"))
-    return updated
+        # `UsuarioQuerySet.update()` é a barreira comum: também cobre quem
+        # usa o ORM diretamente e agenda um único bump por camada no commit.
+        return queryset.update(**changes)

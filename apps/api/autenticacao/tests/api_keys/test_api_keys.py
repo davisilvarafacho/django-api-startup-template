@@ -381,3 +381,31 @@ def test_rotacao_recusa_token_que_nao_e_api_key(responsavel):
         rotate_api_key(instance, actor=responsavel)
 
     assert exc.value.code == AuthErrorCode.INVALID_TOKEN
+
+
+def test_rotacao_reinicia_locks_se_instancia_tem_responsavel_obsoleto(monkeypatch, organizacao, responsavel):
+    from apps.api.autenticacao import services
+
+    novo_responsavel = criar_usuario()
+    Vinculo.objects.create(usuario=novo_responsavel, organizacao=organizacao, papel=Papel.MEMBRO)
+    instance, _token = AuthToken.objects.create(
+        responsavel=responsavel,
+        type=TokenType.API_KEY,
+        created_by=responsavel,
+        organization=organizacao,
+        name="Integração",
+    )
+    AuthToken.objects.filter(pk=instance.pk).update(responsavel=novo_responsavel)
+    chamadas = []
+    original = services.lock_user_accounts
+
+    def registrar_locks(user_ids, *, using):
+        chamadas.append(set(user_ids))
+        return original(user_ids, using=using)
+
+    monkeypatch.setattr(services, "lock_user_accounts", registrar_locks)
+
+    issued = rotate_api_key(instance, actor=responsavel)
+
+    assert chamadas[:2] == [{responsavel.pk}, {responsavel.pk, novo_responsavel.pk}]
+    assert issued.instance.responsavel_id == novo_responsavel.pk

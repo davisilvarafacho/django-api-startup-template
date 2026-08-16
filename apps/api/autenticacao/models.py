@@ -65,6 +65,7 @@ class AuthTokenManager(models.Manager):
             organization=kwargs.get("organization") or kwargs.get("organization_id"),
             name=name,
             scopes=kwargs.get("scopes", ()),
+            using=self.db,
         )
 
         plain_token = prefix + crypto.create_token_string()
@@ -89,6 +90,7 @@ def validate_token_configuration(
     organization,
     name,
     scopes,
+    using=None,
 ):
     """Valida os campos que diferenciam uma API key dos demais tokens."""
     if token_type != TokenType.API_KEY:
@@ -103,7 +105,7 @@ def validate_token_configuration(
         errors["name"] = "API key exige um nome."
     if created_by is None:
         errors["created_by"] = "API key exige o usuário que a criou."
-    if responsavel is None or not getattr(responsavel, "is_active", False):
+    if responsavel is None or not getattr(responsavel, "is_active", False) or getattr(responsavel, "is_deleted", False):
         errors["responsavel"] = "API key exige um responsável ativo."
 
     if not isinstance(scopes, (list, tuple)):
@@ -120,7 +122,10 @@ def validate_token_configuration(
     if organization is not None and responsavel is not None:
         from apps.organizacoes.models import Vinculo
 
-        if not Vinculo.objects.filter(
+        queryset = Vinculo.objects
+        if using is not None:
+            queryset = queryset.using(using)
+        if not queryset.filter(
             organizacao=organization,
             usuario=responsavel,
             is_active=True,

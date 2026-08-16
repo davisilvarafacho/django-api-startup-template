@@ -15,7 +15,7 @@ import pyotp
 from knox.settings import knox_settings
 
 from .models import AuthToken, MFAChallenge, MFAChallengePurpose, MFAFactor, MFAFactorType, MFARecoveryCode, MFAResetAudit, TokenType, TrustedDevice
-from .services import issue_token, revoke_all_sessions
+from .services import issue_token, lock_user_account, resolve_database_alias, revoke_all_sessions
 
 OTP_LIFETIME = timedelta(minutes=5)
 OTP_COOLDOWN = timedelta(seconds=60)
@@ -98,9 +98,18 @@ def available_methods(user) -> list[str]:
     ]
 
 
+def _lock_eligible_user(user):
+    """Primeiro lock dos fluxos MFA que podem disputar com exclusão/reset."""
+    conta = lock_user_account(user)
+    if conta.is_deleted or not conta.is_active:
+        raise ValueError("Conta inativa ou excluída.")
+    return conta
+
+
 @transaction.atomic
 def start_enrollment(user, factor_type: MFAFactorType) -> EnrollmentResult:
     """Provisiona um fator inativo e o material secreto exibido uma única vez."""
+    user = _lock_eligible_user(user)
     if factor_type == MFAFactorType.TOTP:
         secret = pyotp.random_base32()
         factor, _ = MFAFactor.objects.select_for_update().get_or_create(user=user, type=factor_type, defaults={"secret": secret})
@@ -144,6 +153,7 @@ def start_enrollment(user, factor_type: MFAFactorType) -> EnrollmentResult:
 @transaction.atomic
 def confirm_enrollment(user, factor_type: MFAFactorType, code: str) -> ConfirmResult:
     """Confirma um fator e cria recovery codes somente no primeiro enrollment."""
+    user = _lock_eligible_user(user)
     factor = MFAFactor.objects.select_for_update().get(user=user, type=factor_type)
     if factor_type == MFAFactorType.TOTP:
         valid = consume_totp(factor, code)
@@ -191,52 +201,82 @@ def regenerate_recovery_codes(user) -> list[str]:
 
 @transaction.atomic
 def remove_factor(user, factor_type: MFAFactorType) -> None:
+    user = _lock_eligible_user(user)
     factor = MFAFactor.objects.select_for_update().get(user=user, type=factor_type)
     factor.delete()
     revoke_trusted_devices(user)
 
 
-@transaction.atomic
-def create_trusted_device(user, metadata: dict) -> PlainTrustedDevice:
-    plain_token = secrets.token_urlsafe(32)
-    device = TrustedDevice.objects.create(
-        user=user,
-        digest=_trusted_digest(plain_token),
-        name=metadata.get("device_name", ""),
-        user_agent=metadata.get("user_agent", ""),
-        ip_address=metadata.get("ip_address"),
-        expires_at=timezone.now() + TRUSTED_DEVICE_LIFETIME,
-    )
-    return PlainTrustedDevice(instance=device, plain_token=plain_token)
+def create_trusted_device(user, metadata: dict, *, using=None) -> PlainTrustedDevice | None:
+    database_alias = resolve_database_alias(user, using)
+    with transaction.atomic(using=database_alias):
+        conta = lock_user_account(user, using=database_alias)
+        if conta.is_deleted or not conta.is_active:
+            return None
+
+        plain_token = secrets.token_urlsafe(32)
+        device = TrustedDevice.objects.using(database_alias).create(
+            user=conta,
+            digest=_trusted_digest(plain_token),
+            name=metadata.get("device_name", ""),
+            user_agent=metadata.get("user_agent", ""),
+            ip_address=metadata.get("ip_address"),
+            expires_at=timezone.now() + TRUSTED_DEVICE_LIFETIME,
+        )
+        return PlainTrustedDevice(instance=device, plain_token=plain_token)
 
 
-@transaction.atomic
-def consume_trusted_device(user, plain_token: str) -> PlainTrustedDevice | None:
-    device = (
-        TrustedDevice.objects.select_for_update()
-        .filter(user=user, digest=_trusted_digest(plain_token), revoked_at__isnull=True, expires_at__gt=timezone.now())
-        .first()
-    )
-    if not device:
-        return None
-    device.revoked_at = timezone.now()
-    device.save(update_fields=["revoked_at"])
-    return create_trusted_device(user, {"device_name": device.name, "user_agent": device.user_agent, "ip_address": device.ip_address})
+def consume_trusted_device(user, plain_token: str, *, using=None) -> PlainTrustedDevice | None:
+    database_alias = resolve_database_alias(user, using)
+    with transaction.atomic(using=database_alias):
+        conta = lock_user_account(user, using=database_alias)
+        if conta.is_deleted or not conta.is_active:
+            return None
+
+        device = (
+            TrustedDevice.objects.using(database_alias)
+            .select_for_update()
+            .filter(user=conta, digest=_trusted_digest(plain_token), revoked_at__isnull=True, expires_at__gt=timezone.now())
+            .first()
+        )
+        if not device:
+            return None
+        device.revoked_at = timezone.now()
+        device.save(using=database_alias, update_fields=["revoked_at"])
+        return create_trusted_device(
+            conta,
+            {"device_name": device.name, "user_agent": device.user_agent, "ip_address": device.ip_address},
+            using=database_alias,
+        )
 
 
-def revoke_trusted_devices(user) -> int:
-    return TrustedDevice.objects.filter(user=user, revoked_at__isnull=True).update(revoked_at=timezone.now())
+def revoke_trusted_devices(user, *, using=None) -> int:
+    """Revoga os dispositivos confiáveis ainda válidos de `user`.
+
+    Último elo da ordem global de locks (`Usuario` → `AuthToken` →
+    `TrustedDevice`).
+
+    Args:
+        user: Dono dos dispositivos.
+        using: Alias do banco; por padrão, o alias do próprio `user`.
+
+    Returns:
+        Quantos dispositivos deixaram de valer.
+    """
+    database_alias = resolve_database_alias(user, using)
+    return TrustedDevice.objects.using(database_alias).filter(user=user, revoked_at__isnull=True).update(revoked_at=timezone.now())
 
 
 @transaction.atomic
 def start_login_challenge(pre_auth: AuthToken, factor_type: str) -> MFAChallenge:
+    user = _lock_eligible_user(pre_auth.responsavel)
     factor_type = MFAFactorType(factor_type)
-    factor = active_factors(pre_auth.responsavel).select_for_update().get(type=factor_type)
+    factor = active_factors(user).select_for_update().get(type=factor_type)
     if factor_type == MFAFactorType.TOTP:
         return MFAChallenge.objects.create(
-            user=pre_auth.responsavel, factor=factor, token=pre_auth, purpose=MFAChallengePurpose.LOGIN, expires_at=timezone.now() + OTP_LIFETIME
+            user=user, factor=factor, token=pre_auth, purpose=MFAChallengePurpose.LOGIN, expires_at=timezone.now() + OTP_LIFETIME
         )
-    return create_otp_challenge(pre_auth.responsavel, factor, pre_auth, MFAChallengePurpose.LOGIN)
+    return create_otp_challenge(user, factor, pre_auth, MFAChallengePurpose.LOGIN)
 
 
 def _consume_recovery_code(user, code: str) -> bool:
@@ -252,7 +292,7 @@ def _consume_recovery_code(user, code: str) -> bool:
 def verify_login_challenge(pre_auth: AuthToken, code: str, factor_type: str, *, trust_device: bool, metadata: dict) -> LoginResult:
     if pre_auth.type != TokenType.PRE_AUTH or pre_auth.is_expired:
         raise ValueError("Pré-autenticação inválida ou expirada.")
-    user = pre_auth.responsavel
+    user = _lock_eligible_user(pre_auth.responsavel)
     valid = False
     if factor_type == "recovery":
         valid = _consume_recovery_code(user, code)
@@ -292,16 +332,18 @@ def verify_login_challenge(pre_auth: AuthToken, code: str, factor_type: str, *, 
 def start_reauthentication(session: AuthToken, factor_type: str) -> MFAChallenge:
     if session.type != TokenType.TOKEN:
         raise ValueError("Sessão inválida.")
-    return start_login_challenge_for(session, factor_type, MFAChallengePurpose.REAUTHENTICATION)
+    user = _lock_eligible_user(session.responsavel)
+    return start_login_challenge_for(session, factor_type, MFAChallengePurpose.REAUTHENTICATION, user=user)
 
 
-def start_login_challenge_for(token: AuthToken, factor_type: str, purpose: str) -> MFAChallenge:
+def start_login_challenge_for(token: AuthToken, factor_type: str, purpose: str, *, user=None) -> MFAChallenge:
+    user = user or _lock_eligible_user(token.responsavel)
     factor_type = MFAFactorType(factor_type)
-    factor = active_factors(token.responsavel).select_for_update().get(type=factor_type)
+    factor = active_factors(user).select_for_update().get(type=factor_type)
     if factor_type != MFAFactorType.TOTP:
-        return create_otp_challenge(token.responsavel, factor, token, purpose)
+        return create_otp_challenge(user, factor, token, purpose)
     return MFAChallenge.objects.create(
-        user=token.responsavel,
+        user=user,
         factor=factor,
         token=token,
         purpose=purpose,
@@ -319,9 +361,10 @@ def create_otp_challenge(user, factor: MFAFactor, token: AuthToken, purpose: str
 def verify_reauthentication(session: AuthToken, code: str, factor_type: str) -> None:
     if session.type != TokenType.TOKEN:
         raise ValueError("Sessão inválida.")
-    valid = _consume_recovery_code(session.responsavel, code) if factor_type == "recovery" else False
+    user = _lock_eligible_user(session.responsavel)
+    valid = _consume_recovery_code(user, code) if factor_type == "recovery" else False
     if factor_type != "recovery":
-        factor = active_factors(session.responsavel).select_for_update().get(type=MFAFactorType(factor_type))
+        factor = active_factors(user).select_for_update().get(type=MFAFactorType(factor_type))
         challenge = (
             MFAChallenge.objects.select_for_update()
             .filter(token=session, factor=factor, purpose=MFAChallengePurpose.REAUTHENTICATION, consumed_at__isnull=True)
@@ -345,16 +388,19 @@ def verify_reauthentication(session: AuthToken, code: str, factor_type: str) -> 
     session.metadata.save(update_fields=["reauthenticated_at"])
 
 
-@transaction.atomic
-def reset_user_mfa(*, target, actor, reason: str) -> None:
+def reset_user_mfa(*, target, actor, reason: str, using=None) -> None:
     if not reason.strip():
         raise ValueError("A justificativa é obrigatória.")
-    MFAFactor.objects.select_for_update().filter(user=target).delete()
-    MFARecoveryCode.objects.filter(user=target).delete()
-    TrustedDevice.objects.filter(user=target).update(revoked_at=timezone.now())
-    # Revogação lógica: o registro fica para auditoria. Os `PRE_AUTH` pendentes
-    # são efêmeros e morrem com a expiração, mas não podem sobreviver ao reset —
-    # por isso são apagados, e não só revogados.
-    revoke_all_sessions(target, actor=actor)
-    AuthToken.objects.filter(responsavel=target, type=TokenType.PRE_AUTH).delete()
-    MFAResetAudit.objects.create(actor=actor, target=target, reason=reason.strip())
+    database_alias = resolve_database_alias(target, using)
+    with transaction.atomic(using=database_alias):
+        conta = lock_user_account(target, using=database_alias)
+        # A conta é sempre o primeiro lock: troca de senha e verificação MFA
+        # também seguem user → factor/challenge/token → device.
+        MFAFactor.objects.using(database_alias).select_for_update().filter(user=conta).delete()
+        MFARecoveryCode.objects.using(database_alias).filter(user=conta).delete()
+        revoke_all_sessions(conta, actor=actor, using=database_alias)
+        # Revogação lógica: o registro fica para auditoria. Os `PRE_AUTH`
+        # pendentes não podem sobreviver ao reset e são removidos.
+        AuthToken.objects.using(database_alias).filter(responsavel=conta, type=TokenType.PRE_AUTH).delete()
+        TrustedDevice.objects.using(database_alias).filter(user=conta, revoked_at__isnull=True).update(revoked_at=timezone.now())
+        MFAResetAudit.objects.using(database_alias).create(actor=actor, target=conta, reason=reason.strip())

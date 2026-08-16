@@ -60,6 +60,10 @@ def send_password_reset(user_pk: int):
         return
 
     issued = issue_password_reset(user)
+    if issued is None:
+        # A conta foi excluída entre o pedido e a emissão: não há link a enviar.
+        return
+
     link = f"{settings.PASSWORD_RESET_FRONTEND_URL}?token={issued.plain_token}"
     minutos = settings.PASSWORD_RESET_TIMEOUT_MINUTES
 

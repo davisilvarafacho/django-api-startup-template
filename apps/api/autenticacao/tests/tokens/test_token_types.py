@@ -8,6 +8,9 @@ from apps.api.autenticacao.models import AuthToken, TokenType
 
 class UsuarioFalso:
     is_active = True
+    # O responsável precisa expor os dois estados que o autenticador consulta:
+    # uma conta excluída é recusada mesmo quando ainda está ativa.
+    is_deleted = False
 
 
 class TokenFalso:

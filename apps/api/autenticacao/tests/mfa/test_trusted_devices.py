@@ -3,6 +3,8 @@ import pytest
 
 from apps.api.autenticacao.mfa import confirm_enrollment, create_trusted_device, start_enrollment
 from apps.api.autenticacao.models import MFAFactorType
+from apps.usuarios.models import Usuario
+from tests.support.usuarios import criar_usuario
 
 
 @pytest.mark.django_db
@@ -38,3 +40,12 @@ def test_confirmacao_de_fator_revoga_dispositivos_confiaveis(usuario):
 
     trusted.instance.refresh_from_db()
     assert trusted.instance.revoked_at is not None
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("flags", [{"is_active": False}, {"is_deleted": True}])
+def test_dispositivo_confiavel_nao_e_criado_para_conta_inativa_ou_excluida(flags):
+    usuario = criar_usuario()
+    Usuario.all_objects.filter(pk=usuario.pk).update(**flags)
+
+    assert create_trusted_device(usuario, {}) is None

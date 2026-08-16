@@ -6,8 +6,10 @@ from django.db import IntegrityError
 
 import pytest
 
+from apps.api.autenticacao.errors import AuthErrorCode
 from apps.api.autenticacao.models import AuthToken, TokenMetaData, TokenType
 from apps.api.autenticacao.services import issue_token
+from apps.api.core.errors import APIError
 from tests.support.usuarios import criar_usuario
 
 
@@ -83,4 +85,22 @@ def test_issue_token_e_atomico_quando_metadata_falha(usuario, metadata_input):
                 metadata_input=metadata_input,
             )
 
+    assert not AuthToken.objects.filter(responsavel=usuario).exists()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("flags", [{"is_active": False}, {"is_deleted": True}])
+def test_issue_token_recusa_responsavel_inativo_ou_excluido(usuario, metadata_input, flags):
+    type(usuario).all_objects.filter(pk=usuario.pk).update(**flags)
+
+    with pytest.raises(APIError) as excinfo:
+        issue_token(
+            responsavel=usuario,
+            token_type=TokenType.TOKEN,
+            created_by=usuario,
+            expiry=None,
+            metadata_input=metadata_input,
+        )
+
+    assert excinfo.value.code == AuthErrorCode.RESPONSIBLE_INACTIVE.value
     assert not AuthToken.objects.filter(responsavel=usuario).exists()
