@@ -8,6 +8,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 import pytest
 
 from apps.api.core.errors import APIError
+from apps.organizacoes.access import TenantAccessResolver
 from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.middleware import OrganizacaoMiddleware
 from apps.organizacoes.models import Organizacao, Papel, Time, Vinculo
@@ -16,8 +17,6 @@ from apps.organizacoes.rules import e_gestor
 from apps.organizacoes.serializers import ConviteCreateSerializer, VinculoSerializer
 from apps.organizacoes.tests.test_api import client_autenticado
 from apps.organizacoes.views import TimeViewSet
-from apps.usuarios.models import Usuario
-from internal_frameworks.permission_cache.resolvers.tenant import TenantAccessResolver
 from internal_frameworks.permission_cache.types import TenantAccess
 from tests.support.usuarios import criar_usuario
 
@@ -68,7 +67,7 @@ def test_tenant_permission_denies_cached_missing_membership():
     client = client_autenticado(user)
 
     first = client.get("/times/", HTTP_X_ORGANIZATION="missing")
-    with patch("internal_frameworks.permission_cache.resolvers.tenant.TenantAccessResolver._load", wraps=TenantAccessResolver._load) as loader:
+    with patch("apps.organizacoes.access.TenantAccessResolver._load", wraps=TenantAccessResolver._load) as loader:
         second = client.get("/times/", HTTP_X_ORGANIZATION="missing")
 
     assert first.status_code == second.status_code == 403

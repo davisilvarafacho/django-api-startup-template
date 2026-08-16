@@ -4,9 +4,9 @@ from django.db import transaction
 
 import pytest
 
+from apps.organizacoes.access import TenantAccessResolver
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
 from internal_frameworks.permission_cache.invalidation import bump_epoch_scopes
-from internal_frameworks.permission_cache.resolvers.tenant import TenantAccessResolver
 from internal_frameworks.permission_cache.types import TenantAccess
 from tests.support.usuarios import criar_usuario
 

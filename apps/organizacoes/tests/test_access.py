@@ -6,10 +6,10 @@ from django.core.cache.backends.locmem import LocMemCache
 
 import pytest
 
+from apps.organizacoes.access import TenantAccessResolver
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
 from apps.usuarios.models import Usuario
 from internal_frameworks.permission_cache.epochs import EpochStore
-from internal_frameworks.permission_cache.resolvers.tenant import TenantAccessResolver
 from internal_frameworks.permission_cache.store import PermissionCacheStore
 from internal_frameworks.permission_cache.types import TenantAccess
 from tests.support.usuarios import criar_usuario
@@ -74,7 +74,7 @@ def test_loader_disables_cachalot_for_all_queries(monkeypatch):
         calls.append(all_queries)
         yield
 
-    monkeypatch.setattr("internal_frameworks.permission_cache.resolvers.tenant.cachalot_disabled", recording_context)
+    monkeypatch.setattr("apps.organizacoes.access.cachalot_disabled", recording_context)
     user = criar_usuario()
 
     assert TenantAccessResolver().by_slug(user.pk, "missing") is None

@@ -13,12 +13,12 @@ from apps.api.autenticacao.models import TokenType
 from apps.api.core.errors import APIError
 from apps.api.core.route_markers import MARCADOR_SEM_TENANCY, tem_marcador
 from apps.api.core.routes_registry import routes_registry
+from apps.organizacoes.access import TenantAccessResolver
 from apps.organizacoes.constants import HEADER_ORGANIZACAO
 from apps.organizacoes.context import definir_organizacao_atual
 from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.models import Papel
 from apps.organizacoes.routes import tenant_free_registry
-from internal_frameworks.permission_cache.resolvers.tenant import TenantAccessResolver
 
 
 def _is_api_key(request):

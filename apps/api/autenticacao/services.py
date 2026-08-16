@@ -278,7 +278,6 @@ def rotate_api_key(current, *, actor, using=None):
     para auditoria, apontando `replaced_by` para a nova.
     """
     auth_token_model = get_token_model()
-
     database_alias = resolve_database_alias(current, using)
     known_user_ids = {current.responsavel_id}
 

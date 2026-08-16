@@ -8,6 +8,8 @@ from datetime import timedelta
 from urllib.parse import parse_qs, urlparse
 
 from django.core import mail
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from rest_framework.throttling import ScopedRateThrottle
@@ -16,6 +18,7 @@ import pytest
 from knox.models import get_token_model
 
 from apps.api.autenticacao.models import MFAFactor, MFAFactorType, TokenType
+from apps.api.autenticacao.passwords import issue_password_reset
 from tests.support.usuarios import criar_usuario
 
 AuthToken = get_token_model()
@@ -100,6 +103,18 @@ def test_request_revoga_reset_anterior(api_client, usuario):
     assert primeiro.revoked_at is not None
     ativos = AuthToken.objects.filter(responsavel=usuario, type=TokenType.RESET_PASSWORD, revoked_at__isnull=True)
     assert ativos.count() == 1
+
+
+@pytest.mark.django_db
+def test_issue_password_reset_bloqueia_usuario_antes_de_revogar_tokens(usuario):
+    issue_password_reset(usuario)
+
+    with CaptureQueriesContext(connection) as queries:
+        issue_password_reset(usuario)
+
+    user_lock = next(index for index, query in enumerate(queries) if 'FROM "usuario"' in query["sql"] and "FOR UPDATE" in query["sql"])
+    token_update = next(index for index, query in enumerate(queries) if query["sql"].startswith('UPDATE "auth_token"'))
+    assert user_lock < token_update
 
 
 @pytest.mark.django_db

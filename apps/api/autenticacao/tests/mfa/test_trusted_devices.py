@@ -5,7 +5,7 @@ import pyotp
 import pytest
 
 from apps.api.autenticacao.errors import AuthErrorCode
-from apps.api.autenticacao.mfa import confirm_enrollment, create_trusted_device, start_enrollment
+from apps.api.autenticacao.mfa import confirm_enrollment, consume_trusted_device, create_trusted_device, start_enrollment
 from apps.api.autenticacao.models import MFAFactorType, TrustedDevice
 from apps.api.core.errors import APIError
 from apps.usuarios.models import Usuario
@@ -64,3 +64,16 @@ def test_create_trusted_device_bloqueia_usuario_antes_da_emissao(usuario):
         create_trusted_device(usuario, {})
 
     assert any('FROM "usuario"' in query["sql"] and "FOR UPDATE" in query["sql"] for query in queries)
+
+
+@pytest.mark.django_db
+def test_consume_trusted_device_bloqueia_usuario_antes_do_dispositivo(usuario):
+    trusted = create_trusted_device(usuario, {})
+
+    with CaptureQueriesContext(connection) as queries:
+        consume_trusted_device(usuario, trusted.plain_token)
+
+    locked_tables = [
+        table for query in queries for table in ("usuario", "trusted_device") if f'FROM "{table}"' in query["sql"] and "FOR UPDATE" in query["sql"]
+    ]
+    assert locked_tables[:2] == ["usuario", "trusted_device"]

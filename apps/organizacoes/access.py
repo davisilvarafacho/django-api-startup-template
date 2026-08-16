@@ -1,10 +1,9 @@
 from collections.abc import Callable
 
-from django.contrib.auth import get_user_model
-
 from cachalot.api import cachalot_disabled
 
 from apps.organizacoes.models import Vinculo
+from apps.usuarios.models import Usuario
 from internal_frameworks.permission_cache.keys import global_scope, layer_scope, user_scope
 from internal_frameworks.permission_cache.store import PermissionCacheStore
 from internal_frameworks.permission_cache.types import TenantAccess
@@ -114,8 +113,7 @@ class TenantAccessResolver:
     @staticmethod
     def _user_is_not_deleted(user_id: int, database_alias: str) -> bool:
         with cachalot_disabled(all_queries=True):
-            user_model = get_user_model()
-            return user_model._base_manager.using(database_alias).filter(pk=user_id, is_deleted=False).exists()
+            return Usuario.all_objects.using(database_alias).filter(pk=user_id, is_deleted=False).exists()
 
     @staticmethod
     def _encode(access: TenantAccess | None) -> dict[str, object] | None:

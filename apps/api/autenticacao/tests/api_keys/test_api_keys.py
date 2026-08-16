@@ -3,6 +3,8 @@
 from datetime import timedelta
 
 from django.contrib.auth.models import Permission
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from rest_framework.test import APIClient
@@ -302,6 +304,25 @@ def test_rotacao_atomica_via_service_preserva_organizacao_e_scopes(organizacao, 
     instance.refresh_from_db()
     assert instance.revoked_at is not None
     assert instance.replaced_by_id == issued.instance.pk
+
+
+def test_rotacao_bloqueia_usuario_antes_da_api_key(organizacao, responsavel):
+    instance, _token = AuthToken.objects.create(
+        responsavel=responsavel,
+        type=TokenType.API_KEY,
+        created_by=responsavel,
+        organization=organizacao,
+        name="Integração",
+        scopes=["teams:read"],
+    )
+
+    with CaptureQueriesContext(connection) as queries:
+        rotate_api_key(instance, actor=responsavel)
+
+    locked_tables = [
+        table for query in queries for table in ("usuario", "auth_token") if f'FROM "{table}"' in query["sql"] and "FOR UPDATE" in query["sql"]
+    ]
+    assert locked_tables[:2] == ["usuario", "auth_token"]
 
 
 @pytest.mark.parametrize(

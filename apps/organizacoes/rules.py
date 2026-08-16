@@ -15,8 +15,8 @@ from django.db import DEFAULT_DB_ALIAS
 
 import rules
 
+from apps.organizacoes.access import TenantAccessResolver
 from apps.organizacoes.models import Papel
-from internal_frameworks.permission_cache.resolvers.tenant import TenantAccessResolver
 
 
 def papel_minimo(papel):

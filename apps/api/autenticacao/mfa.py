@@ -223,27 +223,23 @@ def create_trusted_device(user, metadata: dict) -> PlainTrustedDevice:
     return PlainTrustedDevice(instance=device, plain_token=plain_token)
 
 
-def consume_trusted_device(user, plain_token: str, *, using=None) -> PlainTrustedDevice | None:
-    database_alias = resolve_database_alias(user, using)
+def consume_trusted_device(user, plain_token: str) -> PlainTrustedDevice | None:
+    database_alias = user._state.db or "default"
     with transaction.atomic(using=database_alias):
-        conta = lock_user_account(user, using=database_alias)
-        if conta.is_deleted or not conta.is_active:
-            return None
-
+        locked_user = lock_eligible_responsible(user, database_alias)
         device = (
             TrustedDevice.objects.using(database_alias)
             .select_for_update()
-            .filter(user=conta, digest=_trusted_digest(plain_token), revoked_at__isnull=True, expires_at__gt=timezone.now())
+            .filter(user=locked_user, digest=_trusted_digest(plain_token), revoked_at__isnull=True, expires_at__gt=timezone.now())
             .first()
         )
         if not device:
             return None
         device.revoked_at = timezone.now()
-        device.save(using=database_alias, update_fields=["revoked_at"])
+        device.save(update_fields=["revoked_at"])
         return create_trusted_device(
-            conta,
+            locked_user,
             {"device_name": device.name, "user_agent": device.user_agent, "ip_address": device.ip_address},
-            using=database_alias,
         )
 
 
