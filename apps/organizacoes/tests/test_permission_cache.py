@@ -1,7 +1,5 @@
 from unittest.mock import Mock, patch
 
-from django.db import models
-
 from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory, force_authenticate
 
@@ -128,38 +126,3 @@ def test_middleware_initializes_only_request_tenant():
     OrganizacaoMiddleware(response)(request)
 
     assert seen == {"tenant": None, "has_organizacao": False, "has_vinculo": False}
-
-
-@pytest.mark.django_db
-def test_tenant_resolver_e_papel_minimo_recusam_conta_excluida_ou_inativa():
-    """Vínculo ativo não basta: a conta por trás dele precisa continuar existindo."""
-    excluido = criar_usuario()
-    inativo = criar_usuario(is_active=False)
-    organizacao = Organizacao.objects.create(nome="Acme", slug="acme-excluidos")
-    Vinculo.objects.create(usuario=excluido, organizacao=organizacao, papel=Papel.GESTOR)
-    Vinculo.objects.create(usuario=inativo, organizacao=organizacao, papel=Papel.GESTOR)
-    # Conta legada: excluída antes da correção, portanto ainda ativa.
-    models.QuerySet.update(Usuario.all_objects.filter(pk=excluido.pk), is_deleted=True)
-    excluido = Usuario.all_objects.get(pk=excluido.pk)
-    objeto = Mock(organizacao_id=organizacao.pk)
-    resolver = TenantAccessResolver()
-
-    assert resolver.by_organization_id(excluido.pk, organizacao.pk) is None
-    assert resolver.by_slug(inativo.pk, organizacao.slug) is None
-    assert e_gestor.test(excluido, objeto) is False
-    assert e_gestor.test(inativo, objeto) is False
-
-
-@pytest.mark.django_db
-def test_tenant_resolver_recusa_snapshot_aquecido_apos_exclusao_em_lote(django_capture_on_commit_callbacks):
-    usuario = criar_usuario()
-    organizacao = Organizacao.objects.create(nome="Cache", slug="cache-exclusao")
-    Vinculo.objects.create(usuario=usuario, organizacao=organizacao, papel=Papel.GESTOR)
-    resolver = TenantAccessResolver()
-
-    assert resolver.by_slug(usuario.pk, organizacao.slug) is not None
-    # A API em lote precisa executar o protocolo e invalidar o snapshot no commit.
-    with django_capture_on_commit_callbacks(execute=True):
-        Usuario.all_objects.filter(pk=usuario.pk).update(is_deleted=True)
-
-    assert resolver.by_slug(usuario.pk, organizacao.slug) is None

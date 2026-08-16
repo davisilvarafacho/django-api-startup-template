@@ -63,8 +63,6 @@ class CachedObjectPermissionBackend(ObjectPermissionBackend):
         support, user_obj = check_support(user_obj, obj)
         if not support:
             return False
-        if getattr(user_obj, "is_deleted", False):
-            return False
 
         if not conta_utilizavel(user_obj):
             return False

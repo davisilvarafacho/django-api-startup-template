@@ -104,18 +104,9 @@ def available_methods(user) -> list[str]:
     ]
 
 
-def _lock_eligible_user(user):
-    """Primeiro lock dos fluxos MFA que podem disputar com exclusão/reset."""
-    conta = lock_user_account(user)
-    if conta.is_deleted or not conta.is_active:
-        raise ValueError("Conta inativa ou excluída.")
-    return conta
-
-
 @transaction.atomic
 def start_enrollment(user, factor_type: MFAFactorType) -> EnrollmentResult:
     """Provisiona um fator inativo e o material secreto exibido uma única vez."""
-    user = _lock_eligible_user(user)
     if factor_type == MFAFactorType.TOTP:
         secret = pyotp.random_base32()
         factor, _ = MFAFactor.objects.select_for_update().get_or_create(user=user, type=factor_type, defaults={"secret": secret})
@@ -266,14 +257,13 @@ def revoke_trusted_devices(user, *, using=None, database_alias=None) -> int:
 
 @transaction.atomic
 def start_login_challenge(pre_auth: AuthToken, factor_type: str) -> MFAChallenge:
-    user = _lock_eligible_user(pre_auth.responsavel)
     factor_type = MFAFactorType(factor_type)
-    factor = active_factors(user).select_for_update().get(type=factor_type)
+    factor = active_factors(pre_auth.responsavel).select_for_update().get(type=factor_type)
     if factor_type == MFAFactorType.TOTP:
         return MFAChallenge.objects.create(
-            user=user, factor=factor, token=pre_auth, purpose=MFAChallengePurpose.LOGIN, expires_at=timezone.now() + OTP_LIFETIME
+            user=pre_auth.responsavel, factor=factor, token=pre_auth, purpose=MFAChallengePurpose.LOGIN, expires_at=timezone.now() + OTP_LIFETIME
         )
-    return create_otp_challenge(user, factor, pre_auth, MFAChallengePurpose.LOGIN)
+    return create_otp_challenge(pre_auth.responsavel, factor, pre_auth, MFAChallengePurpose.LOGIN)
 
 
 def _consume_recovery_code(user, code: str) -> bool:
@@ -340,18 +330,16 @@ def verify_login_challenge(pre_auth: AuthToken, code: str, factor_type: str, *, 
 def start_reauthentication(session: AuthToken, factor_type: str) -> MFAChallenge:
     if session.type != TokenType.TOKEN:
         raise ValueError("Sessão inválida.")
-    user = _lock_eligible_user(session.responsavel)
-    return start_login_challenge_for(session, factor_type, MFAChallengePurpose.REAUTHENTICATION, user=user)
+    return start_login_challenge_for(session, factor_type, MFAChallengePurpose.REAUTHENTICATION)
 
 
-def start_login_challenge_for(token: AuthToken, factor_type: str, purpose: str, *, user=None) -> MFAChallenge:
-    user = user or _lock_eligible_user(token.responsavel)
+def start_login_challenge_for(token: AuthToken, factor_type: str, purpose: str) -> MFAChallenge:
     factor_type = MFAFactorType(factor_type)
-    factor = active_factors(user).select_for_update().get(type=factor_type)
+    factor = active_factors(token.responsavel).select_for_update().get(type=factor_type)
     if factor_type != MFAFactorType.TOTP:
-        return create_otp_challenge(user, factor, token, purpose)
+        return create_otp_challenge(token.responsavel, factor, token, purpose)
     return MFAChallenge.objects.create(
-        user=user,
+        user=token.responsavel,
         factor=factor,
         token=token,
         purpose=purpose,
@@ -369,10 +357,9 @@ def create_otp_challenge(user, factor: MFAFactor, token: AuthToken, purpose: str
 def verify_reauthentication(session: AuthToken, code: str, factor_type: str) -> None:
     if session.type != TokenType.TOKEN:
         raise ValueError("Sessão inválida.")
-    user = _lock_eligible_user(session.responsavel)
-    valid = _consume_recovery_code(user, code) if factor_type == "recovery" else False
+    valid = _consume_recovery_code(session.responsavel, code) if factor_type == "recovery" else False
     if factor_type != "recovery":
-        factor = active_factors(user).select_for_update().get(type=MFAFactorType(factor_type))
+        factor = active_factors(session.responsavel).select_for_update().get(type=MFAFactorType(factor_type))
         challenge = (
             MFAChallenge.objects.select_for_update()
             .filter(token=session, factor=factor, purpose=MFAChallengePurpose.REAUTHENTICATION, consumed_at__isnull=True)

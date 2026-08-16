@@ -108,7 +108,7 @@ def test_inactive_anonymous_unsaved_object_and_superuser_match_modelbackend():
     assert "organizacoes.view_organizacao" in backend.get_group_permissions(superuser)
 
 
-def test_usuario_excluido_nao_tem_permissoes_de_modelo_nem_objeto():
+def test_usuario_excluido_por_delete_nao_tem_permissoes_de_modelo_nem_objeto():
     user = criar_usuario(is_superuser=True, is_staff=True)
     organization = Organizacao.objects.create(nome="Org", slug="org-permissoes-conta-excluida")
     user.user_permissions.add(permission("view_organizacao"))

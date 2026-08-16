@@ -12,7 +12,6 @@ from django.db.models.signals import post_migrate
 
 import pytest
 
-from apps.usuarios.models import Usuario
 from internal_frameworks.permission_cache.signals.django import _affected_user_ids, _capture_reverse_clear_user_ids
 from tests.support.usuarios import criar_usuario
 

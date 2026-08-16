@@ -54,7 +54,11 @@ def lock_user_account(user, *, using=None):
 
 
 def lock_responsible(responsavel, database_alias: str):
-    """Bloqueia a conta alvo, recusando somente uma conta já excluída."""
+    """Bloqueia a conta alvo, recusando somente uma conta já excluída.
+
+    Fluxos administrativos, como reset de MFA, ainda podem atuar sobre contas
+    inativas. A emissão de novas credenciais usa ``lock_eligible_responsible``.
+    """
     locked = lock_user_account(responsavel, using=database_alias)
     if locked.is_deleted:
         raise APIError(AuthErrorCode.RESPONSIBLE_INACTIVE, status_code=409)
@@ -62,7 +66,7 @@ def lock_responsible(responsavel, database_alias: str):
 
 
 def lock_eligible_responsible(responsavel, database_alias: str):
-    """Bloqueia e recarrega um dono apto a receber novas credenciais."""
+    """Bloqueia uma conta apta a receber novas credenciais."""
     locked = lock_responsible(responsavel, database_alias)
     if not locked.is_active:
         raise APIError(AuthErrorCode.RESPONSIBLE_INACTIVE, status_code=409)
@@ -137,6 +141,7 @@ def issue_token(
         APIError: Se a conta do responsável já tiver sido excluída.
     """
     auth_token_model = get_token_model()
+
     database_alias = resolve_database_alias(responsavel, using)
     with transaction.atomic(using=database_alias):
         # Segura a conta antes de escrever a credencial: se uma exclusão estiver
@@ -282,6 +287,7 @@ def rotate_api_key(current, *, actor, using=None):
     para auditoria, apontando `replaced_by` para a nova.
     """
     auth_token_model = get_token_model()
+
     database_alias = resolve_database_alias(current, using)
     known_user_ids = {current.responsavel_id}
 
