@@ -1,9 +1,9 @@
-"""Expose the guarded first-party migration reset as a Django command."""
+"""Expõe o reset protegido de migrations próprias como comando Django."""
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
-from apps.api.core.migration_reset import (
+from apps.api.core.migration_resets import (
     MigrationResetError,
     apply_migration_reset,
     build_migration_reset_plan,

@@ -11,7 +11,7 @@ from django.db.utils import DatabaseError
 
 import pytest
 
-from apps.api.core import migration_reset
+from apps.api.core import migration_resets
 
 
 def criar_app(root: Path, dotted_path: str, *migrations: str):
@@ -33,10 +33,10 @@ def configurar_plano(settings, monkeypatch, tmp_path, configs):
         "ENGINE": "django_rls.backends.postgresql",
         "NAME": "base",
     }
-    monkeypatch.setattr(migration_reset.settings, "DATABASES", databases)
+    monkeypatch.setattr(migration_resets.settings, "DATABASES", databases)
     monkeypatch.setitem(connections["default"].settings_dict, "ENGINE", "django_rls.backends.postgresql")
     monkeypatch.setitem(connections["default"].settings_dict, "NAME", "base")
-    monkeypatch.setattr(migration_reset, "_installed_app_configs", lambda: configs)
+    monkeypatch.setattr(migration_resets, "_installed_app_configs", lambda: configs)
 
 
 def test_command_default_e_dry_run(settings, monkeypatch, tmp_path):
@@ -79,7 +79,7 @@ def test_plano_remove_so_migrations_dos_business_apps(settings, monkeypatch, tmp
     core = criar_app(tmp_path, "apps.api.core", "0001_schedule_access_log_cleanup.py")
     configurar_plano(settings, monkeypatch, tmp_path, [autenticacao, core])
 
-    plan = migration_reset.build_migration_reset_plan()
+    plan = migration_resets.build_migration_reset_plan()
 
     assert plan.database_name == "base"
     assert plan.app_labels == ("autenticacao", "core")
@@ -92,8 +92,8 @@ def test_plano_recusa_app_fora_de_apps(settings, monkeypatch, tmp_path):
     externo = criar_app(tmp_path, "vendor.externo", "0001_initial.py")
     configurar_plano(settings, monkeypatch, tmp_path, [externo])
 
-    with pytest.raises(migration_reset.MigrationResetError, match="fora de apps"):
-        migration_reset.build_migration_reset_plan()
+    with pytest.raises(migration_resets.MigrationResetError, match="fora de apps"):
+        migration_resets.build_migration_reset_plan()
 
 
 def test_plano_recusa_backend_nao_postgresql(settings, monkeypatch, tmp_path):
@@ -101,8 +101,8 @@ def test_plano_recusa_backend_nao_postgresql(settings, monkeypatch, tmp_path):
     configurar_plano(settings, monkeypatch, tmp_path, [core])
     settings.DATABASES["default"]["ENGINE"] = "django.db.backends.sqlite3"
 
-    with pytest.raises(migration_reset.MigrationResetError, match="PostgreSQL"):
-        migration_reset.build_migration_reset_plan()
+    with pytest.raises(migration_resets.MigrationResetError, match="PostgreSQL"):
+        migration_resets.build_migration_reset_plan()
 
 
 def test_plano_recusa_backend_postgresql_sem_prefixo(settings, monkeypatch, tmp_path):
@@ -110,16 +110,16 @@ def test_plano_recusa_backend_postgresql_sem_prefixo(settings, monkeypatch, tmp_
     configurar_plano(settings, monkeypatch, tmp_path, [core])
     settings.DATABASES["default"]["ENGINE"] = "postgresql"
 
-    with pytest.raises(migration_reset.MigrationResetError, match="PostgreSQL"):
-        migration_reset.build_migration_reset_plan()
+    with pytest.raises(migration_resets.MigrationResetError, match="PostgreSQL"):
+        migration_resets.build_migration_reset_plan()
 
 
 def test_plano_recusa_migration_manual_ausente(settings, monkeypatch, tmp_path):
     core = criar_app(tmp_path, "apps.api.core")
     configurar_plano(settings, monkeypatch, tmp_path, [core])
 
-    with pytest.raises(migration_reset.MigrationResetError, match="schedule_access_log_cleanup"):
-        migration_reset.build_migration_reset_plan()
+    with pytest.raises(migration_resets.MigrationResetError, match="schedule_access_log_cleanup"):
+        migration_resets.build_migration_reset_plan()
 
 
 def test_plano_recusa_diretorio_de_migrations_simbolico(settings, monkeypatch, tmp_path):
@@ -130,19 +130,19 @@ def test_plano_recusa_diretorio_de_migrations_simbolico(settings, monkeypatch, t
     migration_dir.symlink_to(outside, target_is_directory=True)
     configurar_plano(settings, monkeypatch, tmp_path, [auth])
 
-    with pytest.raises(migration_reset.MigrationResetError, match="fora do app"):
-        migration_reset.build_migration_reset_plan()
+    with pytest.raises(migration_resets.MigrationResetError, match="fora do app"):
+        migration_resets.build_migration_reset_plan()
 
 
 def test_apply_bloqueia_producao_antes_de_mutar(settings, monkeypatch, tmp_path):
     core = criar_app(tmp_path, "apps.api.core", "0001_schedule_access_log_cleanup.py")
     configurar_plano(settings, monkeypatch, tmp_path, [core])
     settings.IN_PRODUCTION = True
-    plan = migration_reset.build_migration_reset_plan()
-    monkeypatch.setattr(migration_reset, "_run_manage_py", lambda *args: pytest.fail("não deveria executar"))
+    plan = migration_resets.build_migration_reset_plan()
+    monkeypatch.setattr(migration_resets, "_run_manage_py", lambda *args: pytest.fail("não deveria executar"))
 
-    with pytest.raises(migration_reset.MigrationResetError, match="produção"):
-        migration_reset.apply_migration_reset(plan, confirmed_database="base")
+    with pytest.raises(migration_resets.MigrationResetError, match="produção"):
+        migration_resets.apply_migration_reset(plan, confirmed_database="base")
 
 
 def test_apply_bloqueia_ambiente_que_nao_e_desenvolvimento_antes_de_mutar(settings, monkeypatch, tmp_path):
@@ -150,21 +150,21 @@ def test_apply_bloqueia_ambiente_que_nao_e_desenvolvimento_antes_de_mutar(settin
     configurar_plano(settings, monkeypatch, tmp_path, [core])
     settings.IN_PRODUCTION = False
     settings.IN_DEVELOPMENT = False
-    plan = migration_reset.build_migration_reset_plan()
-    monkeypatch.setattr(migration_reset, "_run_manage_py", lambda *args: pytest.fail("não deveria executar"))
+    plan = migration_resets.build_migration_reset_plan()
+    monkeypatch.setattr(migration_resets, "_run_manage_py", lambda *args: pytest.fail("não deveria executar"))
 
-    with pytest.raises(migration_reset.MigrationResetError, match="desenvolvimento"):
-        migration_reset.apply_migration_reset(plan, confirmed_database="base")
+    with pytest.raises(migration_resets.MigrationResetError, match="desenvolvimento"):
+        migration_resets.apply_migration_reset(plan, confirmed_database="base")
 
 
 def test_apply_exige_nome_exato_do_banco(settings, monkeypatch, tmp_path):
     core = criar_app(tmp_path, "apps.api.core", "0001_schedule_access_log_cleanup.py")
     configurar_plano(settings, monkeypatch, tmp_path, [core])
     settings.IN_PRODUCTION = False
-    plan = migration_reset.build_migration_reset_plan()
+    plan = migration_resets.build_migration_reset_plan()
 
-    with pytest.raises(migration_reset.MigrationResetError, match="confirmação"):
-        migration_reset.apply_migration_reset(plan, confirmed_database="outro")
+    with pytest.raises(migration_resets.MigrationResetError, match="confirmação"):
+        migration_resets.apply_migration_reset(plan, confirmed_database="outro")
 
 
 def test_apply_recusa_plano_de_banco_diferente_de_base_antes_de_mutar(settings, monkeypatch, tmp_path):
@@ -172,12 +172,12 @@ def test_apply_recusa_plano_de_banco_diferente_de_base_antes_de_mutar(settings, 
     configurar_plano(settings, monkeypatch, tmp_path, [auth])
     settings.IN_PRODUCTION = False
     settings.DATABASES["default"]["NAME"] = "outro"
-    plan = migration_reset.build_migration_reset_plan()
-    monkeypatch.setattr(migration_reset, "_run_manage_py", lambda *args: pytest.fail("não deveria executar"))
-    monkeypatch.setattr(migration_reset, "_reset_public_schema", lambda: pytest.fail("schema não deveria mudar"))
+    plan = migration_resets.build_migration_reset_plan()
+    monkeypatch.setattr(migration_resets, "_run_manage_py", lambda *args: pytest.fail("não deveria executar"))
+    monkeypatch.setattr(migration_resets, "_reset_public_schema", lambda: pytest.fail("schema não deveria mudar"))
 
-    with pytest.raises(migration_reset.MigrationResetError, match="base"):
-        migration_reset.apply_migration_reset(plan, confirmed_database="outro")
+    with pytest.raises(migration_resets.MigrationResetError, match="base"):
+        migration_resets.apply_migration_reset(plan, confirmed_database="outro")
 
     assert (Path(auth.path) / "migrations" / "0001_initial.py").read_text(encoding="utf-8") == "# migration\n"
 
@@ -186,14 +186,14 @@ def test_apply_recusa_conexao_efetiva_diferente_do_plano_antes_de_mutar(settings
     auth = criar_app(tmp_path, "apps.api.autenticacao", "0001_initial.py")
     configurar_plano(settings, monkeypatch, tmp_path, [auth])
     settings.IN_PRODUCTION = False
-    plan = migration_reset.build_migration_reset_plan()
+    plan = migration_resets.build_migration_reset_plan()
     monkeypatch.setitem(connections["default"].settings_dict, "NAME", "outro")
     monkeypatch.setitem(connections["default"].settings_dict, "ENGINE", "django.db.backends.sqlite3")
-    monkeypatch.setattr(migration_reset, "_run_manage_py", lambda *args: pytest.fail("não deveria executar"))
-    monkeypatch.setattr(migration_reset, "_reset_public_schema", lambda: pytest.fail("schema não deveria mudar"))
+    monkeypatch.setattr(migration_resets, "_run_manage_py", lambda *args: pytest.fail("não deveria executar"))
+    monkeypatch.setattr(migration_resets, "_reset_public_schema", lambda: pytest.fail("schema não deveria mudar"))
 
-    with pytest.raises(migration_reset.MigrationResetError, match="conexão"):
-        migration_reset.apply_migration_reset(plan, confirmed_database="base")
+    with pytest.raises(migration_resets.MigrationResetError, match="conexão"):
+        migration_resets.apply_migration_reset(plan, confirmed_database="base")
 
     assert (Path(auth.path) / "migrations" / "0001_initial.py").read_text(encoding="utf-8") == "# migration\n"
 
@@ -202,13 +202,13 @@ def test_apply_recusa_backend_postgresql_sem_prefixo_antes_de_mutar(settings, mo
     auth = criar_app(tmp_path, "apps.api.autenticacao", "0001_initial.py")
     configurar_plano(settings, monkeypatch, tmp_path, [auth])
     settings.IN_PRODUCTION = False
-    plan = migration_reset.build_migration_reset_plan()
+    plan = migration_resets.build_migration_reset_plan()
     monkeypatch.setitem(connections["default"].settings_dict, "ENGINE", "postgresql")
-    monkeypatch.setattr(migration_reset, "_run_manage_py", lambda *args: pytest.fail("não deveria executar"))
-    monkeypatch.setattr(migration_reset, "_reset_public_schema", lambda: pytest.fail("schema não deveria mudar"))
+    monkeypatch.setattr(migration_resets, "_run_manage_py", lambda *args: pytest.fail("não deveria executar"))
+    monkeypatch.setattr(migration_resets, "_reset_public_schema", lambda: pytest.fail("schema não deveria mudar"))
 
-    with pytest.raises(migration_reset.MigrationResetError, match="conexão"):
-        migration_reset.apply_migration_reset(plan, confirmed_database="base")
+    with pytest.raises(migration_resets.MigrationResetError, match="conexão"):
+        migration_resets.apply_migration_reset(plan, confirmed_database="base")
 
     assert (Path(auth.path) / "migrations" / "0001_initial.py").read_text(encoding="utf-8") == "# migration\n"
 
@@ -218,17 +218,17 @@ def test_apply_restaura_migrations_quando_makemigrations_falha(settings, monkeyp
     core = criar_app(tmp_path, "apps.api.core", "0001_schedule_access_log_cleanup.py")
     configurar_plano(settings, monkeypatch, tmp_path, [auth, core])
     settings.IN_PRODUCTION = False
-    plan = migration_reset.build_migration_reset_plan()
+    plan = migration_resets.build_migration_reset_plan()
 
     def falhar(*args):
         (Path(auth.path) / "migrations" / "0001_generated.py").write_text("# generated\n", encoding="utf-8")
         raise CalledProcessError(1, args)
 
-    monkeypatch.setattr(migration_reset, "_run_manage_py", falhar)
-    monkeypatch.setattr(migration_reset, "_reset_public_schema", lambda: pytest.fail("schema não deveria mudar"))
+    monkeypatch.setattr(migration_resets, "_run_manage_py", falhar)
+    monkeypatch.setattr(migration_resets, "_reset_public_schema", lambda: pytest.fail("schema não deveria mudar"))
 
-    with pytest.raises(migration_reset.MigrationResetError, match="makemigrations"):
-        migration_reset.apply_migration_reset(plan, confirmed_database="base")
+    with pytest.raises(migration_resets.MigrationResetError, match="makemigrations"):
+        migration_resets.apply_migration_reset(plan, confirmed_database="base")
 
     assert (Path(auth.path) / "migrations" / "0001_initial.py").read_text(encoding="utf-8") == "# migration\n"
     assert not (Path(auth.path) / "migrations" / "0001_generated.py").exists()
@@ -239,17 +239,17 @@ def test_apply_restaura_migrations_quando_makemigrations_e_interrompido(settings
     core = criar_app(tmp_path, "apps.api.core", "0001_schedule_access_log_cleanup.py")
     configurar_plano(settings, monkeypatch, tmp_path, [auth, core])
     settings.IN_PRODUCTION = False
-    plan = migration_reset.build_migration_reset_plan()
+    plan = migration_resets.build_migration_reset_plan()
 
     def interromper(*_args):
         (Path(auth.path) / "migrations" / "0001_generated.py").write_text("# generated\n", encoding="utf-8")
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(migration_reset, "_run_manage_py", interromper)
-    monkeypatch.setattr(migration_reset, "_reset_public_schema", lambda: pytest.fail("schema não deveria mudar"))
+    monkeypatch.setattr(migration_resets, "_run_manage_py", interromper)
+    monkeypatch.setattr(migration_resets, "_reset_public_schema", lambda: pytest.fail("schema não deveria mudar"))
 
     with pytest.raises(KeyboardInterrupt):
-        migration_reset.apply_migration_reset(plan, confirmed_database="base")
+        migration_resets.apply_migration_reset(plan, confirmed_database="base")
 
     assert (Path(auth.path) / "migrations" / "0001_initial.py").read_text(encoding="utf-8") == "# migration\n"
     assert not (Path(auth.path) / "migrations" / "0001_generated.py").exists()
@@ -258,10 +258,10 @@ def test_apply_restaura_migrations_quando_makemigrations_e_interrompido(settings
 def test_reset_public_schema_executa_operacoes_em_transacao(monkeypatch):
     connection = MagicMock()
     cursor = connection.cursor.return_value.__enter__.return_value
-    monkeypatch.setattr(migration_reset, "connections", {"default": connection})
+    monkeypatch.setattr(migration_resets, "connections", {"default": connection})
 
     with patch("django.db.transaction.atomic") as atomic:
-        migration_reset._reset_public_schema()
+        migration_resets._reset_public_schema()
 
     atomic.assert_called_once_with(using="default")
     cursor.execute.assert_has_calls(
@@ -278,11 +278,11 @@ def test_reset_public_schema_fecha_conexao_quando_operacao_intermediaria_falha(m
     connection = MagicMock()
     cursor = connection.cursor.return_value.__enter__.return_value
     cursor.execute.side_effect = [None, DatabaseError("falha ao recriar schema")]
-    monkeypatch.setattr(migration_reset, "connections", {"default": connection})
+    monkeypatch.setattr(migration_resets, "connections", {"default": connection})
 
     with patch("django.db.transaction.atomic") as atomic:
         with pytest.raises(DatabaseError, match="falha ao recriar schema"):
-            migration_reset._reset_public_schema()
+            migration_resets._reset_public_schema()
 
     atomic.assert_called_once_with(using="default")
     assert connection.close.call_count == 2
@@ -292,12 +292,12 @@ def test_apply_reseta_schema_depois_de_validar_migrations(settings, monkeypatch,
     core = criar_app(tmp_path, "apps.api.core", "0001_schedule_access_log_cleanup.py")
     configurar_plano(settings, monkeypatch, tmp_path, [core])
     settings.IN_PRODUCTION = False
-    plan = migration_reset.build_migration_reset_plan()
+    plan = migration_resets.build_migration_reset_plan()
     events = []
-    monkeypatch.setattr(migration_reset, "_run_manage_py", lambda *args: events.append(args))
-    monkeypatch.setattr(migration_reset, "_reset_public_schema", lambda: events.append(("reset-schema",)))
+    monkeypatch.setattr(migration_resets, "_run_manage_py", lambda *args: events.append(args))
+    monkeypatch.setattr(migration_resets, "_reset_public_schema", lambda: events.append(("reset-schema",)))
 
-    migration_reset.apply_migration_reset(plan, confirmed_database="base")
+    migration_resets.apply_migration_reset(plan, confirmed_database="base")
 
     assert events == [
         ("makemigrations", "core"),

@@ -1,4 +1,4 @@
-"""Plan and execute a destructive first-party migration reset."""
+"""Planeja e executa o reset destrutivo das migrations dos apps próprios."""
 
 import re
 import shutil
@@ -17,10 +17,11 @@ MIGRATION_FILENAME = re.compile(r"^\d{4}_[a-z0-9_]+\.py$")
 PRESERVED_MIGRATIONS = {
     "core": frozenset({"0001_schedule_access_log_cleanup.py"}),
 }
+RESETTABLE_DATABASE_NAME = "base"
 
 
 class MigrationResetError(Exception):
-    """Raised before or during a migration reset that cannot continue safely."""
+    """Indica que o reset não pode continuar com segurança."""
 
 
 @dataclass(frozen=True)
@@ -137,13 +138,17 @@ def apply_migration_reset(plan: MigrationResetPlan, *, confirmed_database: str |
         raise MigrationResetError("reset_migrations é bloqueado em produção.")
     if not settings.IN_DEVELOPMENT:
         raise MigrationResetError("reset_migrations só pode ser aplicado em desenvolvimento.")
-    if plan.database_name != "base":
-        raise MigrationResetError("reset_migrations só pode operar no banco 'base'.")
-    if confirmed_database != "base":
-        raise MigrationResetError("confirmação inválida; informe exatamente 'base'.")
+    if plan.database_name != RESETTABLE_DATABASE_NAME:
+        raise MigrationResetError(f"reset_migrations só pode operar no banco '{RESETTABLE_DATABASE_NAME}'.")
+    if confirmed_database != RESETTABLE_DATABASE_NAME:
+        raise MigrationResetError(f"confirmação inválida; informe exatamente '{RESETTABLE_DATABASE_NAME}'.")
     connection_settings = connections["default"].settings_dict
-    if connection_settings.get("NAME") != "base" or not str(connection_settings.get("ENGINE", "")).endswith(".postgresql"):
-        raise MigrationResetError("a conexão efetiva deve ser PostgreSQL no banco 'base'.")
+    if connection_settings.get("NAME") != RESETTABLE_DATABASE_NAME or not str(
+        connection_settings.get("ENGINE", "")
+    ).endswith(".postgresql"):
+        raise MigrationResetError(
+            f"a conexão efetiva deve ser PostgreSQL no banco '{RESETTABLE_DATABASE_NAME}'."
+        )
 
     with TemporaryDirectory(prefix="migration-reset-") as temporary:
         backup_root = Path(temporary)
