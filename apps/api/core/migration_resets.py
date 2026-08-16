@@ -4,9 +4,11 @@ import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 
 from django.apps import apps as django_apps
 from django.conf import settings
@@ -19,6 +21,14 @@ PRESERVED_MIGRATIONS = {
     "core": frozenset({"0001_schedule_access_log_cleanup.py"}),
 }
 RESETTABLE_DATABASE_NAME = "base"
+MIGRATION_RESET_STEPS = (
+    "gerar nova baseline com makemigrations",
+    "validar baseline com makemigrations --check --dry-run",
+    "recriar schema public",
+    "aplicar migrations com migrate",
+    "validar models e migrations com makemigrations --check --dry-run",
+    "exibir plano aplicado com showmigrations --plan",
+)
 
 
 class MigrationResetError(Exception):
@@ -146,6 +156,19 @@ def _reset_public_schema() -> None:
         connection.close()
 
 
+def _run_irreversible_step(
+    stage: str,
+    operation: Callable[..., None],
+    *args: Any,
+) -> None:
+    try:
+        operation(*args)
+    except KeyboardInterrupt as exc:
+        raise MigrationResetError(f"reset interrompido na etapa irreversível '{stage}'.") from exc
+    except (OSError, subprocess.CalledProcessError, DatabaseError) as exc:
+        raise MigrationResetError(f"falha na etapa irreversível '{stage}'.") from exc
+
+
 def apply_migration_reset(plan: MigrationResetPlan, *, confirmed_database: str | None) -> None:
     if settings.IN_PRODUCTION:
         raise MigrationResetError("reset_migrations é bloqueado em produção.")
@@ -178,10 +201,18 @@ def apply_migration_reset(plan: MigrationResetPlan, *, confirmed_database: str |
             _restore_snapshot(plan, backup_root)
             raise MigrationResetError("makemigrations falhou; os arquivos originais foram restaurados.") from exc
 
-        try:
-            _reset_public_schema()
-            _run_manage_py("migrate")
-            _run_manage_py("makemigrations", "--check", "--dry-run")
-            _run_manage_py("showmigrations", "--plan")
-        except (OSError, subprocess.CalledProcessError, DatabaseError) as exc:
-            raise MigrationResetError("a baseline foi gerada, mas a reconstrução do banco falhou.") from exc
+        _run_irreversible_step("recriar schema public", _reset_public_schema)
+        _run_irreversible_step("aplicar migrations", _run_manage_py, "migrate")
+        _run_irreversible_step(
+            "validar models e migrations",
+            _run_manage_py,
+            "makemigrations",
+            "--check",
+            "--dry-run",
+        )
+        _run_irreversible_step(
+            "exibir plano aplicado",
+            _run_manage_py,
+            "showmigrations",
+            "--plan",
+        )

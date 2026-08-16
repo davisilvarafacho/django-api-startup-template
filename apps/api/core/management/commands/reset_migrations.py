@@ -4,6 +4,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
 from apps.api.core.migration_resets import (
+    MIGRATION_RESET_STEPS,
     MigrationResetError,
     apply_migration_reset,
     build_migration_reset_plan,
@@ -34,10 +35,9 @@ class Command(BaseCommand):
             self.stdout.write(f"REMOVER {path.relative_to(plan.base_dir)}")
         for path in plan.preserve:
             self.stdout.write(f"PRESERVAR {path.relative_to(plan.base_dir)}")
-        self.stdout.write(
-            "ETAPAS makemigrations -> makemigrations --check --dry-run -> "
-            "reset public -> migrate -> showmigrations --plan"
-        )
+        self.stdout.write("ETAPAS:")
+        for index, step in enumerate(MIGRATION_RESET_STEPS, start=1):
+            self.stdout.write(f"{index}. {step}")
 
         if not options["apply"]:
             self.stdout.write(self.style.WARNING("DRY-RUN: nenhuma alteração foi aplicada."))

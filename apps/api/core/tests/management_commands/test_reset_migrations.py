@@ -51,7 +51,11 @@ def test_command_default_e_dry_run(settings, monkeypatch, tmp_path):
     assert "Ambiente:" in stdout.getvalue()
     assert "base" in stdout.getvalue()
     assert "0001_schedule_access_log_cleanup.py" in stdout.getvalue()
-    assert "makemigrations --check --dry-run" in stdout.getvalue()
+    output = stdout.getvalue()
+    assert output.count("makemigrations --check --dry-run") == 2
+    assert "recriar schema public" in output
+    assert "migrate" in output
+    assert "showmigrations --plan" in output
     apply.assert_not_called()
 
 
@@ -280,6 +284,23 @@ def test_apply_restaura_migrations_quando_makemigrations_e_interrompido(settings
 
     assert (Path(auth.path) / "migrations" / "0001_initial.py").read_text(encoding="utf-8") == "# migration\n"
     assert not (Path(auth.path) / "migrations" / "0001_generated.py").exists()
+
+
+@pytest.mark.parametrize(
+    ("stage", "exception"),
+    [
+        ("recriar schema public", DatabaseError("schema")),
+        ("aplicar migrations", CalledProcessError(1, ["migrate"])),
+        ("validar models e migrations", OSError("check")),
+        ("exibir plano aplicado", KeyboardInterrupt()),
+    ],
+)
+def test_etapa_irreversivel_informa_nome_ao_falhar(stage, exception):
+    def fail():
+        raise exception
+
+    with pytest.raises(migration_resets.MigrationResetError, match=stage):
+        migration_resets._run_irreversible_step(stage, fail)
 
 
 def test_reset_public_schema_executa_operacoes_em_transacao(monkeypatch):
