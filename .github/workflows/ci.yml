@@ -32,8 +32,6 @@ jobs:
         run: uv run ruff check .
       - name: Versões do pacote e OpenAPI
         run: uv run python scripts/check_version.py
-      - name: Migrations sincronizadas
-        run: uv run python manage.py makemigrations --check --dry-run
       - name: Documentação
         run: uv run mkdocs build --strict
 
@@ -75,6 +73,8 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --frozen
+      - name: Migrations sincronizadas
+        run: uv run python manage.py makemigrations --check --dry-run
       - name: Testes + cobertura
         run: uv run pytest
       - name: Upload cobertura (Codecov)
