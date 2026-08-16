@@ -13,7 +13,9 @@ class DjangoPermissionResolver:
         self.store = store or PermissionCacheStore()
 
     def resolve(self, user_obj) -> DjangoPermissionSnapshot:
-        if user_obj.is_anonymous or not user_obj.is_active or user_obj.pk is None:
+        # `is_deleted` é checado junto de `is_active`: uma conta excluída antes
+        # desta correção continuou ativa, e nem ela pode carregar snapshot.
+        if user_obj.is_anonymous or not user_obj.is_active or getattr(user_obj, "is_deleted", False) or user_obj.pk is None:
             return DjangoPermissionSnapshot(frozenset(), frozenset())
         database_alias = user_obj._state.db or DEFAULT_DB_ALIAS
         return self.store.resolve(

@@ -7,6 +7,8 @@ from internal_frameworks.permission_cache.keys import global_scope, layer_scope,
 from internal_frameworks.permission_cache.store import PermissionCacheStore
 from internal_frameworks.permission_cache.types import TenantAccess
 
+TENANT_ACCOUNT_STATE_CACHE_VERSION = 2
+
 
 class TenantAccessResolver:
     def __init__(self, store: PermissionCacheStore | None = None):
@@ -20,7 +22,9 @@ class TenantAccessResolver:
         metric_layer: str = "tenant",
     ) -> TenantAccess | None:
         return self._resolve(
-            identity=("user", user_id, "organization_slug", organization_slug),
+            # A versão separa snapshots criados antes de o loader verificar o
+            # estado da conta; eles deixam de ser reutilizados no deploy.
+            identity=("account_state", TENANT_ACCOUNT_STATE_CACHE_VERSION, "user", user_id, "organization_slug", organization_slug),
             scopes=(global_scope(), layer_scope("tenant"), user_scope("tenant", user_id)),
             database_alias=database_alias,
             metric_layer=metric_layer,
@@ -35,7 +39,7 @@ class TenantAccessResolver:
         metric_layer: str = "tenant",
     ) -> TenantAccess | None:
         return self._resolve(
-            identity=("user", user_id, "organization_id", organization_id),
+            identity=("account_state", TENANT_ACCOUNT_STATE_CACHE_VERSION, "user", user_id, "organization_id", organization_id),
             scopes=(global_scope(), layer_scope("tenant"), user_scope("tenant", user_id)),
             database_alias=database_alias,
             metric_layer=metric_layer,
@@ -79,7 +83,16 @@ class TenantAccessResolver:
         with cachalot_disabled(all_queries=True):
             row = (
                 Vinculo.objects.using(database_alias)
-                .filter(usuario_id=user_id, is_active=True, organizacao__is_active=True, **organization_filter)
+                .filter(
+                    usuario_id=user_id,
+                    is_active=True,
+                    organizacao__is_active=True,
+                    # O vínculo só vale enquanto a conta por trás dele existir:
+                    # excluí-la não precisa (nem deve) desfazer vínculo nenhum.
+                    usuario__is_active=True,
+                    usuario__is_deleted=False,
+                    **organization_filter,
+                )
                 .values("id", "papel", "organizacao_id", "organizacao__slug")
                 .first()
             )

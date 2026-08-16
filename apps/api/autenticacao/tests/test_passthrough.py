@@ -23,8 +23,9 @@ from apps.api.autenticacao.middleware import AuthenticationMiddleware
 
 
 class UsuarioFalso:
-    def __init__(self, is_active=True):
+    def __init__(self, is_active=True, is_deleted=False):
         self.is_active = is_active
+        self.is_deleted = is_deleted
         self.is_authenticated = True
 
 
@@ -213,6 +214,16 @@ def test_passthrough_recusa_usuario_inativo(rf):
     request = rf.get("/v1/pedidos/")
     setattr(request, REQUEST_ATTR_RESOLVED, RESOLVED_PRIVATE)
     request.user = UsuarioFalso(is_active=False)
+
+    with pytest.raises(AuthenticationFailed):
+        PassthroughAuthentication().authenticate(request)
+
+
+def test_passthrough_recusa_usuario_excluido(rf):
+    """Conta legada: excluída sem perder `is_active`."""
+    request = rf.get("/v1/pedidos/")
+    setattr(request, REQUEST_ATTR_RESOLVED, RESOLVED_PRIVATE)
+    request.user = UsuarioFalso(is_active=True, is_deleted=True)
 
     with pytest.raises(AuthenticationFailed):
         PassthroughAuthentication().authenticate(request)

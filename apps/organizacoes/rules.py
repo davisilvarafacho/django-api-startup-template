@@ -31,6 +31,11 @@ def papel_minimo(papel):
         if usuario is None or not usuario.is_authenticated:
             return False
 
+        # Defesa direta, além do filtro do resolver: conta inativa ou excluída
+        # não tem papel nenhum, por mais vivo que o vínculo esteja.
+        if not usuario.is_active or getattr(usuario, "is_deleted", False):
+            return False
+
         organizacao_id = getattr(obj, "organizacao_id", None)
         if organizacao_id is None:
             return False

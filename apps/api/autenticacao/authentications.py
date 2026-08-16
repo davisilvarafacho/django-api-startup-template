@@ -42,7 +42,9 @@ class PassthroughAuthentication(BaseAuthentication):
 
         user = getattr(django_request, "user", None)
 
-        if user is None or not user.is_active:
+        # `is_deleted` entra além de `is_active` por causa das contas excluídas
+        # antes desta correção, que ficaram excluídas e ativas ao mesmo tempo.
+        if user is None or not user.is_active or getattr(user, "is_deleted", False):
             raise AuthenticationFailed("Usuário inativo ou inválido.")
 
         return (user, getattr(django_request, "auth", None))
@@ -81,7 +83,7 @@ class TypedTokenAuthentication(TokenAuthentication):
         if auth_token.suspended_at is not None:
             raise APIError(AuthErrorCode.API_KEY_SUSPENDED, status_code=401)
 
-        if not auth_token.responsavel.is_active:
+        if not auth_token.responsavel.is_active or auth_token.responsavel.is_deleted:
             raise APIError(AuthErrorCode.RESPONSIBLE_INACTIVE, status_code=401)
 
         return (auth_token.responsavel, auth_token)

@@ -19,6 +19,7 @@ class GuardianPermissionResolver:
         if (
             getattr(user_obj, "is_anonymous", True)
             or not getattr(user_obj, "is_active", False)
+            or getattr(user_obj, "is_deleted", False)
             or getattr(user_obj, "pk", None) is None
             or not isinstance(obj, Model)
             or obj.pk is None

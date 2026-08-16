@@ -6,7 +6,7 @@ from django.contrib.auth.models import AnonymousUser, Group, Permission
 from django.core.cache import caches
 from django.core.cache.backends.locmem import LocMemCache
 from django.core.management.base import BaseCommand
-from django.db import connection
+from django.db import connection, models
 from django.test import override_settings
 from django.test.utils import CaptureQueriesContext
 
@@ -21,7 +21,7 @@ from guardian.shortcuts import assign_perm
 
 from apps.api.autenticacao.permissions import CustomDjangoModelPermissions
 from apps.organizacoes.models import Organizacao
-from internal_frameworks.permission_cache.backends import CachedModelBackend
+from internal_frameworks.permission_cache.backends import CachedModelBackend, CachedObjectPermissionBackend
 from internal_frameworks.permission_cache.epochs import EpochStore
 from internal_frameworks.permission_cache.keys import global_scope, layer_scope, snapshot_key, user_scope
 from internal_frameworks.permission_cache.resolvers.django import DjangoPermissionResolver
@@ -350,3 +350,69 @@ def test_user_has_perm_keeps_backend_or_semantics():
         assert guardian_user.has_perm("view_organizacao", organization) is False
     finally:
         rules.remove_perm("organizacoes.rule_only")
+
+
+def test_usuario_excluido_nao_tem_permissoes_de_modelo_nem_objeto():
+    user = criar_usuario()
+    superuser = criar_usuario(is_superuser=True, is_staff=True)
+    organization = Organizacao.objects.create(nome="Excluídos", slug="excluidos")
+    user.user_permissions.add(permission("view_organizacao"))
+    assign_perm("change_organizacao", user, organization)
+    user.delete()
+    superuser.delete()
+    user.refresh_from_db(from_queryset=Usuario.all_objects.all())
+    superuser.refresh_from_db(from_queryset=Usuario.all_objects.all())
+    model_backend = CachedModelBackend()
+    object_backend = CachedObjectPermissionBackend()
+
+    assert model_backend.get_all_permissions(user) == set()
+    assert model_backend.has_perm(user, "organizacoes.view_organizacao") is False
+    assert model_backend.has_module_perms(user, "organizacoes") is False
+    assert model_backend.get_all_permissions(superuser) == set()
+    assert model_backend.has_perm(superuser, "organizacoes.view_organizacao") is False
+    assert object_backend.get_all_permissions(user, organization) == set()
+    assert object_backend.has_perm(user, "organizacoes.change_organizacao", organization) is False
+    assert object_backend.has_perm(superuser, "organizacoes.change_organizacao", organization) is False
+
+
+def test_conta_legada_excluida_e_ativa_nao_tem_permissoes():
+    """Linha excluída antes da correção: `is_deleted` sem perder `is_active`."""
+    user = criar_usuario()
+    superuser = criar_usuario(is_superuser=True, is_staff=True)
+    organization = Organizacao.objects.create(nome="Legado", slug="legado")
+    user.user_permissions.add(permission("view_organizacao"))
+    assign_perm("change_organizacao", user, organization)
+    models.QuerySet.update(Usuario.all_objects.filter(pk__in=[user.pk, superuser.pk]), is_deleted=True)
+    user = Usuario.all_objects.get(pk=user.pk)
+    superuser = Usuario.all_objects.get(pk=superuser.pk)
+    model_backend = CachedModelBackend()
+    object_backend = CachedObjectPermissionBackend()
+
+    assert user.is_active is True
+    assert model_backend.get_all_permissions(user) == set()
+    assert model_backend.has_perm(user, "organizacoes.view_organizacao") is False
+    assert model_backend.has_module_perms(user, "organizacoes") is False
+    assert model_backend.get_all_permissions(superuser) == set()
+    assert model_backend.has_perm(superuser, "organizacoes.view_organizacao") is False
+    assert object_backend.get_all_permissions(user, organization) == set()
+    assert object_backend.has_perm(user, "organizacoes.change_organizacao", organization) is False
+    assert object_backend.has_perm(superuser, "organizacoes.change_organizacao", organization) is False
+
+
+def test_barreira_do_modelo_recusa_superuser_e_rules_em_conta_legada_excluida():
+    """A barreira precisa vir antes do atalho de superuser e de qualquer backend."""
+    rules.add_perm("organizacoes.legacy_rule", rules.always_allow)
+    rules_user = criar_usuario()
+    superuser = criar_usuario(is_superuser=True, is_staff=True)
+    models.QuerySet.update(Usuario.all_objects.filter(pk__in=[rules_user.pk, superuser.pk]), is_deleted=True)
+    rules_user = Usuario.all_objects.get(pk=rules_user.pk)
+    superuser = Usuario.all_objects.get(pk=superuser.pk)
+
+    try:
+        assert rules_user.has_perm("organizacoes.legacy_rule") is False
+        assert superuser.has_perm("organizacoes.view_organizacao") is False
+        assert superuser.has_module_perms("organizacoes") is False
+        assert async_to_sync(superuser.ahas_perm)("organizacoes.view_organizacao") is False
+        assert async_to_sync(superuser.ahas_module_perms)("organizacoes") is False
+    finally:
+        rules.remove_perm("organizacoes.legacy_rule")
