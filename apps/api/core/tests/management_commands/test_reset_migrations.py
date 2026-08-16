@@ -2,11 +2,12 @@ from io import StringIO
 from pathlib import Path
 from subprocess import CalledProcessError
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, call, patch
 
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import connections
+from django.db.utils import DatabaseError
 
 import pytest
 
@@ -26,10 +27,13 @@ def criar_app(root: Path, dotted_path: str, *migrations: str):
 def configurar_plano(settings, monkeypatch, tmp_path, configs):
     settings.BASE_DIR = tmp_path
     settings.BUSINESS_APPS = [config.name for config in configs]
-    settings.DATABASES["default"] = {
+    settings.IN_DEVELOPMENT = True
+    databases = settings.DATABASES.copy()
+    databases["default"] = {
         "ENGINE": "django_rls.backends.postgresql",
         "NAME": "base",
     }
+    monkeypatch.setattr(migration_reset.settings, "DATABASES", databases)
     monkeypatch.setitem(connections["default"].settings_dict, "ENGINE", "django_rls.backends.postgresql")
     monkeypatch.setitem(connections["default"].settings_dict, "NAME", "base")
     monkeypatch.setattr(migration_reset, "_installed_app_configs", lambda: configs)
@@ -141,6 +145,18 @@ def test_apply_bloqueia_producao_antes_de_mutar(settings, monkeypatch, tmp_path)
         migration_reset.apply_migration_reset(plan, confirmed_database="base")
 
 
+def test_apply_bloqueia_ambiente_que_nao_e_desenvolvimento_antes_de_mutar(settings, monkeypatch, tmp_path):
+    core = criar_app(tmp_path, "apps.api.core", "0001_schedule_access_log_cleanup.py")
+    configurar_plano(settings, monkeypatch, tmp_path, [core])
+    settings.IN_PRODUCTION = False
+    settings.IN_DEVELOPMENT = False
+    plan = migration_reset.build_migration_reset_plan()
+    monkeypatch.setattr(migration_reset, "_run_manage_py", lambda *args: pytest.fail("não deveria executar"))
+
+    with pytest.raises(migration_reset.MigrationResetError, match="desenvolvimento"):
+        migration_reset.apply_migration_reset(plan, confirmed_database="base")
+
+
 def test_apply_exige_nome_exato_do_banco(settings, monkeypatch, tmp_path):
     core = criar_app(tmp_path, "apps.api.core", "0001_schedule_access_log_cleanup.py")
     configurar_plano(settings, monkeypatch, tmp_path, [core])
@@ -216,6 +232,60 @@ def test_apply_restaura_migrations_quando_makemigrations_falha(settings, monkeyp
 
     assert (Path(auth.path) / "migrations" / "0001_initial.py").read_text(encoding="utf-8") == "# migration\n"
     assert not (Path(auth.path) / "migrations" / "0001_generated.py").exists()
+
+
+def test_apply_restaura_migrations_quando_makemigrations_e_interrompido(settings, monkeypatch, tmp_path):
+    auth = criar_app(tmp_path, "apps.api.autenticacao", "0001_initial.py")
+    core = criar_app(tmp_path, "apps.api.core", "0001_schedule_access_log_cleanup.py")
+    configurar_plano(settings, monkeypatch, tmp_path, [auth, core])
+    settings.IN_PRODUCTION = False
+    plan = migration_reset.build_migration_reset_plan()
+
+    def interromper(*_args):
+        (Path(auth.path) / "migrations" / "0001_generated.py").write_text("# generated\n", encoding="utf-8")
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(migration_reset, "_run_manage_py", interromper)
+    monkeypatch.setattr(migration_reset, "_reset_public_schema", lambda: pytest.fail("schema não deveria mudar"))
+
+    with pytest.raises(KeyboardInterrupt):
+        migration_reset.apply_migration_reset(plan, confirmed_database="base")
+
+    assert (Path(auth.path) / "migrations" / "0001_initial.py").read_text(encoding="utf-8") == "# migration\n"
+    assert not (Path(auth.path) / "migrations" / "0001_generated.py").exists()
+
+
+def test_reset_public_schema_executa_operacoes_em_transacao(monkeypatch):
+    connection = MagicMock()
+    cursor = connection.cursor.return_value.__enter__.return_value
+    monkeypatch.setattr(migration_reset, "connections", {"default": connection})
+
+    with patch("django.db.transaction.atomic") as atomic:
+        migration_reset._reset_public_schema()
+
+    atomic.assert_called_once_with(using="default")
+    cursor.execute.assert_has_calls(
+        [
+            call("DROP SCHEMA public CASCADE"),
+            call("CREATE SCHEMA public AUTHORIZATION CURRENT_USER"),
+            call("GRANT USAGE ON SCHEMA public TO PUBLIC"),
+        ]
+    )
+    assert connection.close.call_count == 2
+
+
+def test_reset_public_schema_fecha_conexao_quando_operacao_intermediaria_falha(monkeypatch):
+    connection = MagicMock()
+    cursor = connection.cursor.return_value.__enter__.return_value
+    cursor.execute.side_effect = [None, DatabaseError("falha ao recriar schema")]
+    monkeypatch.setattr(migration_reset, "connections", {"default": connection})
+
+    with patch("django.db.transaction.atomic") as atomic:
+        with pytest.raises(DatabaseError, match="falha ao recriar schema"):
+            migration_reset._reset_public_schema()
+
+    atomic.assert_called_once_with(using="default")
+    assert connection.close.call_count == 2
 
 
 def test_apply_reseta_schema_depois_de_validar_migrations(settings, monkeypatch, tmp_path):

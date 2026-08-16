@@ -10,7 +10,7 @@ from tempfile import TemporaryDirectory
 
 from django.apps import apps as django_apps
 from django.conf import settings
-from django.db import connections
+from django.db import connections, transaction
 from django.db.utils import DatabaseError
 
 MIGRATION_FILENAME = re.compile(r"^\d{4}_[a-z0-9_]+\.py$")
@@ -122,16 +122,21 @@ def _restore_snapshot(plan: MigrationResetPlan, backup_root: Path) -> None:
 def _reset_public_schema() -> None:
     connection = connections["default"]
     connection.close()
-    with connection.cursor() as cursor:
-        cursor.execute("DROP SCHEMA public CASCADE")
-        cursor.execute("CREATE SCHEMA public AUTHORIZATION CURRENT_USER")
-        cursor.execute("GRANT USAGE ON SCHEMA public TO PUBLIC")
-    connection.close()
+    try:
+        with transaction.atomic(using="default"):
+            with connection.cursor() as cursor:
+                cursor.execute("DROP SCHEMA public CASCADE")
+                cursor.execute("CREATE SCHEMA public AUTHORIZATION CURRENT_USER")
+                cursor.execute("GRANT USAGE ON SCHEMA public TO PUBLIC")
+    finally:
+        connection.close()
 
 
 def apply_migration_reset(plan: MigrationResetPlan, *, confirmed_database: str | None) -> None:
     if settings.IN_PRODUCTION:
         raise MigrationResetError("reset_migrations é bloqueado em produção.")
+    if not settings.IN_DEVELOPMENT:
+        raise MigrationResetError("reset_migrations só pode ser aplicado em desenvolvimento.")
     if plan.database_name != "base":
         raise MigrationResetError("reset_migrations só pode operar no banco 'base'.")
     if confirmed_database != "base":
@@ -152,6 +157,9 @@ def apply_migration_reset(plan: MigrationResetPlan, *, confirmed_database: str |
                 original.unlink()
             _run_manage_py("makemigrations", *plan.app_labels)
             _run_manage_py("makemigrations", "--check", "--dry-run")
+        except KeyboardInterrupt:
+            _restore_snapshot(plan, backup_root)
+            raise
         except (OSError, subprocess.CalledProcessError) as exc:
             _restore_snapshot(plan, backup_root)
             raise MigrationResetError("makemigrations falhou; os arquivos originais foram restaurados.") from exc

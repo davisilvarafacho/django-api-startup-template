@@ -2,7 +2,8 @@
 
 Este procedimento descarta o schema `public` do banco configurado e substitui
 as migrations dos apps em `BUSINESS_APPS`. Use apenas quando o histórico de
-upgrade também for descartável. O comando recusa produção.
+upgrade também for descartável. A aplicação só é aceita com
+`DJANGO_ENVIRONMENT=development`.
 
 ## Inspecionar sem alterar
 
