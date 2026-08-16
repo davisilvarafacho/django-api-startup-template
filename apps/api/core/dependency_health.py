@@ -14,6 +14,10 @@ class CacheRoundTripError(RuntimeError):
     pass
 
 
+class CacheCleanupError(RuntimeError):
+    pass
+
+
 class HealthyCheck(TypedDict):
     status: Literal["healthy"]
 
@@ -48,7 +52,7 @@ def check_database(alias: str) -> None:
 
 def check_cache(alias: str) -> None:
     backend = caches[alias]
-    key = f"mcp-health:{uuid4().hex}"
+    key = f"dependency-health:{uuid4().hex}"
     value = uuid4().hex
     failure: Exception | None = None
 
@@ -60,7 +64,9 @@ def check_cache(alias: str) -> None:
         failure = exc
     finally:
         try:
-            backend.delete(key)
+            deleted = backend.delete(key)
+            if deleted is False and failure is None:
+                failure = CacheCleanupError("cache cleanup returned false")
         except Exception as cleanup_error:
             if failure is None:
                 failure = cleanup_error

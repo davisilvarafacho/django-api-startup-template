@@ -81,6 +81,40 @@ def test_check_cache_reports_cleanup_failure(monkeypatch):
         modulo.check_cache("default")
 
 
+def test_check_cache_reports_divergent_read(monkeypatch):
+    class Cache:
+        def set(self, key, value, timeout):
+            pass
+
+        def get(self, key):
+            return "different-value"
+
+        def delete(self, key):
+            return True
+
+    monkeypatch.setattr(modulo, "caches", {"default": Cache()})
+
+    with pytest.raises(modulo.CacheRoundTripError):
+        modulo.check_cache("default")
+
+
+def test_check_cache_reports_false_cleanup_result(monkeypatch):
+    class Cache:
+        def set(self, key, value, timeout):
+            self.value = value
+
+        def get(self, key):
+            return self.value
+
+        def delete(self, key):
+            return False
+
+    monkeypatch.setattr(modulo, "caches", {"default": Cache()})
+
+    with pytest.raises(modulo.CacheCleanupError):
+        modulo.check_cache("default")
+
+
 def test_check_cache_preserves_primary_failure_when_cleanup_also_fails(monkeypatch):
     class Cache:
         def set(self, key, value, timeout):
