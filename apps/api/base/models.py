@@ -53,7 +53,7 @@ class SoftDeleteQuerySet(models.QuerySet):
 
 
 class BaseQuerySet(SoftDeleteQuerySet, RLSQuerySet):
-    """Queryset com exclusão lógica e o guard de contexto do django-rls."""
+    pass
 
 
 class DeferredFieldsManagerMixin:
