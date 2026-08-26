@@ -77,7 +77,7 @@ Expected: FAIL de importação para `BaseTenantless` e referências ainda existe
 Em `apps/api/base/models.py`, substitua o corpo monolítico de `BaseGlobal` por mixins abstratos, mantendo os campos e valores atuais:
 
 ```python
-class CreationTimestampMixin(models.Model):
+class TimestampMixin(models.Model):
     created_at = models.DateTimeField(_("criado em"), auto_now_add=True)
     last_modified_at = models.DateTimeField(_("última alteração em"), auto_now=True)
 
@@ -133,7 +133,7 @@ class BaseTenantless(
     ActivityMixin,
     AuditHistoryMixin,
     CreatedByMixin,
-    CreationTimestampMixin,
+    TimestampMixin,
 ):
     class Meta:
         abstract = True

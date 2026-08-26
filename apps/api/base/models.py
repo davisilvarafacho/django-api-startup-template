@@ -88,7 +88,7 @@ class ActiveObjectsManager(ActiveManagerMixin, ExcludeDeletedManagerMixin, Defer
     pass
 
 
-class CreationTimestampMixin(models.Model):
+class TimestampMixin(models.Model):
     created_at = models.DateTimeField(_("criado em"), auto_now_add=True)
     last_modified_at = models.DateTimeField(_("última alteração em"), auto_now=True)
 
@@ -121,7 +121,7 @@ class CreatedByMixin(models.Model):
         abstract = True
 
 
-class CreationAuditMixin(CreatedByMixin, CreationTimestampMixin):
+class CreationAuditMixin(CreatedByMixin, TimestampMixin):
     """Compatibilidade para modelos que usam apenas autoria e timestamps."""
 
     class Meta:
@@ -406,7 +406,7 @@ class BaseTenantless(
     AuditHistoryMixin,
     ChangeTrackingMixin,
     CreatedByMixin,
-    CreationTimestampMixin,
+    TimestampMixin,
 ):
     """Base para modelos sem isolamento por organização."""
 

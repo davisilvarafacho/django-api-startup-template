@@ -33,7 +33,7 @@ independentes:
 
 | Mixin | Responsabilidade |
 | --- | --- |
-| `CreationTimestampMixin` | Campos `created_at` e `last_modified_at`. |
+| `TimestampMixin` | Campos `created_at` e `last_modified_at`. |
 | `CreatedByMixin` | Campo e preenchimento automático de `created_by`. |
 | `AuditHistoryMixin` | Campo `AuditlogHistoryField`. |
 | `ActivityMixin` | Campo `is_active`. |
