@@ -202,6 +202,7 @@ class FieldPolicyMixin(models.Model):
 
     queryset_deferred_fields = []
 
+    # TODO renomear para 'forbidden_internal_update_fields' + implementação de uso
     forbidden_internal_write_fields = ["created_at", "created_by", "last_modified_at", "organizacao"]
     extra_forbidden_internal_write_fields = []
 
@@ -239,8 +240,8 @@ class CloneMixin(models.Model):
         clone._state.adding = True
 
         model_fields = self.get_fields()
-        control_fields = list(self.clone_reset_fields) + list(self.extra_clone_reset_fields)
-        for field in control_fields:
+        reset_fields = list(self.clone_reset_fields) + list(self.extra_clone_reset_fields)
+        for field in reset_fields:
             if field in model_fields:
                 setattr(clone, field, None)
 
