@@ -122,7 +122,7 @@ class IdentidadeExterna(BaseTenantless):
     def save(self, *args, **kwargs):
         update_fields = kwargs.get("update_fields")
         atualiza_identificador = update_fields is None or "identificador" in update_fields
-        if self.pk and atualiza_identificador:
+        if self.pk is not None and atualiza_identificador:
             database_alias = kwargs.get("using") or self._state.db or "default"
             identificador_anterior = type(self).all_objects.using(database_alias).filter(pk=self.pk).values_list("identificador", flat=True).first()
             if identificador_anterior is not None and identificador_anterior != self.identificador:
