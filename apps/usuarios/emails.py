@@ -7,10 +7,12 @@ from django.core import signing
 
 EMAIL_VERIFICATION_PURPOSE = "email_verification"
 EMAIL_CHANGE_PURPOSE = "email_change"
+ACCOUNT_REACTIVATION_PURPOSE = "account_reactivation"
 
 _SALTS = {
     EMAIL_VERIFICATION_PURPOSE: "usuarios.email-verification",
     EMAIL_CHANGE_PURPOSE: "usuarios.email-change",
+    ACCOUNT_REACTIVATION_PURPOSE: "usuarios.account-reactivation",
 }
 
 
@@ -44,13 +46,20 @@ def emitir_token_troca_email(usuario, email: str) -> str:
     return emitir_token_email(usuario=usuario, email=email, purpose=EMAIL_CHANGE_PURPOSE)
 
 
+def emitir_token_reativacao(usuario) -> str:
+    return emitir_token_email(usuario=usuario, email=usuario.email, purpose=ACCOUNT_REACTIVATION_PURPOSE)
+
+
 def carregar_token_email(token: str, *, purpose: str) -> SignedEmailToken | None:
     """Lê um token do propósito esperado sem distinguir formas de falha."""
     if purpose not in _SALTS:
         raise ValueError("Finalidade de token de e-mail inválida.")
-    max_age = (
-        settings.EMAIL_VERIFICATION_TOKEN_MAX_AGE_SECONDS if purpose == EMAIL_VERIFICATION_PURPOSE else settings.EMAIL_CHANGE_TOKEN_MAX_AGE_SECONDS
-    )
+    max_ages = {
+        EMAIL_VERIFICATION_PURPOSE: settings.EMAIL_VERIFICATION_TOKEN_MAX_AGE_SECONDS,
+        EMAIL_CHANGE_PURPOSE: settings.EMAIL_CHANGE_TOKEN_MAX_AGE_SECONDS,
+        ACCOUNT_REACTIVATION_PURPOSE: settings.ACCOUNT_REACTIVATION_TOKEN_MAX_AGE_SECONDS,
+    }
+    max_age = max_ages[purpose]
     try:
         payload = signing.TimestampSigner(salt=_SALTS[purpose]).unsign_object(token, max_age=max_age)
         signed_token = SignedEmailToken(

@@ -130,6 +130,23 @@ class IdentidadeExterna(BaseTenantless):
 
         return super().save(*args, **kwargs)
 
+    def anonimizar(self, *, using=None) -> bool:
+        """Substitui o identificador imutável somente na exclusão definitiva."""
+        database_alias = using or self._state.db or "default"
+        identificador_anonimo = f"deleted-{self.pk}-{uuid_lib.uuid4()}"
+        queryset = type(self).all_objects.using(database_alias).filter(pk=self.pk)
+        atualizadas = models.QuerySet.update(
+            queryset,
+            identificador=identificador_anonimo,
+            is_active=False,
+            is_deleted=True,
+        )
+        if atualizadas:
+            self.identificador = identificador_anonimo
+            self.is_active = False
+            self.is_deleted = True
+        return bool(atualizadas)
+
     def __str__(self):
         return f"{self.get_provedor_display()} para {self.usuario}"
 

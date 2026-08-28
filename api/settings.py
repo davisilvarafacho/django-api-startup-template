@@ -293,6 +293,13 @@ EMAIL_CHANGE_TOKEN_MAX_AGE_SECONDS = int(get_env_var("EMAIL_CHANGE_TOKEN_MAX_AGE
 EMAIL_VERIFICATION_FRONTEND_URL = get_env_var("EMAIL_VERIFICATION_FRONTEND_URL", "http://localhost:3000/verificar-email")
 EMAIL_CHANGE_FRONTEND_URL = get_env_var("EMAIL_CHANGE_FRONTEND_URL", "http://localhost:3000/confirmar-troca-email")
 
+# Ciclo da conta: o pedido permanece reversível durante a carência; só a task
+# periódica torna a exclusão definitiva por anonimização.
+ACCOUNT_DELETION_GRACE_DAYS = get_int_from_env("ACCOUNT_DELETION_GRACE_DAYS", 7)
+ACCOUNT_DELETION_BATCH_SIZE = get_int_from_env("ACCOUNT_DELETION_BATCH_SIZE", 100)
+ACCOUNT_REACTIVATION_TOKEN_MAX_AGE_SECONDS = get_int_from_env("ACCOUNT_REACTIVATION_TOKEN_MAX_AGE_SECONDS", 60 * 60)
+ACCOUNT_REACTIVATION_FRONTEND_URL = get_env_var("ACCOUNT_REACTIVATION_FRONTEND_URL", "http://localhost:3000/reativar-conta")
+
 AUTH_USER_MODEL = "usuarios.Usuario"
 
 
@@ -509,6 +516,7 @@ REST_FRAMEWORK = {
         # abuso aqui não é só força bruta, é usar a API como canhão de spam.
         "auth_password_reset": "5/min",
         "auth_email_verification": "5/min",
+        "account_reactivation": "5/min",
     },
     "DEFAULT_VERSIONING_CLASS": "rest_framework.versioning.NamespaceVersioning",
     # Nenhuma URL do projeto vive sob namespace ainda, então sem uma versão padrão
@@ -672,6 +680,10 @@ CELERY_BEAT_SCHEDULE = {
     "cleanup-expired-auth-tokens": {
         "task": "autenticacao.cleanup_expired_tokens",
         "schedule": crontab(hour=0, minute=0),
+    },
+    "anonymize-expired-accounts": {
+        "task": "usuarios.anonimizar_contas_vencidas",
+        "schedule": crontab(hour=0, minute=30),
     },
 }
 
