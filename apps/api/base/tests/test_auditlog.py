@@ -7,7 +7,7 @@ from auditlog import get_logentry_model
 from auditlog.registry import auditlog
 
 import apps.api.base.models as base_models
-from apps.api.autenticacao.models import MFAChallenge, MFAFactor, MFARecoveryCode, MFAResetAudit, TokenMetaData, TrustedDevice
+from apps.api.autenticacao.models import IdentidadeExterna, MFAChallenge, MFAFactor, MFARecoveryCode, MFAResetAudit, TokenMetaData, TrustedDevice
 from apps.api.base.models import Base, BaseTenantless
 from apps.api.core.context import usuario_atual
 from apps.logs.models import LogAlteracao
@@ -30,6 +30,7 @@ def test_registra_todos_os_modelos_concretos_dos_apps():
         MFARecoveryCode,
         MFAResetAudit,
         TrustedDevice,
+        IdentidadeExterna,
     }
     modelos_internos_registrados = {model for model in auditlog.get_models() if model.__module__.startswith("apps.")}
 
@@ -50,6 +51,7 @@ def test_exclui_campos_tecnicos_e_credenciais_sem_mutar_a_configuracao_global():
     }
     for model in (Organizacao, Time, Vinculo, Convite):
         assert auditlog.get_model_fields(model)["exclude_fields"] == [*campos_base, "is_deleted"]
+    assert auditlog.get_model_fields(IdentidadeExterna)["exclude_fields"] == [*campos_base, "is_deleted", "identificador"]
     assert auditlog.get_model_fields(TokenMetaData)["exclude_fields"] == campos_base
 
 

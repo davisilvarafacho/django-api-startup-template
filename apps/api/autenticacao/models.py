@@ -9,7 +9,7 @@ from django.utils.translation import gettext_lazy as _
 from knox import crypto
 from knox.settings import CONSTANTS, knox_settings
 
-from apps.api.base.models import CreationAuditMixin
+from apps.api.base.models import BaseTenantless, CreationAuditMixin
 from internal_frameworks.sensitive_fields.fields import encrypt
 from utils.logs import register
 
@@ -45,6 +45,58 @@ class MFAChallengeDeliveryStatus(models.TextChoices):
     PENDING = "pending", _("Pendente")
     SENT = "sent", _("Enviado")
     FAILED = "failed", _("Falhou")
+
+
+class ProvedorIdentidade(models.IntegerChoices):
+    """Provedores aceitos em ``IdentidadeExterna.provedor``."""
+
+    GOOGLE = 10, _("Google")
+
+
+class IdentidadeExterna(BaseTenantless):
+    """Vínculo global entre uma conta e seu identificador externo imutável."""
+
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name=_("usuário"),
+        on_delete=models.CASCADE,
+        related_name="identidades_externas",
+        help_text=_("Usuário dono da identidade externa."),
+        db_comment="Usuário dono da identidade externa.",
+    )
+    provedor = models.PositiveSmallIntegerField(
+        _("provedor"),
+        choices=ProvedorIdentidade.choices,
+        help_text=_("Provedor que emitiu o identificador externo."),
+        db_comment="Provedor que emitiu o identificador externo.",
+    )
+    identificador = models.CharField(
+        _("identificador"),
+        max_length=255,
+        help_text=_("Identificador imutável fornecido pelo provedor externo."),
+        db_comment="Identificador imutável fornecido pelo provedor externo.",
+    )
+
+    def __str__(self):
+        return f"{self.get_provedor_display()} para {self.usuario}"
+
+    class Meta:
+        db_table = "identidade_externa"
+        ordering = ("-id",)
+        verbose_name = _("Identidade externa")
+        verbose_name_plural = _("Identidades externas")
+        constraints = [
+            models.UniqueConstraint(
+                fields=["provedor", "identificador"],
+                condition=models.Q(is_deleted=False),
+                name="identidade_externa_provedor_identificador_unico_nao_excluido",
+            ),
+            models.UniqueConstraint(
+                fields=["usuario", "provedor"],
+                condition=models.Q(is_deleted=False),
+                name="identidade_externa_usuario_provedor_unico_nao_excluido",
+            ),
+        ]
 
 
 class AuthTokenManager(models.Manager):
@@ -740,6 +792,7 @@ class MFAResetAudit(models.Model):
 
 
 register(TokenMetaData)
+register(IdentidadeExterna, exclude_fields=["identificador"])
 register(MFAFactor)
 register(MFAChallenge, exclude_fields=["otp_digest"])
 register(MFARecoveryCode, exclude_fields=["digest"])

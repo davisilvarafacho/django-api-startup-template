@@ -166,6 +166,27 @@ class Usuario(BaseTenantless, AbstractUser):
         help_text=_("Data e hora da confirmação do telefone para MFA."),
         db_comment="Data e hora da confirmação do telefone para MFA.",
     )
+    email_verificado_em = models.DateTimeField(
+        _("e-mail verificado em"),
+        blank=True,
+        null=True,
+        help_text=_("Data e hora da confirmação do e-mail."),
+        db_comment="Data e hora da confirmação do e-mail.",
+    )
+    exclusao_solicitada_em = models.DateTimeField(
+        _("exclusão solicitada em"),
+        blank=True,
+        null=True,
+        help_text=_("Data e hora em que a exclusão da conta foi solicitada."),
+        db_comment="Data e hora em que a exclusão da conta foi solicitada.",
+    )
+    exclusao_agendada_para = models.DateTimeField(
+        _("exclusão agendada para"),
+        blank=True,
+        null=True,
+        help_text=_("Data e hora programada para a anonimização definitiva da conta."),
+        db_comment="Data e hora programada para a anonimização definitiva da conta.",
+    )
 
     EMAIL_FIELD = "email"
     USERNAME_FIELD = "email"
@@ -219,7 +240,12 @@ class Usuario(BaseTenantless, AbstractUser):
         contact_changed = False
         if self.pk and tracks_contact:
             previous = type(self).all_objects.using(database_alias).only("email", "phone_number").get(pk=self.pk)
-            contact_changed = previous.email != self.email or previous.phone_number != self.phone_number
+            email_changed = previous.email != self.email
+            contact_changed = email_changed or previous.phone_number != self.phone_number
+            if email_changed:
+                self.email_verificado_em = None
+                if update_fields is not None:
+                    kwargs["update_fields"] = [*update_fields, "email_verificado_em"]
 
         result = super().save(*args, **kwargs)
         if contact_changed:
