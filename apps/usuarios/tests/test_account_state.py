@@ -30,6 +30,18 @@ def test_alterar_email_diretamente_limpa_a_verificacao():
     assert usuario.email_verificado_em is None
 
 
+def test_atualizar_email_por_queryset_limpa_a_verificacao():
+    usuario = criar_usuario()
+    usuario.email_verificado_em = timezone.now()
+    usuario.save(update_fields=["email_verificado_em"])
+
+    usuario.__class__.objects.filter(pk=usuario.pk).update(email="novo-email-por-queryset@exemplo.com")
+
+    usuario.refresh_from_db()
+    assert usuario.email == "novo-email-por-queryset@exemplo.com"
+    assert usuario.email_verificado_em is None
+
+
 def test_salvar_outro_campo_preserva_a_verificacao_do_email():
     usuario = criar_usuario()
     verificado_em = timezone.now()

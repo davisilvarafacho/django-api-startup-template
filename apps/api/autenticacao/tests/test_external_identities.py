@@ -80,3 +80,37 @@ def test_identificador_nao_e_serializado_pelo_auditlog():
     IdentidadeExterna, _ = _obter_modelos_de_identidade()
 
     assert "identificador" in auditlog.get_model_fields(IdentidadeExterna)["exclude_fields"]
+
+
+def test_identificador_nao_pode_ser_alterado_por_save():
+    IdentidadeExterna, ProvedorIdentidade = _obter_modelos_de_identidade()
+    identidade = IdentidadeExterna.objects.create(
+        usuario=criar_usuario(),
+        provedor=ProvedorIdentidade.GOOGLE,
+        identificador="sub-google-imutavel",
+    )
+
+    identidade.identificador = "outro-sub-google"
+
+    with pytest.raises(ValueError, match="imutável"):
+        identidade.save()
+
+    identidade.refresh_from_db()
+    assert identidade.identificador == "sub-google-imutavel"
+
+
+@pytest.mark.parametrize("manager_name", ["objects", "all_objects", "ativos"])
+def test_identificador_nao_pode_ser_alterado_por_queryset(manager_name):
+    IdentidadeExterna, ProvedorIdentidade = _obter_modelos_de_identidade()
+    identidade = IdentidadeExterna.objects.create(
+        usuario=criar_usuario(),
+        provedor=ProvedorIdentidade.GOOGLE,
+        identificador="sub-google-imutavel",
+    )
+
+    manager = getattr(IdentidadeExterna, manager_name)
+    with pytest.raises(ValueError, match="imutável"):
+        manager.filter(pk=identidade.pk).update(identificador="outro-sub-google")
+
+    identidade.refresh_from_db()
+    assert identidade.identificador == "sub-google-imutavel"

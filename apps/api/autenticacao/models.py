@@ -9,7 +9,14 @@ from django.utils.translation import gettext_lazy as _
 from knox import crypto
 from knox.settings import CONSTANTS, knox_settings
 
-from apps.api.base.models import BaseTenantless, CreationAuditMixin
+from apps.api.base.models import (
+    ActiveManagerMixin,
+    BaseQuerySet,
+    BaseTenantless,
+    CreationAuditMixin,
+    DeferredFieldsManagerMixin,
+    ExcludeDeletedManagerMixin,
+)
 from internal_frameworks.sensitive_fields.fields import encrypt
 from utils.logs import register
 
@@ -53,6 +60,32 @@ class ProvedorIdentidade(models.IntegerChoices):
     GOOGLE = 10, _("Google")
 
 
+class IdentidadesExternasQuerySet(BaseQuerySet):
+    """Impede que atualizações em lote troquem o ``sub`` externo."""
+
+    def update(self, **kwargs):
+        if "identificador" in kwargs:
+            raise ValueError("O identificador de IdentidadeExterna é imutável.")
+        return super().update(**kwargs)
+
+
+IdentidadesExternasQuerySetManager = models.Manager.from_queryset(IdentidadesExternasQuerySet)
+
+
+class TodasIdentidadesExternasManager(DeferredFieldsManagerMixin, IdentidadesExternasQuerySetManager):
+    """Manager de identidades, incluindo registros excluídos."""
+
+
+class IdentidadesExternasManager(ExcludeDeletedManagerMixin, DeferredFieldsManagerMixin, IdentidadesExternasQuerySetManager):
+    """Manager padrão de identidades externas vivas."""
+
+
+class IdentidadesExternasAtivasManager(
+    ActiveManagerMixin, ExcludeDeletedManagerMixin, DeferredFieldsManagerMixin, IdentidadesExternasQuerySetManager
+):
+    """Manager de identidades externas ativas e vivas."""
+
+
 class IdentidadeExterna(BaseTenantless):
     """Vínculo global entre uma conta e seu identificador externo imutável."""
 
@@ -76,6 +109,21 @@ class IdentidadeExterna(BaseTenantless):
         help_text=_("Identificador imutável fornecido pelo provedor externo."),
         db_comment="Identificador imutável fornecido pelo provedor externo.",
     )
+
+    objects = IdentidadesExternasManager()
+    all_objects = TodasIdentidadesExternasManager()
+    ativos = IdentidadesExternasAtivasManager()
+
+    def save(self, *args, **kwargs):
+        update_fields = kwargs.get("update_fields")
+        atualiza_identificador = update_fields is None or "identificador" in update_fields
+        if self.pk and atualiza_identificador:
+            database_alias = kwargs.get("using") or self._state.db or "default"
+            anterior = type(self).all_objects.using(database_alias).only("identificador").get(pk=self.pk)
+            if anterior.identificador != self.identificador:
+                raise ValueError("O identificador de IdentidadeExterna é imutável.")
+
+        return super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.get_provedor_display()} para {self.usuario}"

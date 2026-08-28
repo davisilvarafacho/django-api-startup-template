@@ -79,6 +79,9 @@ class UsuarioQuerySet(BaseQuerySet):
                 raise ValueError("A exclusão em lote de Usuario só aceita is_deleted=True e is_active=False.")
             return self.delete()[0]
 
+        if "email" in kwargs:
+            kwargs["email_verificado_em"] = None
+
         auth_fields = {"is_active", "is_superuser", "is_deleted"}
         affected_user_ids = tuple(sorted(self.values_list("pk", flat=True))) if auth_fields.intersection(kwargs) else ()
         updated = super().update(**kwargs)
