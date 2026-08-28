@@ -138,7 +138,7 @@ def issue_token(
     Se a criação do metadata falhar, o token também não persiste.
 
     Raises:
-        APIError: Se a conta do responsável já tiver sido excluída.
+        APIError: Se a conta do responsável estiver indisponível.
     """
     auth_token_model = get_token_model()
 
@@ -148,7 +148,7 @@ def issue_token(
         # em curso, esperamos por ela e desistimos em vez de emitir um token que
         # já nasceria órfão.
         conta = lock_user_account(responsavel, using=database_alias)
-        if conta.is_deleted or not conta.is_active:
+        if conta.is_deleted or not conta.is_active or conta.exclusao_agendada_para is not None:
             raise APIError(AuthErrorCode.RESPONSIBLE_INACTIVE, status_code=409)
 
         token_manager = auth_token_model.objects if database_alias == DEFAULT_DB_ALIAS else auth_token_model.objects.db_manager(database_alias)

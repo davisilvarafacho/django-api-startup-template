@@ -42,7 +42,7 @@ class AutenticacaoGoogle:
                     cls._exigir_conta_disponivel(identidade.usuario)
                     return identidade.usuario
 
-                if Usuario.objects.filter(email__iexact=email).exists():
+                if Usuario.all_objects.filter(email__iexact=email).exists():
                     raise APIError(AccountErrorCode.EXTERNAL_IDENTITY_CONFLICT, status_code=409)
 
                 usuario = cls._criar_usuario(claims, email)

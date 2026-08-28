@@ -93,6 +93,21 @@ def test_email_local_existente_nunca_e_vinculado_implicitamente():
     assert AuthToken.objects.filter(responsavel=usuario).exists() is False
 
 
+def test_email_soft_deleted_nao_anonimizado_impede_novo_cadastro():
+    usuario = criar_usuario(email="excluida@example.com")
+    usuario.delete()
+    claims = claims_google(sub="sub-posterior", email="excluida@example.com")
+
+    with substituir_verificador(claims=claims):
+        response = APIClient().post("/auth/google/", {"id_token": "token-posterior"}, format="json")
+
+    assert response.status_code == 409
+    assert response.data["errors"][0]["code"] == "account.external_identity_conflict"
+    assert Usuario.all_objects.filter(email__iexact="excluida@example.com").count() == 1
+    assert IdentidadeExterna.objects.filter(provedor=ProvedorIdentidade.GOOGLE, identificador="sub-posterior").exists() is False
+    assert AuthToken.objects.exists() is False
+
+
 @pytest.mark.parametrize(
     ("email", "hd", "espera_verificado"),
     [
