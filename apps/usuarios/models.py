@@ -1,5 +1,6 @@
 from django.contrib.auth.models import AbstractUser, UserManager
 from django.db import DEFAULT_DB_ALIAS, models, transaction
+from django.db.models.functions import Lower
 from django.utils.translation import gettext_lazy as _
 
 from apps.api.base.models import ActiveManagerMixin, BaseQuerySet, BaseTenantless, DeferredFieldsManagerMixin, ExcludeDeletedManagerMixin
@@ -321,7 +322,7 @@ class Usuario(BaseTenantless, AbstractUser):
         permissions = [("can_reset_mfa_usuario", "Pode resetar MFA de usuários")]
         constraints = [
             models.UniqueConstraint(
-                fields=["email"],
+                Lower("email"),
                 condition=models.Q(is_deleted=False),
                 name="usuario_email_unico_nao_excluido",
             )
@@ -330,5 +331,5 @@ class Usuario(BaseTenantless, AbstractUser):
 
 register(
     Usuario,
-    exclude_fields=["password", "last_login"],
+    exclude_fields=["password", "last_login", "email"],
 )

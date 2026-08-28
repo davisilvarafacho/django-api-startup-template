@@ -1,5 +1,6 @@
 """Estado persistido do ciclo de vida da conta."""
 
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 import pytest
@@ -66,3 +67,15 @@ def test_salvar_outro_campo_preserva_a_verificacao_do_email():
 
     usuario.refresh_from_db()
     assert usuario.email_verificado_em == verificado_em
+
+
+def test_email_e_unico_sem_distinguir_maiusculas_de_minusculas_e_soft_delete_libera_o_endereco():
+    original = criar_usuario(email="Compartilhado@example.com")
+
+    with transaction.atomic():
+        with pytest.raises(IntegrityError):
+            criar_usuario(email="compartilhado@example.com")
+
+    original.delete()
+    recriado = criar_usuario(email="compartilhado@example.com")
+    assert recriado.email == "compartilhado@example.com"

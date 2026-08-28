@@ -8,10 +8,13 @@ from django.utils import timezone
 
 from rest_framework.test import APIClient
 
+import pyotp
 import pytest
 from knox.models import get_token_model
 
-from apps.api.autenticacao.models import TokenMetaData, TokenType
+from apps.api.autenticacao.mfa import confirm_enrollment, start_enrollment
+from apps.api.autenticacao.models import MFAFactor, MFAFactorType, TokenMetaData, TokenType
+from apps.api.autenticacao.services import issue_token
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
 from tests.support.usuarios import criar_usuario
 
@@ -94,7 +97,7 @@ def test_confirmacoes_concorrentes_disputando_o_mesmo_email_tem_um_unico_vencedo
     second = criar_usuario(email="second@example.com")
     first_client, _ = _client_with_recent_session(first)
     second_client, _ = _client_with_recent_session(second)
-    first_token = _request_change(first_client, "compartilhado@example.com", django_capture_on_commit_callbacks)
+    first_token = _request_change(first_client, "Compartilhado@example.com", django_capture_on_commit_callbacks)
     second_token = _request_change(second_client, "compartilhado@example.com", django_capture_on_commit_callbacks)
 
     barrier = Barrier(2)
@@ -124,6 +127,26 @@ def test_solicitacao_exige_reautenticacao_recente(usuario):
     response = client.post(CHANGE_URL, {"email": "novo@example.com"}, format="json")
 
     assert response.status_code == 401
+
+
+def test_solicitacao_com_mfa_exige_o_segundo_fator_de_reautenticacao(api_client, usuario, django_capture_on_commit_callbacks):
+    enrollment = start_enrollment(usuario, MFAFactorType.TOTP)
+    confirm_enrollment(usuario, MFAFactorType.TOTP, pyotp.TOTP(enrollment.plain_secret).now())
+    MFAFactor.objects.filter(pk=enrollment.factor.pk).update(totp_last_counter=None)
+    issued = issue_token(responsavel=usuario, token_type=TokenType.TOKEN, created_by=usuario, expiry=None, metadata_input={})
+    api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {issued.plain_token}")
+
+    assert api_client.post("/auth/reauthenticate/", {"password": "Senha123!"}, format="json").status_code == 202
+    assert api_client.post(CHANGE_URL, {"email": "novo-com-mfa@example.com"}, format="json").status_code == 401
+    assert api_client.post("/auth/reauthenticate/challenge/start/", {"type": "totp"}, format="json").status_code == 201
+    with django_capture_on_commit_callbacks(execute=True):
+        response = api_client.post(
+            "/auth/reauthenticate/challenge/verify/",
+            {"type": "totp", "code": pyotp.TOTP(enrollment.plain_secret).now()},
+            format="json",
+        )
+    assert response.status_code == 204
+    assert api_client.post(CHANGE_URL, {"email": "novo-com-mfa@example.com"}, format="json").status_code == 202
 
 
 def test_confirmacao_invalida_nao_revela_estado_da_conta(api_client):

@@ -12,6 +12,8 @@ from apps.api.base.models import Base, BaseTenantless
 from apps.api.core.context import usuario_atual
 from apps.logs.models import LogAlteracao
 from apps.organizacoes.models import Convite, Organizacao, Time, Vinculo
+from apps.usuarios.accounts import Contas
+from apps.usuarios.emails import emitir_token_troca_email
 from apps.usuarios.models import Usuario
 from internal_frameworks.context import ContextVariable
 from tests.support.usuarios import criar_usuario
@@ -46,6 +48,7 @@ def test_exclui_campos_tecnicos_e_credenciais_sem_mutar_a_configuracao_global():
         "is_deleted",
         "password",
         "last_login",
+        "email",
         # Cifrado em repouso: `sensitive_fields` exclui do auditlog automaticamente.
         "phone_number",
     }
@@ -139,3 +142,17 @@ def test_criacao_e_alteracao_de_registro_geram_linhas_em_log_alteracao():
         LogAlteracao.Action.UPDATE,
     ]
     assert registros[1].changes["first_name"] == ["Antes", "Depois"]
+
+
+@pytest.mark.django_db
+def test_confirmacao_de_troca_nao_grava_enderecos_de_email_no_auditlog():
+    antigo = "antes-auditoria@example.com"
+    novo = "depois-auditoria@example.com"
+    usuario = criar_usuario(email=antigo)
+
+    Contas.confirmar_troca_email(emitir_token_troca_email(usuario, novo))
+
+    registro = LogAlteracao.objects.get_for_object(usuario).get(action=LogAlteracao.Action.UPDATE)
+    assert "email" not in registro.changes
+    assert antigo not in str(registro.changes)
+    assert novo not in str(registro.changes)
