@@ -246,9 +246,10 @@ class Usuario(BaseTenantless, AbstractUser):
             email_changed = previous.email != self.email
             contact_changed = email_changed or previous.phone_number != self.phone_number
             if email_changed:
-                self.email_verificado_em = None
-                if update_fields is not None:
-                    kwargs["update_fields"] = [*update_fields, "email_verificado_em"]
+                if not getattr(self, "_email_assinado_confirmado", False):
+                    self.email_verificado_em = None
+                    if update_fields is not None:
+                        kwargs["update_fields"] = [*update_fields, "email_verificado_em"]
 
         result = super().save(*args, **kwargs)
         if contact_changed:
@@ -259,6 +260,21 @@ class Usuario(BaseTenantless, AbstractUser):
                 using=database_alias,
             )
         return result
+
+    def confirmar_email_assinado(self, email, *, verified_at):
+        """Altera e confirma e-mail no único caminho deliberadamente autorizado.
+
+        A confirmação assinada já provou posse do endereço novo e é chamada
+        somente dentro da transação de `Contas.confirmar_troca_email`. Todos os
+        demais saves que alteram `email` continuam limpando a confirmação.
+        """
+        self.email = email
+        self.email_verificado_em = verified_at
+        self._email_assinado_confirmado = True
+        try:
+            self.save(update_fields=["email", "email_verificado_em"])
+        finally:
+            del self._email_assinado_confirmado
 
     def delete(self, using=None, keep_parents=False):
         """Exclui logicamente a conta e derruba todo acesso que ela ainda tinha.

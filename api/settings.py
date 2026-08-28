@@ -284,6 +284,13 @@ HIBP_TIMEOUT_SECONDS = float(get_env_var("HIBP_TIMEOUT_SECONDS", 2))
 PASSWORD_RESET_TIMEOUT_MINUTES = int(get_env_var("PASSWORD_RESET_TIMEOUT_MINUTES", 30))
 PASSWORD_RESET_FRONTEND_URL = get_env_var("PASSWORD_RESET_FRONTEND_URL", "http://localhost:3000/redefinir-senha")
 
+# Verificação e troca de e-mail usam tokens assinados, sem tabela ou e-mail
+# pendente persistido. Os dois propósitos têm salts e tempos de vida distintos.
+EMAIL_VERIFICATION_TOKEN_MAX_AGE_SECONDS = int(get_env_var("EMAIL_VERIFICATION_TOKEN_MAX_AGE_SECONDS", 60 * 60))
+EMAIL_CHANGE_TOKEN_MAX_AGE_SECONDS = int(get_env_var("EMAIL_CHANGE_TOKEN_MAX_AGE_SECONDS", 60 * 60))
+EMAIL_VERIFICATION_FRONTEND_URL = get_env_var("EMAIL_VERIFICATION_FRONTEND_URL", "http://localhost:3000/verificar-email")
+EMAIL_CHANGE_FRONTEND_URL = get_env_var("EMAIL_CHANGE_FRONTEND_URL", "http://localhost:3000/confirmar-troca-email")
+
 AUTH_USER_MODEL = "usuarios.Usuario"
 
 
@@ -499,6 +506,7 @@ REST_FRAMEWORK = {
         # Mais apertado que o login: cada tentativa dispara um e-mail, então o
         # abuso aqui não é só força bruta, é usar a API como canhão de spam.
         "auth_password_reset": "5/min",
+        "auth_email_verification": "5/min",
     },
     "DEFAULT_VERSIONING_CLASS": "rest_framework.versioning.NamespaceVersioning",
     # Nenhuma URL do projeto vive sob namespace ainda, então sem uma versão padrão
