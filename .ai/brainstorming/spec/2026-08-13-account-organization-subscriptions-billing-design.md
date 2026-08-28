@@ -2,7 +2,7 @@
 
 **Data:** 13 de agosto de 2026
 
-**Status:** design aprovado para revisão escrita
+**Status:** design aprovado para implementação
 
 **Repositório:** `the-best-django-api-template`
 
@@ -30,6 +30,26 @@ e seu plano está no documento
 O template deve fixar uma versão publicada da biblioteca que implemente aquele
 contrato. Dependência por path ou revisão VCS pode ser usada durante o
 desenvolvimento integrado, mas não substitui a versão fixada no artefato final.
+
+Para esta implementação, o desenvolvimento integrado usa o checkout local em
+`../django-checkouts`. A entrega final troca essa referência por
+`django-checkouts[stripe]==1.0.0` depois da publicação da biblioteca e regenera
+o lockfile. Stripe é a variante real de produção; os testes do template usam o
+fake público da biblioteca.
+
+### 1.1. Estratégia de entrega
+
+A implementação ocorre em quatro incrementos verticais, nesta ordem:
+
+1. identidade Google e ciclo de vida da conta;
+2. organização, vínculos, convites e onboarding;
+3. catálogo, assinaturas, propostas, seats e política de acesso;
+4. faturamento, checkout Stripe, webhooks e reconciliação.
+
+Cada incremento entrega migrations, objetos de aplicação, API, testes e
+documentação correspondentes antes do próximo. A separação é somente de
+execução: as fronteiras públicas e os estados finais continuam sendo os deste
+documento.
 
 ## 2. Decisões fundamentais
 
