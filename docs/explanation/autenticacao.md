@@ -520,3 +520,44 @@ segurança. Se a suspeita for de comprometimento da própria key, o caminho é
 
 Os dois fluxos avisam o dono da conta por e-mail depois do commit. É o único
 sinal que chega a quem teve a conta invadida e não fez a troca.
+
+## Ciclo de vida da conta
+
+### Desativação e reativação
+
+A desativação é reversível, mas encerra imediatamente a confiança existente:
+marca a conta inativa, revoga sessões, tokens, API keys pessoais e dispositivos
+confiáveis, e suspende os vínculos. O vínculo não é removido e continua
+consumindo seat. A operação bloqueia a conta, as organizações e seus vínculos
+de proprietário em ordem estável; assim, duas saídas concorrentes não conseguem
+deixar uma organização ativa sem proprietário.
+
+A reativação começa numa rota pública com resposta genérica e throttle próprio.
+O link usa token assinado com salt exclusivo e TTL controlado por
+`ACCOUNT_REACTIVATION_TOKEN_MAX_AGE_SECONDS`. Confirmá-lo torna a conta ativa e
+cancela um pedido de exclusão ainda reversível, mas não restaura sessões,
+dispositivos ou vínculos suspensos.
+
+### Exclusão em duas fases
+
+O pedido autenticado grava `exclusao_solicitada_em` e
+`exclusao_agendada_para`, desativa a conta no mesmo commit e preserva os dados
+durante a carência. `ACCOUNT_DELETION_GRACE_DAYS` controla o prazo e vale 7 por
+padrão. Um segundo pedido informa a data existente sem deslocá-la.
+
+Às 00:30 no fuso do projeto, a task Celery
+`usuarios.anonimizar_contas_vencidas` processa no máximo
+`ACCOUNT_DELETION_BATCH_SIZE` contas vencidas por execução. Cada conta é
+revalidada sob `select_for_update()`, o que torna a task segura para repetição.
+Ela anonimiza também identidades externas já soft-deleted, revoga credenciais,
+fatores MFA e dispositivos, remove vínculos, cancela convites pendentes e limpa
+os campos pessoais antes do soft delete definitivo. O e-mail antigo fica livre
+para um cadastro novo; depois desse ponto não existe recuperação.
+
+A anonimização desabilita a captura do auditlog durante a limpeza e altera o
+`sub` externo sem criar histórico. Logs da task contêm apenas duração e
+contagem: token, e-mail antigo, e-mail substituto e identificadores externos não
+são registrados.
+
+Além do prazo, do lote e do TTL, configure
+`ACCOUNT_REACTIVATION_FRONTEND_URL` para a página que recebe `?token=`.

@@ -69,6 +69,23 @@ mecanismo estão em `docs/explanation/autenticacao.md`.
 | `/auth/sessions/` | CRUD read-mostly das sessões do usuário autenticado |
 | `/auth/api_keys/` | CRUD e ciclo de vida (`rotate`/`suspend`/`resume`) de API keys da organização do header `X-Organization` |
 
+## Conta
+
+| Rota | Contrato |
+| --- | --- |
+| `POST /account/deactivate/` | Sessão com reautenticação recente e MFA quando habilitado. Revoga acessos, suspende vínculos e responde `204`. |
+| `POST /account/deletion/` | Mesmos requisitos. Desativa imediatamente, agenda a anonimização e responde `202` com `scheduled_for`. |
+| `POST /account/reactivation/` | Pública. Recebe `email` e responde sempre `202` com o mesmo corpo, exista ou não uma conta reativável. |
+| `POST /account/reactivation/confirm/` | Pública. Recebe `token`; reativa dentro da carência e responde `204`. |
+
+O único proprietário ativo de uma organização ativa recebe
+`409 account.owner_transfer_required` ao tentar desativar ou excluir a conta.
+Repetir um pedido de exclusão devolve
+`409 account.deletion_already_scheduled`, com a data original em
+`context.scheduled_for`; o prazo não é reiniciado. Tokens inválidos, expirados,
+de propósito diferente ou usados fora da carência devolvem
+`400 account.reactivation_invalid`.
+
 ## Senha
 
 | Rota | Contrato |
