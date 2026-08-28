@@ -79,6 +79,8 @@ MCP_AUTH_ALGORITHMS = get_list_from_env("MCP_AUTH_ALGORITHMS", ["RS256"])
 MCP_ALLOWED_HOSTS = get_list_from_env("MCP_ALLOWED_HOSTS")
 MCP_ALLOWED_ORIGINS = get_list_from_env("MCP_ALLOWED_ORIGINS")
 
+GOOGLE_OAUTH_CLIENT_IDS = get_list_from_env("GOOGLE_OAUTH_CLIENT_IDS")
+
 # A API sempre roda atrás do nginx (`docker/nginx/`), que sobrescreve os
 # `X-Forwarded-*` — o valor que o cliente mandar é descartado antes de chegar
 # aqui. Sem isto o Django enxerga a request como http na porta do gunicorn e

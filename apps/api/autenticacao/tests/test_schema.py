@@ -10,13 +10,23 @@ import pytest
 from drf_spectacular.generators import SchemaGenerator
 
 from apps.api.autenticacao import urls as auth_urls
-from apps.api.autenticacao.views import APIKeyViewSet, LoginView, ReauthenticateView
+from apps.api.autenticacao.views import (
+    APIKeyViewSet,
+    GoogleConnectView,
+    GoogleDisconnectView,
+    GoogleLoginView,
+    LoginView,
+    ReauthenticateView,
+)
 from apps.api.core.errors import discover_error_codes
 
 
 @pytest.fixture(autouse=True)
 def _sem_versionamento_e_registry_populado(monkeypatch):
     monkeypatch.setattr(LoginView, "versioning_class", None)
+    monkeypatch.setattr(GoogleLoginView, "versioning_class", None)
+    monkeypatch.setattr(GoogleConnectView, "versioning_class", None)
+    monkeypatch.setattr(GoogleDisconnectView, "versioning_class", None)
     monkeypatch.setattr(ReauthenticateView, "versioning_class", None)
     monkeypatch.setattr(APIKeyViewSet, "versioning_class", None)
     discover_error_codes(force=True)
@@ -91,3 +101,16 @@ def test_schema_de_api_key_nunca_declara_campos_de_segredo():
         propriedades = definicao.get("properties", {})
         assert "digest" not in propriedades
         assert "token_key" not in propriedades
+
+
+def test_google_documenta_payload_sucesso_e_erros_de_estado():
+    schema = _gerar_schema()
+
+    login = schema["paths"]["/auth/google/"]["post"]
+    connect = schema["paths"]["/auth/google/connect/"]["post"]
+    disconnect = schema["paths"]["/auth/google/disconnect/"]["delete"]
+
+    assert login["requestBody"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/GoogleLogin"}
+    assert {"200", "401"} <= login["responses"].keys()
+    assert {"204", "401", "403", "409"} <= connect["responses"].keys()
+    assert {"204", "401", "409"} <= disconnect["responses"].keys()
