@@ -42,6 +42,19 @@ def test_atualizar_email_por_queryset_limpa_a_verificacao():
     assert usuario.email_verificado_em is None
 
 
+def test_atualizar_email_por_manager_base_limpa_a_verificacao_e_enxerga_soft_delete():
+    usuario = criar_usuario()
+    usuario.email_verificado_em = timezone.now()
+    usuario.save(update_fields=["email_verificado_em"])
+
+    usuario.__class__._base_manager.filter(pk=usuario.pk).update(email="novo-email-por-manager-base@exemplo.com")
+
+    usuario.delete()
+    excluido = usuario.__class__._base_manager.get(pk=usuario.pk)
+    assert excluido.email_verificado_em is None
+    assert excluido.is_deleted is True
+
+
 def test_salvar_outro_campo_preserva_a_verificacao_do_email():
     usuario = criar_usuario()
     verificado_em = timezone.now()

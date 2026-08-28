@@ -297,6 +297,7 @@ class Usuario(BaseTenantless, AbstractUser):
         return self.get_full_name()
 
     class Meta:
+        base_manager_name = "all_objects"
         db_table = "usuario"
         ordering = ["-id"]
         verbose_name = _("Usuário")

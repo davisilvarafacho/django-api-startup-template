@@ -114,3 +114,47 @@ def test_identificador_nao_pode_ser_alterado_por_queryset(manager_name):
 
     identidade.refresh_from_db()
     assert identidade.identificador == "sub-google-imutavel"
+
+
+def test_identificador_nao_pode_ser_alterado_por_manager_base():
+    IdentidadeExterna, ProvedorIdentidade = _obter_modelos_de_identidade()
+    identidade = IdentidadeExterna.objects.create(
+        usuario=criar_usuario(),
+        provedor=ProvedorIdentidade.GOOGLE,
+        identificador="sub-google-imutavel",
+    )
+
+    with pytest.raises(ValueError, match="imutável"):
+        IdentidadeExterna._base_manager.filter(pk=identidade.pk).update(identificador="outro-sub-google")
+
+    identidade.refresh_from_db()
+    assert identidade.identificador == "sub-google-imutavel"
+
+
+def test_identificador_nao_pode_ser_alterado_por_bulk_update_do_manager_base():
+    IdentidadeExterna, ProvedorIdentidade = _obter_modelos_de_identidade()
+    identidade = IdentidadeExterna.objects.create(
+        usuario=criar_usuario(),
+        provedor=ProvedorIdentidade.GOOGLE,
+        identificador="sub-google-imutavel",
+    )
+    identidade.identificador = "outro-sub-google"
+
+    with pytest.raises(ValueError, match="imutável"):
+        IdentidadeExterna._base_manager.bulk_update([identidade], ["identificador"])
+
+    identidade.refresh_from_db()
+    assert identidade.identificador == "sub-google-imutavel"
+
+
+def test_criacao_com_pk_explicita_permite_o_identificador_inicial():
+    IdentidadeExterna, ProvedorIdentidade = _obter_modelos_de_identidade()
+
+    identidade = IdentidadeExterna.objects.create(
+        id=1_000_000,
+        usuario=criar_usuario(),
+        provedor=ProvedorIdentidade.GOOGLE,
+        identificador="sub-google-imutavel",
+    )
+
+    assert identidade.pk == 1_000_000

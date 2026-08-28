@@ -68,6 +68,11 @@ class IdentidadesExternasQuerySet(BaseQuerySet):
             raise ValueError("O identificador de IdentidadeExterna é imutável.")
         return super().update(**kwargs)
 
+    def bulk_update(self, objs, fields, batch_size=None):
+        if "identificador" in fields:
+            raise ValueError("O identificador de IdentidadeExterna é imutável.")
+        return super().bulk_update(objs, fields, batch_size=batch_size)
+
 
 IdentidadesExternasQuerySetManager = models.Manager.from_queryset(IdentidadesExternasQuerySet)
 
@@ -117,7 +122,7 @@ class IdentidadeExterna(BaseTenantless):
     def save(self, *args, **kwargs):
         update_fields = kwargs.get("update_fields")
         atualiza_identificador = update_fields is None or "identificador" in update_fields
-        if self.pk and atualiza_identificador:
+        if not self._state.adding and atualiza_identificador:
             database_alias = kwargs.get("using") or self._state.db or "default"
             anterior = type(self).all_objects.using(database_alias).only("identificador").get(pk=self.pk)
             if anterior.identificador != self.identificador:
@@ -129,6 +134,7 @@ class IdentidadeExterna(BaseTenantless):
         return f"{self.get_provedor_display()} para {self.usuario}"
 
     class Meta:
+        base_manager_name = "all_objects"
         db_table = "identidade_externa"
         ordering = ("-id",)
         verbose_name = _("Identidade externa")
