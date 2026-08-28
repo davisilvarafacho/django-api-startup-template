@@ -99,6 +99,27 @@ def test_identificador_nao_pode_ser_alterado_por_save():
     assert identidade.identificador == "sub-google-imutavel"
 
 
+def test_instancia_nova_com_pk_existente_nao_pode_sobrescrever_identificador():
+    IdentidadeExterna, ProvedorIdentidade = _obter_modelos_de_identidade()
+    identidade = IdentidadeExterna.objects.create(
+        usuario=criar_usuario(),
+        provedor=ProvedorIdentidade.GOOGLE,
+        identificador="sub-google-imutavel",
+    )
+    instancia_com_pk_existente = IdentidadeExterna(
+        pk=identidade.pk,
+        usuario=criar_usuario(),
+        provedor=ProvedorIdentidade.GOOGLE,
+        identificador="outro-sub-google",
+    )
+
+    with pytest.raises(ValueError, match="imutável"):
+        instancia_com_pk_existente.save()
+
+    identidade.refresh_from_db()
+    assert identidade.identificador == "sub-google-imutavel"
+
+
 @pytest.mark.parametrize("manager_name", ["objects", "all_objects", "ativos"])
 def test_identificador_nao_pode_ser_alterado_por_queryset(manager_name):
     IdentidadeExterna, ProvedorIdentidade = _obter_modelos_de_identidade()
