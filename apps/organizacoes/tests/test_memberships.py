@@ -104,6 +104,46 @@ def test_aceitar_convite_cria_vinculo_e_consumo_sem_manter_reserva():
     assert Vinculos.calcular_ocupacao(organizacao, frozenset()) == OcupacaoSeats(consumidos=1, reservados=0)
 
 
+def test_aceitar_convite_pelo_model_preserva_fachada_publica():
+    organizacao = Organizacao.objects.create(nome="Acme", slug="acme-fachada-aceite")
+    usuario = criar_usuario(email="fachada@example.com")
+    convite = Convite.objects.create(organizacao=organizacao, email=usuario.email, papel=Papel.GESTOR)
+
+    vinculo = convite.aceitar(usuario)
+
+    convite.refresh_from_db()
+    assert vinculo.organizacao == organizacao
+    assert vinculo.usuario == usuario
+    assert vinculo.papel == Papel.GESTOR
+    assert convite.aceito_em is not None
+
+
+def test_aceitar_convite_eleva_papel_de_vinculo_existente():
+    organizacao = Organizacao.objects.create(nome="Acme", slug="acme-eleva-papel")
+    usuario = criar_usuario(email="eleva@example.com")
+    Vinculo.objects.create(organizacao=organizacao, usuario=usuario, papel=Papel.MEMBRO)
+    convite = Convite.objects.create(organizacao=organizacao, email=usuario.email, papel=Papel.GESTOR)
+
+    vinculo = Vinculos.aceitar_convite(convite, usuario)
+
+    convite.refresh_from_db()
+    assert vinculo.papel == Papel.GESTOR
+    assert convite.aceito_em is not None
+
+
+def test_aceitar_convite_nao_rebaixa_papel_de_vinculo_existente():
+    organizacao = Organizacao.objects.create(nome="Acme", slug="acme-nao-rebaixa-papel")
+    usuario = criar_usuario(email="nao-rebaixa@example.com")
+    Vinculo.objects.create(organizacao=organizacao, usuario=usuario, papel=Papel.ADMINISTRADOR)
+    convite = Convite.objects.create(organizacao=organizacao, email=usuario.email, papel=Papel.MEMBRO)
+
+    vinculo = Vinculos.aceitar_convite(convite, usuario)
+
+    convite.refresh_from_db()
+    assert vinculo.papel == Papel.ADMINISTRADOR
+    assert convite.aceito_em is not None
+
+
 def test_aceitar_convite_expirado_e_recusado_pelo_servico():
     organizacao = Organizacao.objects.create(nome="Acme", slug="acme-convite-expirado")
     convite = Convite.objects.create(organizacao=organizacao, email="expirado@example.com", expira_em=timezone.now() - timedelta(seconds=1))

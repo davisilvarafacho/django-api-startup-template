@@ -179,6 +179,12 @@ class Convite(BaseTenantless):
     def pendente(self):
         return self.is_active and not self.is_deleted and self.aceito_em is None and not self.expirado
 
+    def aceitar(self, usuario):
+        """Compatibilidade para consumidores legados do aceite de convite."""
+        from apps.organizacoes.memberships import Vinculos
+
+        return Vinculos.aceitar_convite(self, usuario)
+
     def __str__(self):
         return f"Convite #{self.pk or 'novo'} @ {self.organizacao}"
 
