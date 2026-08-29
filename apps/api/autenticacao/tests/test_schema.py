@@ -95,14 +95,17 @@ def test_rotacao_de_api_key_documenta_erros_e_nao_omite_o_sucesso():
     assert "organizations.inactive" in operation["responses"]["409"]["description"]
 
 
-def test_patch_de_api_key_documenta_erros_de_organizacao_com_status_409():
+def test_patch_de_api_key_documenta_sucesso_e_erros_reais():
     schema = _gerar_schema()
 
     operation = schema["paths"]["/auth/api_keys/{uuid}/"]["patch"]
 
-    assert set(operation["responses"]) == {"200", "409"}
+    assert set(operation["responses"]) == {"200", "401", "403", "409", "422"}
+    assert "auth.reauthentication_required" in operation["responses"]["401"]["description"]
+    assert "auth.scope_not_delegable" in operation["responses"]["403"]["description"]
     assert "organizations.closure_pending" in operation["responses"]["409"]["description"]
     assert "organizations.inactive" in operation["responses"]["409"]["description"]
+    assert "organizations.membership_required" in operation["responses"]["422"]["description"]
 
 
 def test_resume_de_api_key_documenta_erros_de_auth_e_organizacao_com_status_409():

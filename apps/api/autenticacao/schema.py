@@ -100,7 +100,10 @@ document_api_key_rotate = extend_schema(
 document_api_key_update = extend_schema(
     responses={
         200: APIKeySerializer,
+        401: document_error_codes(AuthErrorCode.REAUTHENTICATION_REQUIRED),
+        403: document_error_codes(AuthErrorCode.SCOPE_NOT_DELEGABLE),
         409: document_error_codes(OrganizationErrorCode.CLOSURE_PENDING, OrganizationErrorCode.INACTIVE),
+        422: document_error_codes(OrganizationErrorCode.MEMBERSHIP_REQUIRED),
     }
 )
 
