@@ -12,6 +12,7 @@ import apps.api.base.models as base_models
 from apps.api.autenticacao.models import IdentidadeExterna, MFAChallenge, MFAFactor, MFARecoveryCode, MFAResetAudit, TokenMetaData, TrustedDevice
 from apps.api.base.models import Base, BaseTenantless
 from apps.api.core.context import usuario_atual
+from apps.assinaturas.models import Plano, PrecoPlano, VersaoPlano
 from apps.logs.models import LogAlteracao
 from apps.organizacoes.models import Convite, Organizacao, Time, Vinculo
 from apps.usuarios.accounts import Contas
@@ -35,6 +36,9 @@ def test_registra_todos_os_modelos_concretos_dos_apps():
         MFAResetAudit,
         TrustedDevice,
         IdentidadeExterna,
+        Plano,
+        VersaoPlano,
+        PrecoPlano,
     }
     modelos_internos_registrados = {model for model in auditlog.get_models() if model.__module__.startswith("apps.")}
 

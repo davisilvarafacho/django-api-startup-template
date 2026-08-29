@@ -36,6 +36,7 @@ nav:
       - Publicar uma versão: how-to/publicar-versao.md
   - Referência:
       - API: reference/api.md
+      - Catálogo de planos: reference/catalogo-de-planos.md
       - Estrutura de diretórios: reference/estrutura-de-diretorios.md
       - Glossário: reference/glossario.md
       - Deprecação de API: reference/deprecacao-api.md
