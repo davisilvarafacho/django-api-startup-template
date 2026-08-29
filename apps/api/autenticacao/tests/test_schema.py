@@ -80,7 +80,9 @@ def test_criacao_de_api_key_documenta_erros_e_nao_omite_o_sucesso():
 
     operation = schema["paths"]["/auth/api_keys/"]["post"]
 
-    assert {"201", "401", "403", "422"} <= operation["responses"].keys()
+    assert {"201", "401", "403", "409", "422"} <= operation["responses"].keys()
+    assert "organizations.closure_pending" in operation["responses"]["409"]["description"]
+    assert "organizations.inactive" in operation["responses"]["409"]["description"]
 
 
 def test_rotacao_de_api_key_documenta_erros_e_nao_omite_o_sucesso():
@@ -89,6 +91,8 @@ def test_rotacao_de_api_key_documenta_erros_e_nao_omite_o_sucesso():
     operation = schema["paths"]["/auth/api_keys/{uuid}/rotate/"]["post"]
 
     assert {"201", "401", "409"} <= operation["responses"].keys()
+    assert "organizations.closure_pending" in operation["responses"]["409"]["description"]
+    assert "organizations.inactive" in operation["responses"]["409"]["description"]
 
 
 def test_schema_de_api_key_nunca_declara_campos_de_segredo():

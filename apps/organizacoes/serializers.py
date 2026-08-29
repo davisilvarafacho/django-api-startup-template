@@ -37,6 +37,10 @@ class OrganizacaoSerializer(serializers.ModelSerializer):
         return vinculo.papel if vinculo else None
 
 
+class EncerramentoAgendadoResponseSerializer(serializers.Serializer):
+    scheduled_for = serializers.DateTimeField()
+
+
 class TimeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Time

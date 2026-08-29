@@ -14,7 +14,7 @@ from knox.models import get_token_model
 
 from apps.api.autenticacao.errors import AuthErrorCode
 from apps.api.autenticacao.models import TokenMetaData, TokenType
-from apps.api.autenticacao.services import resume_api_key, rotate_api_key, suspend_api_key
+from apps.api.autenticacao.services import create_api_key, resume_api_key, rotate_api_key, suspend_api_key, update_api_key
 from apps.api.core.errors import APIError
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
@@ -157,6 +157,35 @@ def test_criacao_com_expiracao_opcional(ator, organizacao, responsavel):
 
     assert response.status_code == 201
     assert response.data["expiry"] is not None
+
+
+def test_expiracao_absoluta_e_persistida_na_transacao_que_bloqueia_a_organizacao(
+    monkeypatch,
+    ator,
+    organizacao,
+    responsavel,
+):
+    original_save = AuthToken.save
+    profundidade_inicial = len(connection.atomic_blocks)
+    profundidades = []
+
+    def registrar_transacao(instance, *args, **kwargs):
+        if kwargs.get("update_fields") == ["expiry"]:
+            profundidades.append(len(connection.atomic_blocks))
+        return original_save(instance, *args, **kwargs)
+
+    monkeypatch.setattr(AuthToken, "save", registrar_transacao)
+
+    create_api_key(
+        responsavel=responsavel,
+        created_by=ator,
+        name="Integração",
+        scopes=["teams:read"],
+        organization=organizacao,
+        expiry=timezone.now() + timedelta(days=30),
+    )
+
+    assert profundidades == [profundidade_inicial + 1]
 
 
 def test_usuario_sem_permission_nao_cria_api_key(organizacao, responsavel):
@@ -318,9 +347,141 @@ def test_rotacao_bloqueia_usuario_antes_da_api_key(organizacao, responsavel):
         rotate_api_key(instance, actor=responsavel)
 
     locked_tables = [
-        table for query in queries for table in ("usuario", "auth_token") if f'FROM "{table}"' in query["sql"] and "FOR UPDATE" in query["sql"]
+        table
+        for query in queries
+        for table in ("usuario", "organizacao", "auth_token")
+        if f'FROM "{table}"' in query["sql"] and "FOR UPDATE" in query["sql"]
     ]
-    assert locked_tables[:2] == ["usuario", "auth_token"]
+    assert locked_tables[:3] == ["usuario", "organizacao", "auth_token"]
+
+
+def test_criacao_bloqueia_usuario_e_organizacao_antes_de_inserir_api_key(ator, organizacao, responsavel):
+    with CaptureQueriesContext(connection) as queries:
+        create_api_key(
+            responsavel=responsavel,
+            created_by=ator,
+            name="Integração",
+            scopes=["teams:read"],
+            organization=organizacao,
+        )
+
+    user_lock = next(index for index, query in enumerate(queries) if 'FROM "usuario"' in query["sql"] and "FOR UPDATE" in query["sql"])
+    organization_lock = next(index for index, query in enumerate(queries) if 'FROM "organizacao"' in query["sql"] and "FOR UPDATE" in query["sql"])
+    token_insert = next(index for index, query in enumerate(queries) if 'INSERT INTO "auth_token"' in query["sql"])
+    assert user_lock < organization_lock < token_insert
+
+
+@pytest.mark.parametrize(
+    ("mutacao", "kwargs"),
+    [
+        (update_api_key, {"name": "Nome novo"}),
+        (resume_api_key, {}),
+    ],
+)
+def test_mutacao_que_amplia_acesso_bloqueia_usuario_organizacao_e_api_key(
+    organizacao,
+    responsavel,
+    mutacao,
+    kwargs,
+):
+    instance, _token = AuthToken.objects.create(
+        responsavel=responsavel,
+        type=TokenType.API_KEY,
+        created_by=responsavel,
+        organization=organizacao,
+        name="Integração",
+        suspended_at=timezone.now() if mutacao is resume_api_key else None,
+    )
+
+    with CaptureQueriesContext(connection) as queries:
+        mutacao(instance, actor=responsavel, **kwargs)
+
+    locked_tables = [
+        table
+        for query in queries
+        for table in ("usuario", "organizacao", "auth_token")
+        if f'FROM "{table}"' in query["sql"] and "FOR UPDATE" in query["sql"]
+    ]
+    assert locked_tables[:3] == ["usuario", "organizacao", "auth_token"]
+
+
+@pytest.mark.parametrize(
+    ("mutacao", "kwargs"),
+    [
+        (update_api_key, {"scopes": ["organizations:read"]}),
+        (rotate_api_key, {}),
+        (resume_api_key, {}),
+    ],
+)
+def test_mutacao_que_amplia_acesso_recusa_organizacao_com_encerramento_pendente(
+    organizacao,
+    responsavel,
+    mutacao,
+    kwargs,
+):
+    instance, _token = AuthToken.objects.create(
+        responsavel=responsavel,
+        type=TokenType.API_KEY,
+        created_by=responsavel,
+        organization=organizacao,
+        name="Integração",
+        suspended_at=timezone.now() if mutacao is resume_api_key else None,
+    )
+    Organizacao.objects.filter(pk=organizacao.pk).update(encerramento_solicitado_em=timezone.now())
+
+    with pytest.raises(APIError) as exc:
+        mutacao(instance, actor=responsavel, **kwargs)
+
+    assert exc.value.code == "organizations.closure_pending"
+
+
+@pytest.mark.parametrize(
+    ("estado", "codigo"),
+    [
+        ({"encerramento_solicitado_em": timezone.now()}, "organizations.closure_pending"),
+        ({"is_active": False}, "organizations.inactive"),
+        ({"is_deleted": True}, "organizations.inactive"),
+    ],
+)
+def test_criacao_recusa_organizacao_indisponivel(ator, organizacao, responsavel, estado, codigo):
+    Organizacao.all_objects.filter(pk=organizacao.pk).update(**estado)
+
+    with pytest.raises(APIError) as exc:
+        create_api_key(
+            responsavel=responsavel,
+            created_by=ator,
+            name="Integração",
+            scopes=["teams:read"],
+            organization=organizacao,
+        )
+
+    assert exc.value.code == codigo
+    assert AuthToken.objects.filter(organization=organizacao, type=TokenType.API_KEY).exists() is False
+
+
+@pytest.mark.parametrize(
+    ("estado", "codigo"),
+    [
+        ({"encerramento_solicitado_em": timezone.now()}, "organizations.closure_pending"),
+        ({"is_active": False}, "organizations.inactive"),
+        ({"is_deleted": True}, "organizations.inactive"),
+    ],
+)
+def test_rotacao_recusa_organizacao_indisponivel(organizacao, responsavel, estado, codigo):
+    instance, _token = AuthToken.objects.create(
+        responsavel=responsavel,
+        type=TokenType.API_KEY,
+        created_by=responsavel,
+        organization=organizacao,
+        name="Integração",
+    )
+    Organizacao.all_objects.filter(pk=organizacao.pk).update(**estado)
+
+    with pytest.raises(APIError) as exc:
+        rotate_api_key(instance, actor=responsavel)
+
+    assert exc.value.code == codigo
+    assert AuthToken.objects.filter(organization=organizacao).count() == 1
 
 
 @pytest.mark.parametrize(

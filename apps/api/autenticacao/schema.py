@@ -78,6 +78,7 @@ document_api_key_create = extend_schema(
         201: APIKeySerializer,
         401: document_error_codes(AuthErrorCode.REAUTHENTICATION_REQUIRED),
         403: document_error_codes(AuthErrorCode.SCOPE_NOT_DELEGABLE),
+        409: document_error_codes(OrganizationErrorCode.CLOSURE_PENDING, OrganizationErrorCode.INACTIVE),
         422: document_error_codes(OrganizationErrorCode.MEMBERSHIP_REQUIRED),
     },
     description=TOKEN_ONCE_DESCRIPTION,
@@ -87,7 +88,11 @@ document_api_key_rotate = extend_schema(
     responses={
         201: APIKeySerializer,
         401: document_error_codes(AuthErrorCode.REAUTHENTICATION_REQUIRED),
-        409: document_error_codes(AuthErrorCode.REVOKED_TOKEN),
+        409: document_error_codes(
+            AuthErrorCode.REVOKED_TOKEN,
+            OrganizationErrorCode.CLOSURE_PENDING,
+            OrganizationErrorCode.INACTIVE,
+        ),
     },
     description=TOKEN_ONCE_DESCRIPTION,
 )

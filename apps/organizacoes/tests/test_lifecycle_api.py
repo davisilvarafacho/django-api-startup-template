@@ -1,7 +1,10 @@
 """Contrato HTTP do onboarding e encerramento de organizações."""
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from threading import Barrier
 
+from django.db import close_old_connections, connections
 from django.utils import timezone
 
 from rest_framework.test import APIClient
@@ -13,7 +16,7 @@ from apps.api.autenticacao.mfa import confirm_enrollment, start_enrollment
 from apps.api.autenticacao.models import AuthToken, MFAFactor, MFAFactorType, TokenMetaData, TokenType
 from apps.api.autenticacao.services import issue_token
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
-from apps.organizacoes.organizations import TermoEncerramentoAgendado, TermoEncerramentoImediato
+from apps.organizacoes.organizations import Organizacoes, TermoEncerramentoAgendado, TermoEncerramentoImediato
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
@@ -150,11 +153,14 @@ def test_encerramento_agendado_e_cancelado_pelas_rotas():
     client = _client_com_sessao(proprietario)
 
     solicitacao = client.post(f"/organizacoes/{organizacao.pk}/encerramento/")
+    repeticao = client.post(f"/organizacoes/{organizacao.pk}/encerramento/")
     cancelamento = client.delete(f"/organizacoes/{organizacao.pk}/encerramento/")
 
     organizacao.refresh_from_db()
     assert solicitacao.status_code == 202
     assert solicitacao.json()["scheduled_for"] == AssinaturasHTTP.termo.agendado_para.isoformat()
+    assert repeticao.status_code == 202
+    assert repeticao.json() == solicitacao.json()
     assert cancelamento.status_code == 204
     assert organizacao.encerramento_solicitado_em is None
     assert organizacao.encerramento_agendado_para is None
@@ -168,6 +174,43 @@ def test_encerramento_imediato_retorna_sem_conteudo():
     response = _client_com_sessao(proprietario).post(f"/organizacoes/{organizacao.pk}/encerramento/")
 
     assert response.status_code == 204
+    assert Organizacao.all_objects.get(pk=organizacao.pk).is_deleted is True
+    assert AssinaturasHTTP.encerramentos == [organizacao.pk]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_duas_solicitacoes_imediatas_concorrentes_retornam_sem_conteudo(monkeypatch):
+    proprietario = criar_usuario()
+    organizacao = _organizacao_do(proprietario, slug="imediato-http-concorrente")
+    AssinaturasHTTP.termo = TermoEncerramentoImediato()
+    plain_tokens = []
+    for _ in range(2):
+        token, plain_token = AuthToken.objects.create(user=proprietario)
+        TokenMetaData.objects.create(token=token, reauthenticated_at=timezone.now())
+        plain_tokens.append(plain_token)
+
+    barreira = Barrier(2)
+    original = Organizacoes.solicitar_encerramento.__func__
+
+    def solicitar_sincronizado(cls, *args, **kwargs):
+        barreira.wait(timeout=5)
+        return original(cls, *args, **kwargs)
+
+    monkeypatch.setattr(Organizacoes, "solicitar_encerramento", classmethod(solicitar_sincronizado))
+
+    def solicitar(plain_token):
+        close_old_connections()
+        try:
+            client = APIClient()
+            client.credentials(HTTP_AUTHORIZATION=f"Bearer {plain_token}")
+            return client.post(f"/organizacoes/{organizacao.pk}/encerramento/").status_code
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        status_codes = list(executor.map(solicitar, plain_tokens))
+
+    assert status_codes == [204, 204]
     assert Organizacao.all_objects.get(pk=organizacao.pk).is_deleted is True
     assert AssinaturasHTTP.encerramentos == [organizacao.pk]
 

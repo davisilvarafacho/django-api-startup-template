@@ -11,8 +11,14 @@ from apps.api.core.scope_mixins import ScopeResourceMixin
 from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.models import Convite, Organizacao, Papel, Time, Vinculo
 from apps.organizacoes.onboarding import OrganizationOnboarding
-from apps.organizacoes.organizations import AssinaturasCicloOrganizacao, Organizacoes
+from apps.organizacoes.organizations import (
+    AssinaturasCicloOrganizacao,
+    EncerramentoAgendado,
+    EncerramentoSemAlteracao,
+    Organizacoes,
+)
 from apps.organizacoes.permissions import PapelMinimoPermission, TenantPermission
+from apps.organizacoes.schema import document_organization_closure_delete, document_organization_closure_post
 from apps.organizacoes.serializers import (
     AceitarConviteSerializer,
     ConviteCreateSerializer,
@@ -89,6 +95,8 @@ class OrganizacaoViewSet(
             raise APIError(OrganizationErrorCode.ROLE_INSUFFICIENT, status_code=403)
         return organizacao
 
+    @document_organization_closure_post
+    @document_organization_closure_delete
     @action(detail=True, methods=["post", "delete"], url_path="encerramento")
     @require_recent_auth()
     def encerramento(self, request, *args, **kwargs):
@@ -99,20 +107,17 @@ class OrganizacaoViewSet(
 
         assinaturas = _carregar_assinaturas()
         termo = assinaturas.obter_termo_encerramento(organizacao)
-        encerrada = Organizacoes.solicitar_encerramento(
+        resultado = Organizacoes.solicitar_encerramento(
             organizacao,
             termo,
             assinaturas=assinaturas,
             ator=request.user,
         )
-        if encerrada:
-            return Response(status=status.HTTP_204_NO_CONTENT)
-
-        organizacao.refresh_from_db(fields=["encerramento_agendado_para"])
-        return Response(
-            {"scheduled_for": organizacao.encerramento_agendado_para.isoformat()},
-            status=status.HTTP_202_ACCEPTED,
-        )
+        if isinstance(resultado, EncerramentoAgendado):
+            return Response({"scheduled_for": resultado.agendado_para.isoformat()}, status=status.HTTP_202_ACCEPTED)
+        if isinstance(resultado, EncerramentoSemAlteracao) and resultado.agendado_para is not None:
+            return Response({"scheduled_for": resultado.agendado_para.isoformat()}, status=status.HTTP_202_ACCEPTED)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class TenantViewSetMixin(ScopeResourceMixin):

@@ -20,3 +20,4 @@ class OrganizationErrorCode(models.TextChoices):
         "organizations.closure_pending",
         _("Esta organização possui encerramento pendente."),
     )
+    INACTIVE = "organizations.inactive", _("Esta organização está inativa.")
