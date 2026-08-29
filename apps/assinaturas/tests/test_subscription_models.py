@@ -2,7 +2,7 @@
 
 from datetime import timedelta
 
-from django.db import DatabaseError, IntegrityError, models, transaction
+from django.db import DatabaseError, IntegrityError, connection, models, transaction
 from django.utils import timezone
 
 import pytest
@@ -331,3 +331,186 @@ def test_alteracao_agendada_exige_data_e_aplicacao_registrada_e_coerente():
             aplicada_em=timezone.now(),
             revisao_aplicada=None,
         )
+
+
+@pytest.mark.parametrize(
+    "sobrescritos",
+    [
+        {"periodicidade": 99},
+        {
+            "status": StatusAssinatura.ENCERRADA,
+            "status_financeiro": 99,
+            "encerrada_em": timezone.now(),
+            "motivo_encerramento": "dominio",
+        },
+        {
+            "politica_trial": 99,
+            "trial_iniciado_em": timezone.now(),
+            "trial_termina_em": timezone.now() + timedelta(days=1),
+        },
+    ],
+)
+def test_banco_recusa_valores_fora_dos_dominios_da_assinatura(sobrescritos):
+    organizacao = Organizacao.objects.create(nome="Domínio contrato", slug=f"dominio-contrato-{hash(str(sobrescritos))}")
+    versao = _criar_versao(codigo=f"dominio-contrato-{organizacao.pk}")
+
+    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(IntegrityError), transaction.atomic():
+        AssinaturaOrganizacao.objects.create(**_dados_assinatura(organizacao, versao, **sobrescritos))
+
+
+@pytest.mark.parametrize(
+    "sobrescritos",
+    [
+        {"cancelamento_agendado_para": timezone.now() + timedelta(days=10)},
+        {
+            "periodo_atual_iniciado_em": timezone.now() - timedelta(days=1),
+            "periodo_atual_termina_em": timezone.now() + timedelta(days=30),
+            "cancelamento_agendado_para": timezone.now() + timedelta(days=20),
+        },
+        {
+            "status": StatusAssinatura.PENDENTE,
+            "status_financeiro": StatusFinanceiro.PENDENTE,
+            "periodo_atual_iniciado_em": timezone.now() - timedelta(days=1),
+            "periodo_atual_termina_em": timezone.now() + timedelta(days=30),
+            "cancelamento_agendado_para": timezone.now() + timedelta(days=30),
+        },
+    ],
+)
+def test_banco_recusa_cancelamento_agendado_fora_do_fim_de_periodo_ativo(sobrescritos):
+    organizacao = Organizacao.objects.create(nome="Cancelamento incoerente", slug=f"cancelamento-{hash(str(sobrescritos))}")
+    versao = _criar_versao(codigo=f"cancelamento-{organizacao.pk}")
+
+    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(IntegrityError), transaction.atomic():
+        AssinaturaOrganizacao.objects.create(**_dados_assinatura(organizacao, versao, **sobrescritos))
+
+
+def test_banco_recusa_regressao_de_status_da_assinatura_por_sql_direto():
+    organizacao = Organizacao.objects.create(nome="Transição contrato", slug="transicao-contrato")
+    versao = _criar_versao(codigo="transicao-contrato")
+    assinatura = _criar_assinatura(organizacao, versao)
+
+    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(DatabaseError, match="(?i)transição inválida"), transaction.atomic():
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE assinatura_organizacao SET status = %s, status_financeiro = %s WHERE id = %s",
+                [StatusAssinatura.PENDENTE, StatusFinanceiro.PENDENTE, assinatura.pk],
+            )
+
+
+def _dados_alteracao(organizacao, assinatura, **sobrescritos):
+    dados = {
+        "organizacao": organizacao,
+        "assinatura": assinatura,
+        "tipo": TipoAlteracaoAssinatura.AUMENTO_SEATS,
+        "momento_aplicacao": MomentoAplicacaoAlteracaoAssinatura.IMEDIATA,
+        "status": StatusAlteracaoAssinatura.SOLICITADA,
+        "revisao_esperada": assinatura.revisao,
+        "chave_idempotencia": f"invariante-{organizacao.pk}-{hash(str(sobrescritos))}",
+        "pedido": {"seats_contratados": assinatura.seats_contratados + 1},
+        "snapshot_anterior": {"revisao": assinatura.revisao},
+        "snapshot_pretendido": {"revisao": assinatura.revisao + 1},
+    }
+    dados.update(sobrescritos)
+    return dados
+
+
+@pytest.mark.parametrize(
+    "sobrescritos",
+    [
+        {"tipo": 99},
+        {"momento_aplicacao": 99, "aplicar_em": timezone.now() + timedelta(days=1)},
+        {"status": 99},
+    ],
+)
+def test_banco_recusa_valores_fora_dos_dominios_da_alteracao(sobrescritos):
+    organizacao = Organizacao.objects.create(nome="Domínio alteração", slug=f"dominio-alteracao-{hash(str(sobrescritos))}")
+    versao = _criar_versao(codigo=f"dominio-alteracao-{organizacao.pk}")
+    assinatura = _criar_assinatura(organizacao, versao)
+
+    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(IntegrityError), transaction.atomic():
+        AlteracaoAssinatura.objects.create(**_dados_alteracao(organizacao, assinatura, **sobrescritos))
+
+
+@pytest.mark.parametrize(
+    "sobrescritos",
+    [
+        {"status": StatusAlteracaoAssinatura.SOLICITADA, "processada_em": timezone.now()},
+        {"status": StatusAlteracaoAssinatura.FALHOU},
+        {
+            "status": StatusAlteracaoAssinatura.FALHOU,
+            "processada_em": timezone.now(),
+            "falha_codigo": "",
+            "falha_mensagem": "falhou",
+        },
+        {"status": StatusAlteracaoAssinatura.CANCELADA},
+        {"status": StatusAlteracaoAssinatura.CONFIRMADA, "processada_em": timezone.now()},
+        {
+            "status": StatusAlteracaoAssinatura.SOLICITADA,
+            "falha_codigo": "indevido",
+            "falha_mensagem": "indevido",
+        },
+    ],
+)
+def test_banco_recusa_status_e_metadados_de_processamento_incoerentes(sobrescritos):
+    organizacao = Organizacao.objects.create(nome="Processamento", slug=f"processamento-{hash(str(sobrescritos))}")
+    versao = _criar_versao(codigo=f"processamento-{organizacao.pk}")
+    assinatura = _criar_assinatura(organizacao, versao)
+
+    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(IntegrityError), transaction.atomic():
+        AlteracaoAssinatura.objects.create(**_dados_alteracao(organizacao, assinatura, **sobrescritos))
+
+
+def test_banco_recusa_agenda_em_alteracao_imediata():
+    organizacao = Organizacao.objects.create(nome="Imediata", slug="imediata-sem-agenda")
+    versao = _criar_versao(codigo="imediata-sem-agenda")
+    assinatura = _criar_assinatura(organizacao, versao)
+
+    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(IntegrityError), transaction.atomic():
+        AlteracaoAssinatura.objects.create(
+            **_dados_alteracao(
+                organizacao,
+                assinatura,
+                aplicar_em=timezone.now() + timedelta(days=1),
+            )
+        )
+
+
+def test_queryset_generico_nao_pode_transicionar_status_de_alteracao():
+    organizacao = Organizacao.objects.create(nome="Transição ORM", slug="transicao-orm")
+    versao = _criar_versao(codigo="transicao-orm")
+    assinatura = _criar_assinatura(organizacao, versao)
+    with organizacao_atual_privilegiada(organizacao.pk):
+        alteracao = AlteracaoAssinatura.objects.create(**_dados_alteracao(organizacao, assinatura))
+
+        with pytest.raises(ValueError, match="transições nominais"):
+            AlteracaoAssinatura.objects.filter(pk=alteracao.pk).update(status=StatusAlteracaoAssinatura.AGUARDANDO_GATEWAY)
+
+
+def test_banco_recusa_regressao_de_status_por_sql_direto():
+    organizacao = Organizacao.objects.create(nome="Transição SQL", slug="transicao-sql")
+    versao = _criar_versao(codigo="transicao-sql")
+    assinatura = _criar_assinatura(organizacao, versao)
+    with organizacao_atual_privilegiada(organizacao.pk):
+        alteracao = AlteracaoAssinatura.objects.create(
+            **_dados_alteracao(
+                organizacao,
+                assinatura,
+                status=StatusAlteracaoAssinatura.AGUARDANDO_GATEWAY,
+            )
+        )
+
+        with pytest.raises(DatabaseError, match="(?i)transição inválida"), transaction.atomic(), connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE alteracao_assinatura SET status = %s WHERE id = %s",
+                [StatusAlteracaoAssinatura.SOLICITADA, alteracao.pk],
+            )
+
+
+def test_banco_recusa_alteracao_cuja_assinatura_pertence_a_outro_tenant():
+    org_a = Organizacao.objects.create(nome="Tenant A", slug="coerencia-tenant-a")
+    org_b = Organizacao.objects.create(nome="Tenant B", slug="coerencia-tenant-b")
+    versao = _criar_versao(codigo="coerencia-tenant")
+    assinatura_b = _criar_assinatura(org_b, versao)
+
+    with organizacao_atual_privilegiada(org_a.pk), pytest.raises(DatabaseError, match="organização da assinatura"), transaction.atomic():
+        AlteracaoAssinatura.objects.create(**_dados_alteracao(org_a, assinatura_b))

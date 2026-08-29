@@ -1,7 +1,10 @@
 """Testes da camada HTTP de organizacoes."""
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from threading import Barrier
 
+from django.db import close_old_connections, connections
 from django.utils import timezone
 
 from rest_framework import status
@@ -11,7 +14,11 @@ import pytest
 from knox.models import get_token_model
 
 from apps.api.autenticacao.models import TokenMetaData, TokenType
+from apps.assinaturas.catalogs import PLANOS_BOOTSTRAP, CatalogoPlanos, sincronizar_planos
+from apps.assinaturas.models import Periodicidade
+from apps.assinaturas.subscriptions import Assinaturas
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
+from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.models import Convite, Organizacao, Papel, Time, Vinculo
 from internal_frameworks.context import ContextVariable
 from tests.support.usuarios import criar_usuario
@@ -56,6 +63,26 @@ def vincular(usuario, organizacao, papel=Papel.MEMBRO, times=()):
     if times:
         vinculo.times.set(times)
     return vinculo
+
+
+def contratar(organizacao, *, seats, papeis_isentos=()):
+    sincronizar_planos(PLANOS_BOOTSTRAP, aplicar=True)
+    versao, preco = CatalogoPlanos.obter_versao_inicial(codigo="profissional", periodicidade=Periodicidade.MENSAL)
+    with organizacao_atual_privilegiada(organizacao.pk):
+        assinatura = Assinaturas.criar_paga(
+            organizacao=organizacao,
+            versao_plano=versao,
+            preco_plano=preco,
+            seats_contratados=seats,
+            chave_idempotencia=f"contrato-http-{organizacao.pk}",
+        )
+    if papeis_isentos:
+        assinatura.recursos = {
+            **assinatura.recursos,
+            "papeis_isentos_seat": [int(papel) for papel in papeis_isentos],
+        }
+        assinatura.save(update_fields=["recursos"])
+    return assinatura
 
 
 def test_lista_apenas_organizacoes_do_usuario_sem_exigir_header():
@@ -224,6 +251,112 @@ def test_convite_com_papel_acima_do_proprio_e_recusado():
     assert response.status_code == 422
     assert response.data["errors"][0]["code"] == "organizations.role_insufficient"
     assert response.data["errors"][0]["field"] == "papel"
+
+
+def test_patch_nao_pode_reativar_reserva_de_convite_sem_validar_capacidade():
+    administrador = criar_usuario(email="admin-patch-expiracao@example.com")
+    organizacao = Organizacao.objects.create(nome="Patch expiração", slug="patch-expiracao")
+    vincular(administrador, organizacao, Papel.ADMINISTRADOR)
+    contratar(organizacao, seats=1)
+    expirou_em = timezone.now() - timedelta(days=1)
+    convite = Convite.objects.create(
+        organizacao=organizacao,
+        email="reativar@example.com",
+        papel=Papel.MEMBRO,
+        expira_em=expirou_em,
+    )
+
+    response = client_autenticado(administrador).patch(
+        f"/convites/{convite.pk}/",
+        {"expira_em": (timezone.now() + timedelta(days=1)).isoformat()},
+        format="json",
+        **{META_HEADER_ORGANIZACAO: organizacao.slug},
+    )
+
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert response.data["errors"][0]["code"] == "billing.seat_limit_reached"
+    convite.refresh_from_db()
+    assert convite.expira_em == expirou_em
+
+
+def test_patch_nao_pode_tornar_convite_ou_vinculo_cobravel_sem_validar_capacidade():
+    administrador = criar_usuario(email="admin-patch-papel@example.com")
+    membro = criar_usuario(email="membro-patch-papel@example.com")
+    organizacao = Organizacao.objects.create(nome="Patch papel", slug="patch-papel")
+    vincular(administrador, organizacao, Papel.ADMINISTRADOR)
+    vinculo = vincular(membro, organizacao, Papel.MEMBRO)
+    contratar(organizacao, seats=1, papeis_isentos=(Papel.MEMBRO,))
+    convite = Convite.objects.create(
+        organizacao=organizacao,
+        email="papel-convite@example.com",
+        papel=Papel.MEMBRO,
+        expira_em=timezone.now() + timedelta(days=1),
+    )
+    client = client_autenticado(administrador)
+
+    resposta_convite = client.patch(
+        f"/convites/{convite.pk}/",
+        {"papel": Papel.GESTOR},
+        format="json",
+        **{META_HEADER_ORGANIZACAO: organizacao.slug},
+    )
+    resposta_vinculo = client.patch(
+        f"/vinculos/{vinculo.pk}/",
+        {"papel": Papel.GESTOR},
+        format="json",
+        **{META_HEADER_ORGANIZACAO: organizacao.slug},
+    )
+
+    assert resposta_convite.status_code == status.HTTP_409_CONFLICT
+    assert resposta_vinculo.status_code == status.HTTP_409_CONFLICT
+    convite.refresh_from_db()
+    vinculo.refresh_from_db()
+    assert convite.papel == Papel.MEMBRO
+    assert vinculo.papel == Papel.MEMBRO
+
+
+@pytest.mark.django_db(transaction=True)
+def test_patchs_concorrentes_de_convites_disputam_o_ultimo_seat_uma_unica_vez():
+    administrador = criar_usuario(email="admin-patch-concorrente@example.com")
+    organizacao = Organizacao.objects.create(nome="Patch concorrente", slug="patch-concorrente")
+    vincular(administrador, organizacao, Papel.ADMINISTRADOR)
+    contratar(organizacao, seats=2)
+    expirou_em = timezone.now() - timedelta(days=1)
+    convites = [
+        Convite.objects.create(
+            organizacao=organizacao,
+            email=f"patch-concorrente-{numero}@example.com",
+            papel=Papel.MEMBRO,
+            expira_em=expirou_em,
+        )
+        for numero in (1, 2)
+    ]
+    clients = [client_autenticado(administrador), client_autenticado(administrador)]
+    barreira = Barrier(2)
+    nova_expiracao = (timezone.now() + timedelta(days=1)).isoformat()
+
+    def reativar(indice):
+        close_old_connections()
+        try:
+            barreira.wait(timeout=5)
+            return (
+                clients[indice]
+                .patch(
+                    f"/convites/{convites[indice].pk}/",
+                    {"expira_em": nova_expiracao},
+                    format="json",
+                    **{META_HEADER_ORGANIZACAO: organizacao.slug},
+                )
+                .status_code
+            )
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        resultados = list(executor.map(reativar, (0, 1)))
+
+    assert sorted(resultados) == [status.HTTP_200_OK, status.HTTP_409_CONFLICT]
+    assert Convite.objects.filter(organizacao=organizacao, expira_em__gt=timezone.now()).count() == 1
 
 
 def test_aceitar_convite_com_token_invalido_retorna_422():

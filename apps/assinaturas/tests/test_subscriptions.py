@@ -185,6 +185,27 @@ def test_criar_trial_repetido_sem_relogio_injetado_retorna_o_mesmo_contrato():
     assert repetida.trial_termina_em == primeira.trial_termina_em
 
 
+def test_criar_trial_sem_relogio_inicia_no_primeiro_processamento_de_organizacao_antiga(monkeypatch):
+    versao, preco = _catalogo("profissional")
+    criada_em = timezone.now() - timedelta(days=365)
+    primeiro_processamento = timezone.now()
+    organizacao = Organizacao.objects.create(nome="Trial antigo", slug="trial-antigo")
+    Organizacao.objects.filter(pk=organizacao.pk).update(created_at=criada_em)
+    organizacao.created_at = criada_em
+    monkeypatch.setattr("apps.assinaturas.subscriptions.timezone.now", lambda: primeiro_processamento)
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        assinatura = Assinaturas.criar_trial(
+            organizacao=organizacao,
+            versao_plano=versao,
+            preco_plano=preco,
+            chave_idempotencia="trial-antigo",
+        )
+
+    assert assinatura.trial_iniciado_em == primeiro_processamento
+    assert assinatura.trial_termina_em == primeiro_processamento + timedelta(days=14)
+
+
 def test_criar_paga_nasce_pendente_com_seats_absolutos():
     versao, preco = _catalogo("profissional")
     organizacao = Organizacao.objects.create(nome="Paga", slug="paga")

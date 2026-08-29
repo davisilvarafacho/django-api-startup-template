@@ -120,3 +120,31 @@ def test_migration_0004_torna_lock_de_preco_compativel_e_reverse_restaura_0003()
 @pytest.mark.django_db(databases={"default", "logging"})
 def test_migration_de_triggers_e_compativel_com_alias_sqlite():
     assert connections["logging"].vendor == "sqlite"
+
+
+@pytest.mark.django_db(transaction=True)
+def test_migration_0006_promove_rls_para_bigint_e_reverse_restaura_0005():
+    executor = MigrationExecutor(connection)
+    alvos_finais = executor.loader.graph.leaf_nodes()
+
+    def expressao_policy():
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT qual FROM pg_policies WHERE tablename = 'assinatura_organizacao' AND policyname = 'isolamento_organizacao'")
+            return cursor.fetchone()[0]
+
+    try:
+        executor.migrate([("assinaturas", "0004_ordenar_locks_catalogo")])
+        executor = MigrationExecutor(connection)
+        executor.migrate([("assinaturas", "0005_assinaturaorganizacao_alteracaoassinatura_and_more")])
+        assert "::integer" in expressao_policy()
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([("assinaturas", "0006_reforcar_invariantes_assinaturas")])
+        assert "::bigint" in expressao_policy()
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([("assinaturas", "0005_assinaturaorganizacao_alteracaoassinatura_and_more")])
+        assert "::integer" in expressao_policy()
+    finally:
+        executor = MigrationExecutor(connection)
+        executor.migrate(alvos_finais)

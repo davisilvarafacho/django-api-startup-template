@@ -101,15 +101,13 @@ class OrganizacaoViewSet(
     @require_recent_auth()
     def encerramento(self, request, *args, **kwargs):
         organizacao = self._organizacao_do_proprietario()
+        assinaturas = _carregar_assinaturas()
         if request.method == "DELETE":
-            Organizacoes.cancelar_encerramento(organizacao)
+            Organizacoes.cancelar_encerramento(organizacao, assinaturas=assinaturas)
             return Response(status=status.HTTP_204_NO_CONTENT)
 
-        assinaturas = _carregar_assinaturas()
-        termo = assinaturas.obter_termo_encerramento(organizacao)
         resultado = Organizacoes.solicitar_encerramento(
             organizacao,
-            termo,
             assinaturas=assinaturas,
             ator=request.user,
         )

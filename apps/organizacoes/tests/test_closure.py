@@ -30,8 +30,17 @@ pytestmark = pytest.mark.django_db
 
 
 class AssinaturasEncerramentoTeste:
+    termo = TermoEncerramentoImediato()
     chamadas = []
     lock = Lock()
+
+    @classmethod
+    def solicitar_encerramento(cls, organizacao, *, agora):
+        return cls.termo
+
+    @classmethod
+    def cancelar_encerramento(cls, organizacao):
+        return None
 
     @classmethod
     def encerrar(cls, organizacao, *, encerrada_em):
@@ -47,7 +56,13 @@ class AssinaturasEncerramentoTeste:
 
 @pytest.fixture(autouse=True)
 def _limpar_chamadas():
+    AssinaturasEncerramentoTeste.termo = TermoEncerramentoImediato()
     AssinaturasEncerramentoTeste.chamadas.clear()
+
+
+def _solicitar_encerramento(organizacao, termo, *, assinaturas=AssinaturasEncerramentoTeste, **kwargs):
+    assinaturas.termo = termo
+    return Organizacoes.solicitar_encerramento(organizacao, assinaturas=assinaturas, **kwargs)
 
 
 def _cenario_encerramento(slug="encerramento"):
@@ -75,7 +90,7 @@ def test_termo_imediato_encerra_contrato_e_revoga_acessos_sem_excluir_usuarios()
     agora = timezone.now()
     proprietario, organizacao, vinculos, convite, api_key, sessao = _cenario_encerramento("imediato")
 
-    resultado = Organizacoes.solicitar_encerramento(
+    resultado = _solicitar_encerramento(
         organizacao,
         TermoEncerramentoImediato(),
         assinaturas=AssinaturasEncerramentoTeste,
@@ -112,7 +127,7 @@ def test_termo_agendado_preserva_acesso_ate_o_fim_do_periodo():
     fim_periodo = agora + timedelta(days=20)
     _, organizacao, vinculos, convite, api_key, _ = _cenario_encerramento("agendado")
 
-    resultado = Organizacoes.solicitar_encerramento(
+    resultado = _solicitar_encerramento(
         organizacao,
         TermoEncerramentoAgendado(agendado_para=fim_periodo),
         assinaturas=AssinaturasEncerramentoTeste,
@@ -138,13 +153,13 @@ def test_repetir_agendamento_devolve_resultado_idempotente_com_a_data_existente(
     fim_periodo = agora + timedelta(days=20)
     _, organizacao, _, _, _, _ = _cenario_encerramento("agendamento-idempotente")
 
-    primeiro = Organizacoes.solicitar_encerramento(
+    primeiro = _solicitar_encerramento(
         organizacao,
         TermoEncerramentoAgendado(agendado_para=fim_periodo),
         assinaturas=AssinaturasEncerramentoTeste,
         agora=agora,
     )
-    segundo = Organizacoes.solicitar_encerramento(
+    segundo = _solicitar_encerramento(
         organizacao,
         TermoEncerramentoAgendado(agendado_para=fim_periodo + timedelta(days=10)),
         assinaturas=AssinaturasEncerramentoTeste,
@@ -158,12 +173,12 @@ def test_repetir_agendamento_devolve_resultado_idempotente_com_a_data_existente(
 def test_repetir_encerramento_imediato_devolve_resultado_idempotente_sem_data():
     _, organizacao, _, _, _, _ = _cenario_encerramento("imediato-idempotente")
 
-    primeiro = Organizacoes.solicitar_encerramento(
+    primeiro = _solicitar_encerramento(
         organizacao,
         TermoEncerramentoImediato(),
         assinaturas=AssinaturasEncerramentoTeste,
     )
-    segundo = Organizacoes.solicitar_encerramento(
+    segundo = _solicitar_encerramento(
         organizacao,
         TermoEncerramentoImediato(),
         assinaturas=AssinaturasEncerramentoTeste,
@@ -177,7 +192,7 @@ def test_termo_desconhecido_falha_fechado_sem_registrar_encerramento():
     _, organizacao, _, _, _, _ = _cenario_encerramento("termo-desconhecido")
 
     with pytest.raises(TypeError, match="TermoEncerramento"):
-        Organizacoes.solicitar_encerramento(
+        _solicitar_encerramento(
             organizacao,
             object(),
             assinaturas=AssinaturasEncerramentoTeste,
@@ -193,14 +208,14 @@ def test_cancelar_remove_agendamento_e_impede_efetivacao_posterior():
     agora = timezone.now()
     fim_periodo = agora + timedelta(days=20)
     _, organizacao, _, _, api_key, _ = _cenario_encerramento("cancelado")
-    Organizacoes.solicitar_encerramento(
+    _solicitar_encerramento(
         organizacao,
         TermoEncerramentoAgendado(agendado_para=fim_periodo),
         assinaturas=AssinaturasEncerramentoTeste,
         agora=agora,
     )
 
-    cancelado = Organizacoes.cancelar_encerramento(organizacao)
+    cancelado = Organizacoes.cancelar_encerramento(organizacao, assinaturas=AssinaturasEncerramentoTeste)
     efetivado = Organizacoes.efetivar_encerramento(
         organizacao.pk,
         assinaturas=AssinaturasEncerramentoTeste,
@@ -222,13 +237,13 @@ def test_falha_ao_encerrar_assinatura_reverte_toda_a_efetivacao():
     agora = timezone.now()
     proprietario, organizacao, vinculos, convite, api_key, _ = _cenario_encerramento("rollback")
 
-    class AssinaturasComFalha:
+    class AssinaturasComFalha(AssinaturasEncerramentoTeste):
         @classmethod
         def encerrar(cls, organizacao, *, encerrada_em):
             raise RuntimeError("assinatura")
 
     with pytest.raises(RuntimeError, match="assinatura"):
-        Organizacoes.solicitar_encerramento(
+        _solicitar_encerramento(
             organizacao,
             TermoEncerramentoImediato(),
             assinaturas=AssinaturasComFalha,
@@ -258,7 +273,7 @@ def test_rollback_depois_da_revogacao_nao_publica_auditoria_de_api_key(monkeypat
     monkeypatch.setattr(Convite, "delete", falhar_cancelamento)
     with patch("apps.api.autenticacao.audit.capture") as capture_mock:
         with pytest.raises(RuntimeError, match="convite"), django_capture_on_commit_callbacks(execute=True):
-            Organizacoes.solicitar_encerramento(
+            _solicitar_encerramento(
                 organizacao,
                 TermoEncerramentoImediato(),
                 assinaturas=AssinaturasEncerramentoTeste,
@@ -275,7 +290,7 @@ def test_organizacao_pendente_nao_cria_nem_aceita_convite():
     agora = timezone.now()
     proprietario, organizacao, _, convite, _, _ = _cenario_encerramento("bloqueia-convite")
     convidado = criar_usuario(email=convite.email)
-    Organizacoes.solicitar_encerramento(
+    _solicitar_encerramento(
         organizacao,
         TermoEncerramentoAgendado(agendado_para=agora + timedelta(days=20)),
         assinaturas=AssinaturasEncerramentoTeste,
@@ -302,7 +317,7 @@ def test_organizacao_pendente_nao_cria_nem_aceita_convite():
 def test_efetivacoes_concorrentes_encerram_uma_unica_vez():
     agora = timezone.now()
     _, organizacao, _, _, api_key, _ = _cenario_encerramento("concorrente")
-    Organizacoes.solicitar_encerramento(
+    _solicitar_encerramento(
         organizacao,
         TermoEncerramentoAgendado(agendado_para=agora),
         assinaturas=AssinaturasEncerramentoTeste,
@@ -361,7 +376,7 @@ def test_efetivacao_concorrente_com_criacao_nao_deixa_api_key_viva(monkeypatch):
     def efetivar():
         close_old_connections()
         try:
-            return Organizacoes.solicitar_encerramento(
+            return _solicitar_encerramento(
                 organizacao,
                 TermoEncerramentoImediato(),
                 assinaturas=AssinaturasEncerramentoTeste,
@@ -461,7 +476,7 @@ def test_efetivacao_concorrente_com_rotacao_nao_deixa_api_key_viva_nem_deadlock(
     def efetivar():
         close_old_connections()
         try:
-            return Organizacoes.solicitar_encerramento(
+            return _solicitar_encerramento(
                 organizacao,
                 TermoEncerramentoImediato(),
                 assinaturas=AssinaturasEncerramentoTeste,

@@ -29,6 +29,7 @@ from apps.assinaturas.subscriptions import (
 )
 from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.models import Organizacao
+from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
 
@@ -129,6 +130,148 @@ def test_solicitacao_idempotente_retorna_existente_e_recusa_payload_divergente()
             Assinaturas.solicitar_alteracao(replace(comando, termos_pretendidos=replace(comando.termos_pretendidos, seats_contratados=9)))
 
     assert repetida.pk == primeira.pk
+
+
+def test_idempotencia_de_alteracao_inclui_assinatura_solicitante_e_momento_resolvido():
+    organizacao, assinatura, versao, preco = _assinatura_profissional(periodo=True)
+    solicitante_a = criar_usuario(email="autor-a@example.com")
+    solicitante_b = criar_usuario(email="autor-b@example.com")
+    aplicar_em = assinatura.periodo_atual_termina_em
+    comando = replace(
+        _comando(
+            assinatura,
+            versao,
+            preco,
+            seats=5,
+            chave="fingerprint-completo",
+            tipo=TipoAlteracaoAssinatura.REDUCAO_SEATS,
+        ),
+        solicitada_por=solicitante_a,
+        seats_consumidos=5,
+    )
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        primeira = Assinaturas.solicitar_alteracao(comando)
+        with pytest.raises(ConflitoIdempotenciaAssinatura):
+            Assinaturas.solicitar_alteracao(replace(comando, solicitada_por=solicitante_b))
+
+    assert primeira.pedido["organizacao_id"] == organizacao.pk
+    assert primeira.pedido["assinatura_id"] == assinatura.pk
+    assert primeira.pedido["solicitada_por_id"] == solicitante_a.pk
+    assert primeira.pedido["momento_aplicacao"] == int(MomentoAplicacaoAlteracaoAssinatura.PROXIMO_CICLO)
+    assert primeira.pedido["aplicar_em"] == aplicar_em.isoformat()
+
+
+def test_idempotencia_de_alteracao_nunca_retorna_pedido_de_ciclo_anterior():
+    organizacao, assinatura_antiga, versao, preco = _assinatura_profissional()
+    comando_antigo = _comando(assinatura_antiga, versao, preco, seats=8, chave="mesma-chave-outro-ciclo")
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        antiga = Assinaturas.solicitar_alteracao(comando_antigo)
+        Assinaturas.encerrar(organizacao, encerrada_em=timezone.now())
+        assinatura_nova = Assinaturas.criar_trial(
+            organizacao=organizacao,
+            versao_plano=versao,
+            preco_plano=preco,
+            chave_idempotencia="novo-ciclo",
+        )
+        comando_novo = _comando(assinatura_nova, versao, preco, seats=8, chave="mesma-chave-outro-ciclo")
+        with pytest.raises(ConflitoIdempotenciaAssinatura):
+            Assinaturas.solicitar_alteracao(comando_novo)
+
+    assert antiga.assinatura_id == assinatura_antiga.pk
+
+
+@pytest.mark.parametrize(
+    "termos_mascarados",
+    [
+        lambda termos: replace(termos, valor_base_centavos=termos.valor_base_centavos + 1),
+        lambda termos: replace(termos, carencia_pagamento_dias=termos.carencia_pagamento_dias + 1),
+        lambda termos: replace(termos, recursos=ValoresRecursos(CATALOGO_RECURSOS, {"quantidade_projetos": 99})),
+    ],
+)
+def test_aumento_de_seats_recusa_qualquer_delta_alem_da_quantidade_absoluta(termos_mascarados):
+    organizacao, assinatura, versao, preco = _assinatura_profissional()
+    comando = _comando(assinatura, versao, preco, seats=8, chave="aumento-mascarado")
+
+    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(ValueError, match="somente seats_contratados"):
+        Assinaturas.solicitar_alteracao(replace(comando, termos_pretendidos=termos_mascarados(comando.termos_pretendidos)))
+
+
+def test_mudanca_de_periodicidade_usa_preco_publicado_sem_mascarar_seats_ou_recursos():
+    organizacao, assinatura, versao, _ = _assinatura_profissional(periodo=True)
+    _, preco_anual = CatalogoPlanos.obter_versao_inicial(codigo="profissional", periodicidade=Periodicidade.ANUAL)
+    comando = CriacaoAlteracaoAssinatura(
+        assinatura=assinatura,
+        tipo=TipoAlteracaoAssinatura.MUDANCA_PERIODICIDADE,
+        origem_pretendida=OrigemVersaoPlano(versao),
+        termos_pretendidos=_termos(
+            versao,
+            preco_anual,
+            seats_contratados=assinatura.seats_contratados,
+            periodicidade=Periodicidade.ANUAL,
+        ),
+        revisao_esperada=assinatura.revisao,
+        chave_idempotencia="periodicidade-canonica",
+    )
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        alteracao = Assinaturas.solicitar_alteracao(comando)
+        with pytest.raises(ValueError, match="termos publicados"):
+            Assinaturas.solicitar_alteracao(
+                replace(
+                    comando,
+                    chave_idempotencia="periodicidade-mascarada",
+                    termos_pretendidos=replace(comando.termos_pretendidos, seats_contratados=assinatura.seats_contratados + 1),
+                )
+            )
+
+    assert alteracao.aplicar_em == assinatura.periodo_atual_termina_em
+
+
+def test_mudanca_de_plano_nao_pode_mascarar_periodicidade_ou_seats():
+    organizacao, assinatura, _, _ = _assinatura_profissional(periodo=True)
+    versao_gratuita, preco_gratuito = CatalogoPlanos.obter_versao_inicial(codigo="gratuito", periodicidade=Periodicidade.MENSAL)
+    comando = CriacaoAlteracaoAssinatura(
+        assinatura=assinatura,
+        tipo=TipoAlteracaoAssinatura.DOWNGRADE_PLANO,
+        origem_pretendida=OrigemVersaoPlano(versao_gratuita),
+        termos_pretendidos=_termos(versao_gratuita, preco_gratuito, seats_contratados=assinatura.seats_contratados),
+        revisao_esperada=assinatura.revisao,
+        chave_idempotencia="plano-canonico",
+    )
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        alteracao = Assinaturas.solicitar_alteracao(comando)
+        with pytest.raises(ValueError, match="termos publicados"):
+            Assinaturas.solicitar_alteracao(
+                replace(
+                    comando,
+                    chave_idempotencia="plano-mascarado",
+                    termos_pretendidos=replace(comando.termos_pretendidos, periodicidade=Periodicidade.ANUAL),
+                )
+            )
+
+    assert alteracao.momento_aplicacao == MomentoAplicacaoAlteracaoAssinatura.PROXIMO_CICLO
+
+
+def test_alteracao_de_proximo_ciclo_recusa_data_diferente_do_fim_do_periodo():
+    organizacao, assinatura, versao, preco = _assinatura_profissional(seats=8, periodo=True)
+    comando = replace(
+        _comando(
+            assinatura,
+            versao,
+            preco,
+            seats=6,
+            chave="momento-fora-do-ciclo",
+            tipo=TipoAlteracaoAssinatura.REDUCAO_SEATS,
+            aplicar_em=assinatura.periodo_atual_termina_em + timedelta(days=1),
+        ),
+        seats_consumidos=6,
+    )
+
+    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(ValueError, match="fim do período"):
+        Assinaturas.solicitar_alteracao(comando)
 
 
 def test_confirmar_imediata_aplica_snapshot_e_incrementa_revisao():

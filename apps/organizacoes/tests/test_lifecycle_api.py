@@ -44,8 +44,12 @@ class AssinaturasHTTP:
         return object()
 
     @classmethod
-    def obter_termo_encerramento(cls, organizacao):
+    def solicitar_encerramento(cls, organizacao, *, agora):
         return cls.termo
+
+    @classmethod
+    def cancelar_encerramento(cls, organizacao):
+        return None
 
     @classmethod
     def encerrar(cls, organizacao, *, encerrada_em):

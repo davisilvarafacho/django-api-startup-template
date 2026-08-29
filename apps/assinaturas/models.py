@@ -1,5 +1,7 @@
 """Catálogo global e contratos tenantizados de assinatura."""
 
+from typing import cast
+
 from django.conf import settings
 from django.core.validators import RegexValidator
 from django.db import models
@@ -62,6 +64,28 @@ class StatusAlteracaoAssinatura(models.IntegerChoices):
     CONFIRMADA = 30, _("Confirmada")
     FALHOU = 40, _("Falhou")
     CANCELADA = 50, _("Cancelada")
+
+
+TRANSICOES_STATUS_ALTERACAO: dict[int, frozenset[int]] = {
+    StatusAlteracaoAssinatura.SOLICITADA: frozenset(
+        {
+            StatusAlteracaoAssinatura.AGUARDANDO_GATEWAY,
+            StatusAlteracaoAssinatura.CONFIRMADA,
+            StatusAlteracaoAssinatura.FALHOU,
+            StatusAlteracaoAssinatura.CANCELADA,
+        }
+    ),
+    StatusAlteracaoAssinatura.AGUARDANDO_GATEWAY: frozenset(
+        {
+            StatusAlteracaoAssinatura.CONFIRMADA,
+            StatusAlteracaoAssinatura.FALHOU,
+            StatusAlteracaoAssinatura.CANCELADA,
+        }
+    ),
+    StatusAlteracaoAssinatura.CONFIRMADA: frozenset({StatusAlteracaoAssinatura.CANCELADA}),
+    StatusAlteracaoAssinatura.FALHOU: frozenset(),
+    StatusAlteracaoAssinatura.CANCELADA: frozenset(),
+}
 
 
 CAMPOS_OPERACIONAIS_VERSAO = frozenset({"atual", "is_active", "last_modified_at"})
@@ -250,11 +274,15 @@ class AlteracoesAssinaturaQuerySet(BaseQuerySet):
     """Impede que pedido e snapshots históricos sejam reescritos pelo ORM."""
 
     def update(self, **kwargs):
+        if "status" in kwargs:
+            raise ValueError("Status de alteração só pode mudar por transições nominais.")
         if set(kwargs) - CAMPOS_PROCESSAMENTO_ALTERACAO:
             raise ValueError("Pedido e snapshots da alteração são imutáveis.")
         return super().update(**kwargs)
 
     def bulk_update(self, objs, fields, batch_size=None):
+        if "status" in fields:
+            raise ValueError("Status de alteração só pode mudar por transições nominais.")
         if set(fields) - CAMPOS_PROCESSAMENTO_ALTERACAO:
             raise ValueError("Pedido e snapshots da alteração são imutáveis.")
         return super().bulk_update(tuple(objs), fields, batch_size=batch_size)
@@ -574,6 +602,15 @@ class AssinaturaOrganizacao(Base):
                 name="assinatura_periodo_atual_coerente",
             ),
             models.CheckConstraint(
+                condition=models.Q(cancelamento_agendado_para__isnull=True)
+                | models.Q(
+                    status=StatusAssinatura.ATIVA,
+                    periodo_atual_termina_em__isnull=False,
+                    cancelamento_agendado_para=models.F("periodo_atual_termina_em"),
+                ),
+                name="assinatura_cancelamento_agendado_coerente",
+            ),
+            models.CheckConstraint(
                 condition=(
                     models.Q(carencia_pagamento_iniciada_em__isnull=True, carencia_pagamento_termina_em__isnull=True)
                     | models.Q(
@@ -614,6 +651,13 @@ class AssinaturaOrganizacao(Base):
             ),
             models.CheckConstraint(condition=models.Q(moeda__regex=r"^[A-Z]{3}$"), name="assinatura_moeda_iso_maiuscula"),
             models.CheckConstraint(condition=models.Q(revisao__gte=1), name="assinatura_revisao_positiva"),
+            models.CheckConstraint(condition=models.Q(status__in=StatusAssinatura.values), name="assinatura_status_dominio"),
+            models.CheckConstraint(condition=models.Q(status_financeiro__in=StatusFinanceiro.values), name="assinatura_financeiro_dominio"),
+            models.CheckConstraint(condition=models.Q(periodicidade__in=Periodicidade.values), name="assinatura_periodicidade_dominio"),
+            models.CheckConstraint(
+                condition=models.Q(politica_trial__isnull=True) | models.Q(politica_trial__in=PoliticaTrial.values),
+                name="assinatura_politica_trial_dominio",
+            ),
         ]
 
 
@@ -658,7 +702,7 @@ class AlteracaoAssinatura(Base):
 
     def save(self, *args, **kwargs):
         if self.pk is not None:
-            anterior = dict(type(self)._base_manager.filter(pk=self.pk).values().first() or {})
+            anterior = dict(type(self)._base_manager.using(self._state.db).filter(pk=self.pk).values().first() or {})
             if anterior:
                 campos_imutaveis = {
                     field.name for field in self._meta.concrete_fields if field.name not in CAMPOS_PROCESSAMENTO_ALTERACAO and not field.primary_key
@@ -668,6 +712,9 @@ class AlteracaoAssinatura(Base):
                 )
                 if mudou:
                     raise ValueError("Pedido e snapshots da alteração são imutáveis.")
+                status_anterior = cast(int, anterior["status"])
+                if status_anterior != self.status and self.status not in TRANSICOES_STATUS_ALTERACAO.get(status_anterior, frozenset()):
+                    raise ValueError("Transição inválida de status da alteração.")
         return super().save(*args, **kwargs)
 
     def __str__(self):
@@ -687,8 +734,15 @@ class AlteracaoAssinatura(Base):
             ),
             models.CheckConstraint(condition=models.Q(revisao_esperada__gte=1), name="alteracao_revisao_esperada_positiva"),
             models.CheckConstraint(
-                condition=(models.Q(momento_aplicacao=MomentoAplicacaoAlteracaoAssinatura.IMEDIATA) | models.Q(aplicar_em__isnull=False)),
-                name="alteracao_proximo_ciclo_exige_data",
+                condition=(
+                    models.Q(momento_aplicacao=MomentoAplicacaoAlteracaoAssinatura.IMEDIATA, aplicar_em__isnull=True)
+                    | models.Q(
+                        momento_aplicacao=MomentoAplicacaoAlteracaoAssinatura.PROXIMO_CICLO,
+                        aplicar_em__isnull=False,
+                        aplicar_em__gt=models.F("created_at"),
+                    )
+                ),
+                name="alteracao_momento_data_coerente",
             ),
             models.CheckConstraint(
                 condition=(
@@ -712,6 +766,81 @@ class AlteracaoAssinatura(Base):
                     status=StatusAlteracaoAssinatura.CONFIRMADA,
                 ),
                 name="alteracao_evento_ignorado_coerente",
+            ),
+            models.CheckConstraint(condition=models.Q(tipo__in=TipoAlteracaoAssinatura.values), name="alteracao_tipo_dominio"),
+            models.CheckConstraint(
+                condition=models.Q(momento_aplicacao__in=MomentoAplicacaoAlteracaoAssinatura.values),
+                name="alteracao_momento_dominio",
+            ),
+            models.CheckConstraint(condition=models.Q(status__in=StatusAlteracaoAssinatura.values), name="alteracao_status_dominio"),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        status__in=(StatusAlteracaoAssinatura.SOLICITADA, StatusAlteracaoAssinatura.AGUARDANDO_GATEWAY),
+                        processada_em__isnull=True,
+                        aplicada_em__isnull=True,
+                        evento_gateway__isnull=True,
+                        falha_codigo__isnull=True,
+                        falha_mensagem__isnull=True,
+                        revisao_aplicada__isnull=True,
+                        revisao_observada__isnull=True,
+                        ignorada_em__isnull=True,
+                    )
+                    | (
+                        models.Q(
+                            status=StatusAlteracaoAssinatura.CONFIRMADA,
+                            processada_em__isnull=False,
+                            falha_codigo__isnull=True,
+                            falha_mensagem__isnull=True,
+                        )
+                        & (
+                            models.Q(
+                                aplicada_em__isnull=False,
+                                revisao_aplicada__isnull=False,
+                                revisao_observada__isnull=True,
+                                ignorada_em__isnull=True,
+                            )
+                            | models.Q(
+                                momento_aplicacao=MomentoAplicacaoAlteracaoAssinatura.PROXIMO_CICLO,
+                                aplicada_em__isnull=True,
+                                revisao_aplicada__isnull=True,
+                                revisao_observada__isnull=True,
+                                ignorada_em__isnull=True,
+                            )
+                            | models.Q(
+                                aplicada_em__isnull=True,
+                                revisao_aplicada__isnull=True,
+                                revisao_observada__isnull=False,
+                                ignorada_em__isnull=False,
+                            )
+                        )
+                    )
+                    | (
+                        models.Q(
+                            status=StatusAlteracaoAssinatura.FALHOU,
+                            processada_em__isnull=False,
+                            falha_codigo__isnull=False,
+                            falha_mensagem__isnull=False,
+                            aplicada_em__isnull=True,
+                            revisao_aplicada__isnull=True,
+                            revisao_observada__isnull=True,
+                            ignorada_em__isnull=True,
+                        )
+                        & ~models.Q(falha_codigo="")
+                        & ~models.Q(falha_mensagem="")
+                    )
+                    | models.Q(
+                        status=StatusAlteracaoAssinatura.CANCELADA,
+                        processada_em__isnull=False,
+                        falha_codigo__isnull=True,
+                        falha_mensagem__isnull=True,
+                        aplicada_em__isnull=True,
+                        revisao_aplicada__isnull=True,
+                        revisao_observada__isnull=True,
+                        ignorada_em__isnull=True,
+                    )
+                ),
+                name="alteracao_processamento_coerente",
             ),
         ]
 

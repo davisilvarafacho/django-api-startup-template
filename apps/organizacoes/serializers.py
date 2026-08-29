@@ -76,6 +76,9 @@ class VinculoSerializer(serializers.ModelSerializer):
             )
         return papel
 
+    def update(self, instance, validated_data):
+        return Vinculos.atualizar_vinculo(instance, dados=validated_data)
+
 
 class ConviteSerializer(serializers.ModelSerializer):
     convidado_por = UsuarioResumoSerializer(read_only=True)
@@ -95,6 +98,9 @@ class ConviteSerializer(serializers.ModelSerializer):
             "expirado",
         ]
         read_only_fields = ["id", "convidado_por", "aceito_em", "pendente", "expirado"]
+
+    def update(self, instance, validated_data):
+        return Vinculos.atualizar_convite(instance, dados=validated_data)
 
 
 class ConviteCreateSerializer(ConviteSerializer):

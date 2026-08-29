@@ -52,17 +52,20 @@ type ResultadoSolicitacaoEncerramento = EncerramentoEfetivado | EncerramentoAgen
 
 
 class AssinaturasEncerramento(Protocol):
-    """Seam que a Task 9 implementará sobre o contrato tenantizado real."""
+    """Ciclo contratual executado sob o lock da organização."""
+
+    @classmethod
+    def solicitar_encerramento(cls, organizacao: Organizacao, *, agora: datetime) -> TermoEncerramento: ...
+
+    @classmethod
+    def cancelar_encerramento(cls, organizacao: Organizacao) -> None: ...
 
     @classmethod
     def encerrar(cls, organizacao: Organizacao, *, encerrada_em: datetime) -> None: ...
 
 
 class AssinaturasCicloOrganizacao(AssinaturasEncerramento, Protocol):
-    """Planejamento e efetivação que a Task 9 ligará ao contrato real."""
-
-    @classmethod
-    def obter_termo_encerramento(cls, organizacao: Organizacao) -> TermoEncerramento: ...
+    """Contrato completo usado pelo ciclo de vida da organização."""
 
 
 class Organizacoes:
@@ -77,21 +80,23 @@ class Organizacoes:
     def solicitar_encerramento(
         cls,
         organizacao: Organizacao,
-        termo: TermoEncerramento,
         *,
         assinaturas: type[AssinaturasEncerramento],
         ator=None,
         agora=None,
     ) -> ResultadoSolicitacaoEncerramento:
-        """Registra o pedido e efetiva imediatamente somente o termo gratuito."""
-        if not isinstance(termo, TermoEncerramentoImediato | TermoEncerramentoAgendado):
-            raise TypeError("termo precisa implementar TermoEncerramento.")
+        """Decide e persiste organização/contrato numa única seção crítica."""
         agora = agora or timezone.now()
         database_alias = organizacao._state.db or "default"
         with transaction.atomic(using=database_alias):
             atual = Organizacao.all_objects.using(database_alias).select_for_update().get(pk=organizacao.pk)
             if atual.is_deleted or not atual.is_active or atual.encerramento_solicitado_em is not None:
                 return EncerramentoSemAlteracao(agendado_para=atual.encerramento_agendado_para)
+
+            with organizacao_atual_privilegiada(atual.pk):
+                termo = assinaturas.solicitar_encerramento(atual, agora=agora)
+            if not isinstance(termo, TermoEncerramentoImediato | TermoEncerramentoAgendado):
+                raise TypeError("termo precisa implementar TermoEncerramento.")
 
             atual.encerramento_solicitado_em = agora
             atual.encerramento_agendado_para = termo.agendado_para if isinstance(termo, TermoEncerramentoAgendado) else None
@@ -112,13 +117,20 @@ class Organizacoes:
             return EncerramentoEfetivado()
 
     @classmethod
-    def cancelar_encerramento(cls, organizacao: Organizacao) -> bool:
+    def cancelar_encerramento(
+        cls,
+        organizacao: Organizacao,
+        *,
+        assinaturas: type[AssinaturasEncerramento],
+    ) -> bool:
         """Cancela um pedido ainda não efetivado sem reabrir organização."""
         database_alias = organizacao._state.db or "default"
         with transaction.atomic(using=database_alias):
             atual = Organizacao.all_objects.using(database_alias).select_for_update().get(pk=organizacao.pk)
             if atual.is_deleted or not atual.is_active or atual.encerramento_solicitado_em is None:
                 return False
+            with organizacao_atual_privilegiada(atual.pk):
+                assinaturas.cancelar_encerramento(atual)
             atual.encerramento_solicitado_em = None
             atual.encerramento_agendado_para = None
             atual.save(

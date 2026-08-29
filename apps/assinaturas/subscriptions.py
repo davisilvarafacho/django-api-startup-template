@@ -246,6 +246,45 @@ class Assinaturas:
         return utilizacao
 
     @classmethod
+    def solicitar_expansao_automatica(
+        cls,
+        assinatura: AssinaturaOrganizacao,
+        *,
+        seats_necessarios: int,
+    ) -> AlteracaoAssinatura:
+        """Registra localmente o aumento absoluto; confirmação continua nominal."""
+        if not isinstance(assinatura, AssinaturaOrganizacao) or assinatura.pk is None:
+            raise ValueError("Expansão automática exige uma assinatura persistida.")
+        if not assinatura.expansao_automatica_seats:
+            raise ValueError("O contrato não permite expansão automática de seats.")
+        if assinatura.versao_plano is None:
+            raise ValueError("Expansão automática exige origem de catálogo.")
+        if type(seats_necessarios) is not int or seats_necessarios <= assinatura.seats_contratados:
+            raise ValueError("Expansão automática exige capacidade absoluta maior que a atual.")
+        termos = TermosAssinatura(
+            periodicidade=Periodicidade(assinatura.periodicidade),
+            moeda=assinatura.moeda,
+            valor_base_centavos=assinatura.valor_base_centavos,
+            valor_seat_centavos=assinatura.valor_seat_centavos,
+            seats_inclusos=assinatura.seats_inclusos,
+            seats_contratados=seats_necessarios,
+            expansao_automatica_seats=assinatura.expansao_automatica_seats,
+            recursos=ValoresRecursos(CATALOGO_RECURSOS, assinatura.recursos),
+            carencia_pagamento_dias=assinatura.carencia_pagamento_dias,
+            carencia_excesso_seats_dias=assinatura.carencia_excesso_seats_dias,
+        )
+        return cls.solicitar_alteracao(
+            CriacaoAlteracaoAssinatura(
+                assinatura=assinatura,
+                tipo=TipoAlteracaoAssinatura.AUMENTO_SEATS,
+                origem_pretendida=OrigemVersaoPlano(assinatura.versao_plano),
+                termos_pretendidos=termos,
+                revisao_esperada=assinatura.revisao,
+                chave_idempotencia=f"auto-seats:{assinatura.pk}:{assinatura.revisao}:{seats_necessarios}",
+            )
+        )
+
+    @classmethod
     def obter_corrente(
         cls,
         organizacao: Organizacao,
@@ -274,15 +313,56 @@ class Assinaturas:
             assinatura = cls.obter_corrente(organizacao)
         if assinatura is None:
             raise APIError(BillingErrorCode.SUBSCRIPTION_REQUIRED, status_code=503)
-        if assinatura.total_centavos > 0 and assinatura.periodo_atual_termina_em is not None:
+        if assinatura.status == StatusAssinatura.ATIVA and assinatura.total_centavos > 0 and assinatura.periodo_atual_termina_em is not None:
             return TermoEncerramentoAgendado(agendado_para=assinatura.periodo_atual_termina_em)
         return TermoEncerramentoImediato()
 
     @classmethod
-    def encerrar(cls, organizacao: Organizacao, *, encerrada_em: datetime) -> None:
-        """Encerra idempotentemente o contrato sob o lock da organização chamadora."""
+    def solicitar_encerramento(cls, organizacao: Organizacao, *, agora: datetime) -> TermoEncerramento:
+        """Decide o termo e persiste o cancelamento sob organização -> assinatura."""
+        from apps.organizacoes.organizations import TermoEncerramentoAgendado, TermoEncerramentoImediato
+
         using = organizacao._state.db or "default"
         with transaction.atomic(using=using):
+            organizacao = cls._bloquear_organizacao(organizacao.pk, using=using)
+            assinatura = cls.obter_corrente(organizacao, bloquear=True)
+            if assinatura is None:
+                raise APIError(BillingErrorCode.SUBSCRIPTION_REQUIRED, status_code=503)
+            cls._cancelar_alteracoes_pendentes_por_encerramento(assinatura, agora=agora, using=using)
+            if assinatura.status != StatusAssinatura.ATIVA or assinatura.total_centavos <= 0 or assinatura.periodo_atual_termina_em is None:
+                return TermoEncerramentoImediato()
+            assinatura.cancelamento_agendado_para = assinatura.periodo_atual_termina_em
+            assinatura.revisao += 1
+            assinatura.save(
+                using=using,
+                update_fields=["cancelamento_agendado_para", "revisao", "last_modified_at"],
+            )
+            return TermoEncerramentoAgendado(agendado_para=assinatura.cancelamento_agendado_para)
+
+    @classmethod
+    def cancelar_encerramento(cls, organizacao: Organizacao) -> None:
+        """Limpa o agendamento contratual sob a mesma ordem global de locks."""
+        using = organizacao._state.db or "default"
+        with transaction.atomic(using=using):
+            organizacao = cls._bloquear_organizacao(organizacao.pk, using=using)
+            assinatura = cls.obter_corrente(organizacao, bloquear=True)
+            if assinatura is None:
+                raise APIError(BillingErrorCode.SUBSCRIPTION_REQUIRED, status_code=503)
+            if assinatura.cancelamento_agendado_para is None:
+                return
+            assinatura.cancelamento_agendado_para = None
+            assinatura.revisao += 1
+            assinatura.save(
+                using=using,
+                update_fields=["cancelamento_agendado_para", "revisao", "last_modified_at"],
+            )
+
+    @classmethod
+    def encerrar(cls, organizacao: Organizacao, *, encerrada_em: datetime) -> None:
+        """Encerra idempotentemente preservando organização -> assinatura."""
+        using = organizacao._state.db or "default"
+        with transaction.atomic(using=using):
+            organizacao = cls._bloquear_organizacao(organizacao.pk, using=using)
             assinatura = cls.obter_corrente(organizacao, bloquear=True)
             if assinatura is None:
                 encerrada = (
@@ -294,6 +374,7 @@ class Assinaturas:
                 if encerrada is not None:
                     return
                 raise APIError(BillingErrorCode.SUBSCRIPTION_REQUIRED, status_code=503)
+            cls._cancelar_alteracoes_pendentes_por_encerramento(assinatura, agora=encerrada_em, using=using)
             assinatura.status = StatusAssinatura.ENCERRADA
             assinatura.revisao += 1
             assinatura.cancelamento_agendado_para = None
@@ -408,11 +489,40 @@ class Assinaturas:
     ) -> AssinaturaOrganizacao:
         if versao_plano.limite_seats_trial is None or versao_plano.duracao_trial_dias <= 0:
             raise ValueError("Versão informada não admite trial.")
-        agora = agora or organizacao.created_at
+        chave = chave_idempotencia or cls._chave_preset(organizacao, versao_plano, preco_plano, "trial")
+        if agora is None:
+            using = organizacao._state.db or "default"
+            with transaction.atomic(using=using):
+                organizacao = type(organizacao).all_objects.using(using).select_for_update().get(pk=organizacao.pk)
+                existente = (
+                    AssinaturaOrganizacao.all_objects.using(using)
+                    .select_for_update()
+                    .filter(organizacao=organizacao, chave_idempotencia=chave)
+                    .first()
+                )
+                agora = existente.trial_iniciado_em if existente is not None else timezone.now()
+                if agora is None:
+                    raise ConflitoIdempotenciaAssinatura("O trial idempotente existente não possui início coerente.")
+                return cls._criar_trial_em(organizacao, versao_plano, preco_plano, politica_trial, chave, agora)
+        return cls._criar_trial_em(organizacao, versao_plano, preco_plano, politica_trial, chave, agora)
+
+    @classmethod
+    def _criar_trial_em(
+        cls,
+        organizacao: Organizacao,
+        versao_plano: VersaoPlano,
+        preco_plano: PrecoPlano,
+        politica_trial: PoliticaTrial,
+        chave_idempotencia: str,
+        agora: datetime,
+    ) -> AssinaturaOrganizacao:
+        limite_seats_trial = versao_plano.limite_seats_trial
+        if limite_seats_trial is None:
+            raise ValueError("Versão informada não admite trial.")
         termos = cls._termos_catalogo(
             versao_plano,
             preco_plano,
-            seats_contratados=versao_plano.limite_seats_trial,
+            seats_contratados=limite_seats_trial,
         )
         return cls.criar(
             CriacaoAssinatura(
@@ -423,7 +533,7 @@ class Assinaturas:
                 status_financeiro=StatusFinanceiro.ISENTO,
                 politica_trial=politica_trial,
                 trial_termina_em=agora + timedelta(days=versao_plano.duracao_trial_dias),
-                chave_idempotencia=chave_idempotencia or cls._chave_preset(organizacao, versao_plano, preco_plano, "trial"),
+                chave_idempotencia=chave_idempotencia,
             ),
             agora=agora,
         )
@@ -461,12 +571,14 @@ class Assinaturas:
             raise ValueError("Solicitação exige CriacaoAlteracaoAssinatura.")
         assinatura_informada = comando.assinatura
         using = assinatura_informada._state.db or "default"
+        momento = cls._momento_padrao(comando.tipo)
+        aplicar_em = cls._resolver_data_aplicacao(comando, assinatura_informada, momento)
+        pedido = cls._pedido_alteracao(comando, momento=momento, aplicar_em=aplicar_em)
 
         with transaction.atomic(using=using):
             organizacao = cls._bloquear_organizacao(assinatura_informada.organizacao_id, using=using)
             cls._validar_organizacao_contratavel(organizacao)
             assinatura = AssinaturaOrganizacao.all_objects.using(using).select_for_update().get(pk=assinatura_informada.pk, organizacao=organizacao)
-            pedido = cls._pedido_alteracao(comando)
             existente = (
                 AlteracaoAssinatura.all_objects.using(using)
                 .select_for_update()
@@ -480,10 +592,12 @@ class Assinaturas:
 
             if assinatura.status not in STATUS_CORRENTES:
                 raise ConflitoRevisaoAssinatura("Somente o contrato corrente pode ser alterado.")
+            if assinatura.cancelamento_agendado_para is not None:
+                raise ConflitoRevisaoAssinatura("O contrato possui cancelamento agendado.")
             if assinatura.revisao != comando.revisao_esperada:
                 raise ConflitoRevisaoAssinatura("A revisão esperada não corresponde ao contrato corrente.")
-            momento = cls._momento_padrao(comando.tipo)
-            aplicar_em = cls._resolver_data_aplicacao(comando, assinatura, momento)
+            if aplicar_em is not None and aplicar_em <= timezone.now():
+                raise ValueError("Alteração do próximo ciclo exige uma data futura de aplicação.")
             cls._validar_mudanca(comando, assinatura)
 
             snapshot_anterior = cls._snapshot_assinatura(assinatura)
@@ -511,6 +625,7 @@ class Assinaturas:
                 return bloqueada
             if bloqueada.status != StatusAlteracaoAssinatura.SOLICITADA:
                 raise ConflitoRevisaoAssinatura("A alteração não pode aguardar gateway no estado atual.")
+            cls._validar_alteracao_processavel(bloqueada)
             bloqueada.status = StatusAlteracaoAssinatura.AGUARDANDO_GATEWAY
             bloqueada.save(update_fields=["status", "last_modified_at"])
             return bloqueada
@@ -535,6 +650,7 @@ class Assinaturas:
             ):
                 raise ConflitoRevisaoAssinatura("A alteração não pode ser confirmada no estado atual.")
             assinatura = AssinaturaOrganizacao.all_objects.select_for_update().get(pk=bloqueada.assinatura_id)
+            cls._validar_alteracao_processavel(bloqueada, assinatura=assinatura)
             if assinatura.revisao != bloqueada.revisao_esperada:
                 if not permitir_evento_atrasado:
                     raise ConflitoRevisaoAssinatura("A revisão da alteração não é mais a revisão corrente.")
@@ -576,6 +692,7 @@ class Assinaturas:
             if bloqueada.aplicar_em is None or bloqueada.aplicar_em > agora:
                 raise ConflitoRevisaoAssinatura("A data de aplicação da alteração ainda não chegou.")
             assinatura = AssinaturaOrganizacao.all_objects.select_for_update().get(pk=bloqueada.assinatura_id)
+            cls._validar_alteracao_processavel(bloqueada, assinatura=assinatura)
             if assinatura.revisao != bloqueada.revisao_esperada:
                 if not permitir_evento_atrasado:
                     raise ConflitoRevisaoAssinatura("A revisão da alteração não é mais a revisão corrente.")
@@ -654,6 +771,47 @@ class Assinaturas:
             AssinaturaOrganizacao.all_objects.using(using).select_for_update().get(pk=alteracao.assinatura_id)
             yield AlteracaoAssinatura.all_objects.using(using).select_for_update().get(pk=alteracao.pk)
 
+    @classmethod
+    def _validar_alteracao_processavel(
+        cls,
+        alteracao: AlteracaoAssinatura,
+        *,
+        assinatura: AssinaturaOrganizacao | None = None,
+    ) -> None:
+        using = alteracao._state.db or "default"
+        organizacao = cls._bloquear_organizacao(alteracao.organizacao_id, using=using)
+        cls._validar_organizacao_contratavel(organizacao)
+        assinatura = assinatura or AssinaturaOrganizacao.all_objects.using(using).select_for_update().get(pk=alteracao.assinatura_id)
+        if assinatura.status not in STATUS_CORRENTES or assinatura.cancelamento_agendado_para is not None:
+            raise ConflitoRevisaoAssinatura("O contrato não aceita alterações durante o cancelamento.")
+
+    @staticmethod
+    def _cancelar_alteracoes_pendentes_por_encerramento(
+        assinatura: AssinaturaOrganizacao,
+        *,
+        agora: datetime,
+        using: str,
+    ) -> None:
+        pendentes = list(
+            AlteracaoAssinatura.all_objects.using(using)
+            .select_for_update()
+            .filter(
+                assinatura=assinatura,
+                status__in=(
+                    StatusAlteracaoAssinatura.SOLICITADA,
+                    StatusAlteracaoAssinatura.AGUARDANDO_GATEWAY,
+                    StatusAlteracaoAssinatura.CONFIRMADA,
+                ),
+                aplicada_em__isnull=True,
+                ignorada_em__isnull=True,
+            )
+            .order_by("pk")
+        )
+        for alteracao in pendentes:
+            alteracao.status = StatusAlteracaoAssinatura.CANCELADA
+            alteracao.processada_em = agora
+            alteracao.save(update_fields=["status", "processada_em", "last_modified_at"])
+
     @staticmethod
     def _momento_padrao(tipo: TipoAlteracaoAssinatura) -> MomentoAplicacaoAlteracaoAssinatura:
         if tipo in (TipoAlteracaoAssinatura.UPGRADE_PLANO, TipoAlteracaoAssinatura.AUMENTO_SEATS):
@@ -673,32 +831,114 @@ class Assinaturas:
         aplicar_em = comando.aplicar_em or assinatura.periodo_atual_termina_em
         if aplicar_em is None:
             raise ValueError("Alteração do próximo ciclo exige uma data de aplicação.")
+        if aplicar_em != assinatura.periodo_atual_termina_em:
+            raise ValueError("Alteração do próximo ciclo deve ser aplicada no fim do período atual.")
         return aplicar_em
 
     @staticmethod
     def _validar_mudanca(comando: CriacaoAlteracaoAssinatura, assinatura: AssinaturaOrganizacao) -> None:
         termos = comando.termos_pretendidos
-        if comando.origem_pretendida.versao_plano.is_deleted or not comando.origem_pretendida.versao_plano.is_active:
+        versao_pretendida = comando.origem_pretendida.versao_plano
+        if versao_pretendida.is_deleted or not versao_pretendida.is_active or versao_pretendida.publicada_em is None:
             raise ValueError("Versão pretendida precisa estar ativa.")
-        if comando.tipo == TipoAlteracaoAssinatura.AUMENTO_SEATS and termos.seats_contratados <= assinatura.seats_contratados:
-            raise ValueError("Aumento de seats exige uma quantidade absoluta maior.")
-        if comando.tipo == TipoAlteracaoAssinatura.REDUCAO_SEATS:
+        if comando.tipo in (TipoAlteracaoAssinatura.AUMENTO_SEATS, TipoAlteracaoAssinatura.REDUCAO_SEATS):
+            esperado = Assinaturas._dados_termos_atuais(assinatura)
+            esperado["seats_contratados"] = termos.seats_contratados
+            if versao_pretendida.pk != assinatura.versao_plano_id or Assinaturas._dados_termos(termos) != esperado:
+                raise ValueError("Alteração de seats pode mudar somente seats_contratados.")
+        if comando.tipo == TipoAlteracaoAssinatura.AUMENTO_SEATS:
+            if termos.seats_contratados <= assinatura.seats_contratados:
+                raise ValueError("Aumento de seats exige uma quantidade absoluta maior.")
+        elif comando.tipo == TipoAlteracaoAssinatura.REDUCAO_SEATS:
             if termos.seats_contratados >= assinatura.seats_contratados:
                 raise ValueError("Redução de seats exige uma quantidade absoluta menor.")
             if comando.seats_consumidos is None or termos.seats_contratados < comando.seats_consumidos:
                 raise ValueError("A capacidade pretendida deve cobrir o consumo efetivo de seats.")
-        if comando.tipo == TipoAlteracaoAssinatura.MUDANCA_PERIODICIDADE and termos.periodicidade == assinatura.periodicidade:
-            raise ValueError("Mudança de periodicidade exige uma periodicidade diferente.")
-        if comando.tipo in (TipoAlteracaoAssinatura.UPGRADE_PLANO, TipoAlteracaoAssinatura.DOWNGRADE_PLANO):
-            if comando.origem_pretendida.versao_plano.pk == assinatura.versao_plano_id:
+        elif comando.tipo == TipoAlteracaoAssinatura.MUDANCA_PERIODICIDADE:
+            if versao_pretendida.pk != assinatura.versao_plano_id or termos.periodicidade == assinatura.periodicidade:
+                raise ValueError("Mudança de periodicidade exige outra periodicidade do mesmo plano.")
+            Assinaturas._validar_termos_publicados(assinatura, versao_pretendida, termos)
+        elif comando.tipo in (TipoAlteracaoAssinatura.UPGRADE_PLANO, TipoAlteracaoAssinatura.DOWNGRADE_PLANO):
+            if versao_pretendida.pk == assinatura.versao_plano_id:
                 raise ValueError("Mudança de plano exige outra versão de plano.")
+            if termos.periodicidade != assinatura.periodicidade:
+                raise ValueError("Mudança de plano exige termos publicados sem mascarar periodicidade.")
+            Assinaturas._validar_termos_publicados(assinatura, versao_pretendida, termos)
 
     @classmethod
-    def _pedido_alteracao(cls, comando: CriacaoAlteracaoAssinatura) -> dict[str, Any]:
+    def _validar_termos_publicados(
+        cls,
+        assinatura: AssinaturaOrganizacao,
+        versao_pretendida: VersaoPlano,
+        termos: TermosAssinatura,
+    ) -> None:
+        preco = (
+            PrecoPlano.objects.filter(
+                versao_plano=versao_pretendida,
+                periodicidade=termos.periodicidade,
+                moeda=assinatura.moeda,
+                is_active=True,
+            )
+            .order_by("pk")
+            .first()
+        )
+        if preco is None:
+            raise ValueError("Alteração exige preço publicado ativo para os termos pretendidos.")
+        esperados = cls._termos_catalogo(
+            versao_pretendida,
+            preco,
+            seats_contratados=assinatura.seats_contratados,
+        )
+        if cls._dados_termos(termos) != cls._dados_termos(esperados):
+            raise ValueError("Alteração exige os termos publicados sem mudanças mascaradas.")
+
+    @staticmethod
+    def _dados_termos(termos: TermosAssinatura) -> dict[str, Any]:
+        return {
+            "periodicidade": int(termos.periodicidade),
+            "moeda": termos.moeda,
+            "valor_base_centavos": termos.valor_base_centavos,
+            "valor_seat_centavos": termos.valor_seat_centavos,
+            "seats_inclusos": termos.seats_inclusos,
+            "seats_contratados": termos.seats_contratados,
+            "expansao_automatica_seats": termos.expansao_automatica_seats,
+            "recursos": termos.recursos.materializar(),
+            "carencia_pagamento_dias": termos.carencia_pagamento_dias,
+            "carencia_excesso_seats_dias": termos.carencia_excesso_seats_dias,
+        }
+
+    @staticmethod
+    def _dados_termos_atuais(assinatura: AssinaturaOrganizacao) -> dict[str, Any]:
+        return {
+            "periodicidade": int(assinatura.periodicidade),
+            "moeda": assinatura.moeda,
+            "valor_base_centavos": assinatura.valor_base_centavos,
+            "valor_seat_centavos": assinatura.valor_seat_centavos,
+            "seats_inclusos": assinatura.seats_inclusos,
+            "seats_contratados": assinatura.seats_contratados,
+            "expansao_automatica_seats": assinatura.expansao_automatica_seats,
+            "recursos": CATALOGO_RECURSOS.validar_snapshot(assinatura.recursos).materializar(),
+            "carencia_pagamento_dias": assinatura.carencia_pagamento_dias,
+            "carencia_excesso_seats_dias": assinatura.carencia_excesso_seats_dias,
+        }
+
+    @classmethod
+    def _pedido_alteracao(
+        cls,
+        comando: CriacaoAlteracaoAssinatura,
+        *,
+        momento: MomentoAplicacaoAlteracaoAssinatura,
+        aplicar_em: datetime | None,
+    ) -> dict[str, Any]:
         termos = comando.termos_pretendidos
         return {
+            "organizacao_id": comando.assinatura.organizacao_id,
+            "assinatura_id": comando.assinatura.pk,
             "tipo": int(comando.tipo),
+            "momento_aplicacao": int(momento),
             "revisao_esperada": comando.revisao_esperada,
+            "chave_idempotencia": comando.chave_idempotencia,
+            "solicitada_por_id": comando.solicitada_por.pk if comando.solicitada_por is not None else None,
             "versao_plano_id": comando.origem_pretendida.versao_plano.pk,
             "periodicidade": int(termos.periodicidade),
             "moeda": termos.moeda,
@@ -710,7 +950,7 @@ class Assinaturas:
             "recursos": termos.recursos.materializar(),
             "carencia_pagamento_dias": termos.carencia_pagamento_dias,
             "carencia_excesso_seats_dias": termos.carencia_excesso_seats_dias,
-            "aplicar_em": cls._serializar_data(comando.aplicar_em),
+            "aplicar_em": cls._serializar_data(aplicar_em),
             "seats_consumidos": comando.seats_consumidos,
         }
 

@@ -39,6 +39,52 @@
 - Os dois models novos estão registrados no auditlog. O erro público do limite
   usa `billing.seat_limit_reached` com somente totais não sensíveis.
 
+## Fix Round 1/5 — hardening pós-review
+
+Os dez itens do parecer foram fechados sem antecipar gateway, faturamento,
+`django-checkouts` ou a origem `PropostaComercial` da Task 10:
+
+1. Excesso com expansão automática cria, sob a ordem global de locks, uma
+   `AlteracaoAssinatura` local `AUMENTO_SEATS/SOLICITADA` com quantidade
+   absoluta e chave
+   `auto-seats:<assinatura>:<revisao>:<seats_necessarios>`. O convite ou aceite
+   continua recebendo `billing.seat_limit_reached`; somente uma confirmação
+   nominal da alteração amplia a capacidade e libera o retry. Repetições e
+   concorrência convergem para uma alteração.
+2. PATCH de `Convite.papel`, `Convite.expira_em` e `Vinculo.papel` passa pelos
+   casos de uso `Vinculos.atualizar_convite/atualizar_vinculo`, na ordem
+   organização → assinatura → registro → ocupação. A API e duas atualizações
+   concorrentes não conseguem conquistar o mesmo último seat.
+3. Cada `TipoAlteracaoAssinatura` valida o delta inteiro. Mudanças de seats não
+   mascaram preço, versão, recursos ou periodicidade; mudança de periodicidade
+   e plano exige termos ativos/publicados canônicos, seats preservados e o
+   momento/data contratual correspondente.
+4. O fingerprint idempotente inclui organização, assinatura/ciclo, tipo,
+   revisão, chave, solicitante, momento resolvido, data efetiva, origem, todos
+   os termos imutáveis e consumo de seats. Uma chave antiga nunca devolve
+   alteração de outra assinatura, autoria ou payload.
+5. A migration `0006` adiciona trigger PostgreSQL de coerência entre
+   `AlteracaoAssinatura(organizacao_id, assinatura_id)` e a organização da
+   assinatura. INSERT/UPDATE foram exercitados por papel comum sujeito a RLS.
+6. Solicitar e cancelar encerramento agora decide e persiste organização e
+   assinatura numa única transação, sempre na ordem organização → assinatura.
+   Contrato pago ativo agenda exatamente o fim do período, e agendamento e
+   cancelamento incrementam a revisão do snapshot auditado.
+7. O encerramento cancela alterações solicitadas, aguardando gateway ou
+   confirmadas ainda não aplicadas. Todas as entradas que podem avançar uma
+   alteração revalidam organização e contrato; uma corrida entre encerramento
+   e confirmação serializa sem aplicar upgrade depois do cancelamento.
+8. Trial sem relógio explícito usa `timezone.now()` no primeiro processamento,
+   consulta a chave idempotente antes de gerar timestamp volátil no retry e
+   não herda `Organizacao.created_at` de organizações históricas.
+9. `0006` adiciona domínios e coerência de status/processamento/falha,
+   momento/data, trial, periodicidade, financeiro e cancelamento agendado,
+   além de triggers contra regressões de status de alteração e assinatura. As
+   transições operacionais permanecem nominais no ORM.
+10. A policy RLS final usa cast `bigint`. O teste real prova tenant com ID acima
+    de `2**31`; outro teste percorre `0005(integer) → 0006(bigint) → reverse
+    0005(integer)`, preservando a reversibilidade e o alias SQLite.
+
 ## Evidência TDD
 
 ### RED observados
@@ -108,7 +154,53 @@ exit 0
 O aviso do Material sobre MkDocs 2.0 e a lista de páginas fora do `nav` são os
 mesmos avisos informativos já conhecidos; o build strict terminou com sucesso.
 
-O mypy focado foi executado com `--explicit-package-bases` sobre
+### Evidência final da Fix Round 1
+
+Os ciclos RED→GREEN adicionais cobriram, separadamente, fingerprint/autoria,
+delta mascarado e momento, relógio de trial, domínios e coerência SQL, trigger
+tenant, expansão automática, PATCH ocupacional, encerramento/invalidação,
+cancelamento contratual e reversibilidade da migration. Entre os REDs
+observados estiveram 8 falhas de fingerprint/delta, 1 de relógio de trial, 16
+de invariantes SQL, 3 de PATCH ocupacional, 2 de integração do encerramento e
+4 de cancelamento/transição; cada grupo foi reexecutado verde antes da
+regressão ampliada.
+
+```text
+models + integrações de assinatura                         57 passed
+encerramento/API focado                                    21 passed
+assinaturas + organizações (inclui migration/concurrency) 317 passed
+suíte global com cobertura                               1592 passed, 1 warning
+cobertura global                                            90%
+
+uv run ruff check .
+All checks passed!
+
+uv run ruff format --check .
+388 files already formatted
+
+uv run python manage.py makemigrations --check --dry-run
+No changes detected
+
+uv run python manage.py check
+System check identified no issues (2 silenced)
+
+uv run mkdocs build --strict
+exit 0
+
+uv run python scripts/check_version.py
+Versões alinhadas: 0.1.0
+
+git diff --check
+exit 0
+```
+
+O mypy focado com `--explicit-package-bases` detectou inicialmente cinco
+diagnósticos locais novos e eles foram eliminados. A checagem final não aponta
+erro direto em linha alterada; restam somente dois diagnósticos diretos nas
+linhas preexistentes 63 e 126 de `apps/organizacoes/views.py`, além da dívida
+transitiva já documentada no projeto.
+
+Na entrega inicial, o mypy focado foi executado com `--explicit-package-bases` sobre
 `apps/assinaturas` e `apps/organizacoes/memberships.py`: permaneceu exatamente
 no baseline conhecido de 73 diagnósticos preexistentes nos módulos importados,
 sem diagnóstico nos arquivos alterados pela Task 9. A invocação global sem
