@@ -4,7 +4,9 @@ from rest_framework import serializers
 
 from apps.api.core.errors import APIError
 from apps.organizacoes.errors import OrganizationErrorCode
-from apps.organizacoes.models import Convite, Organizacao, Papel, Time, Vinculo
+from apps.organizacoes.memberships import Vinculos
+from apps.organizacoes.models import Convite, Organizacao, Time, Vinculo
+from apps.organizacoes.organizations import Organizacoes
 
 
 class UsuarioResumoSerializer(serializers.Serializer):
@@ -40,12 +42,8 @@ class OrganizacaoSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         usuario = self.context["request"].user
         with transaction.atomic():
-            organizacao = Organizacao.objects.create(**validated_data)
-            Vinculo.objects.create(
-                organizacao=organizacao,
-                usuario=usuario,
-                papel=Papel.PROPRIETARIO,
-            )
+            organizacao = Organizacoes.criar(**validated_data)
+            Vinculos.criar_proprietario(organizacao, usuario)
         return organizacao
 
 
@@ -122,6 +120,11 @@ class ConviteCreateSerializer(ConviteSerializer):
             )
         return papel
 
+    def create(self, validated_data):
+        organizacao_id = validated_data.pop("organizacao_id")
+        organizacao = Organizacao.objects.get(pk=organizacao_id)
+        return Vinculos.criar_convite(organizacao=organizacao, **validated_data)
+
 
 class AceitarConviteSerializer(serializers.Serializer):
     token = serializers.CharField()
@@ -152,4 +155,4 @@ class AceitarConviteSerializer(serializers.Serializer):
     def save(self, **kwargs):
         convite = self.validated_data["token"]
         usuario = self.context["request"].user
-        return convite.aceitar(usuario)
+        return Vinculos.aceitar_convite(convite, usuario)

@@ -54,8 +54,9 @@ def test_exclui_campos_tecnicos_e_credenciais_sem_mutar_a_configuracao_global():
         # Cifrado em repouso: `sensitive_fields` exclui do auditlog automaticamente.
         "phone_number",
     }
-    for model in (Organizacao, Time, Vinculo):
+    for model in (Time, Vinculo):
         assert auditlog.get_model_fields(model)["exclude_fields"] == [*campos_base, "is_deleted"]
+    assert auditlog.get_model_fields(Organizacao)["exclude_fields"] == [*campos_base, "is_deleted", "email_faturamento"]
     assert auditlog.get_model_fields(Convite)["exclude_fields"] == [*campos_base, "is_deleted", "email", "token"]
     assert auditlog.get_model_fields(IdentidadeExterna)["exclude_fields"] == [*campos_base, "is_deleted", "identificador"]
     assert auditlog.get_model_fields(TokenMetaData)["exclude_fields"] == campos_base
