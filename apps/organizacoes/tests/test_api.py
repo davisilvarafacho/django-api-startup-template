@@ -176,8 +176,8 @@ def test_header_de_organizacao_ausente_retorna_422():
     response = client_autenticado(usuario).get("/times/")
 
     assert response.status_code == 422
-    assert response.data["errors"][0]["code"] == "organizations.header_required"
-    assert response.data["errors"][0]["field"] == "X-Organization"
+    assert response.json()["errors"][0]["code"] == "organizations.header_required"
+    assert response.json()["errors"][0]["field"] == "X-Organization"
 
 
 def test_usuario_sem_vinculo_ativo_na_organizacao_retorna_403():
@@ -190,7 +190,7 @@ def test_usuario_sem_vinculo_ativo_na_organizacao_retorna_403():
     )
 
     assert response.status_code == 403
-    assert response.data["errors"][0]["code"] == "organizations.membership_required"
+    assert response.json()["errors"][0]["code"] == "organizations.membership_required"
 
 
 def test_papel_insuficiente_para_criar_time_retorna_403():

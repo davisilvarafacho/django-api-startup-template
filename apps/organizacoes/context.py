@@ -7,13 +7,72 @@ a cada transação: um `SET` de sessão poderia vazar para outro cliente, um
 `SET LOCAL` morre no commit.
 """
 
+from __future__ import annotations
+
 from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Protocol
 
 from django.db import transaction
 
 from django_rls.context import clear_rls_context, set_rls_context
 
 CHAVE_TENANT = "tenant_id"
+
+if TYPE_CHECKING:
+    from apps.organizacoes.models import Organizacao, Vinculo
+
+
+@dataclass(frozen=True, slots=True)
+class ContextoOrganizacao:
+    """Fatos de tenant validados antes da view.
+
+    Os campos comerciais serão adicionados com os tipos reais na Task 11. Até
+    lá o contexto contém somente entidades existentes e preserva os aliases do
+    antigo ``TenantAccess`` consumidos pelas views e serializers.
+    """
+
+    organizacao: Organizacao
+    vinculo: Vinculo | None
+
+    @property
+    def organization_id(self) -> int:
+        return self.organizacao.pk
+
+    @property
+    def organization_slug(self) -> str:
+        return self.organizacao.slug
+
+    @property
+    def membership_id(self) -> int | None:
+        return self.vinculo.pk if self.vinculo is not None else None
+
+    @property
+    def role(self) -> int | None:
+        return self.vinculo.papel if self.vinculo is not None else None
+
+    def has_minimum_role(self, minimum_role: int) -> bool:
+        return self.vinculo is not None and self.vinculo.papel >= minimum_role
+
+
+class PoliticaComercialTenant(Protocol):
+    """Contrato fechado para a política comercial ativada na Task 11."""
+
+    def __call__(
+        self,
+        contexto: ContextoOrganizacao,
+        *,
+        regularizacao_assinatura: bool,
+    ) -> ContextoOrganizacao: ...
+
+
+def manter_acesso_comercial_atual(
+    contexto: ContextoOrganizacao,
+    *,
+    regularizacao_assinatura: bool,
+) -> ContextoOrganizacao:
+    """Preserva o comportamento atual até existirem os tipos comerciais reais."""
+    return contexto
 
 
 def definir_organizacao_atual(organizacao_id):

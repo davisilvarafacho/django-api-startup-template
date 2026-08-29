@@ -1,4 +1,7 @@
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
+
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 
 from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory, force_authenticate
@@ -7,6 +10,7 @@ import pytest
 
 from apps.api.core.errors import APIError
 from apps.organizacoes.access import TenantAccessResolver
+from apps.organizacoes.context import ContextoOrganizacao
 from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.middleware import OrganizacaoMiddleware
 from apps.organizacoes.models import Organizacao, Papel, Time, Vinculo
@@ -20,20 +24,19 @@ from tests.support.usuarios import criar_usuario
 
 
 @pytest.mark.django_db
-def test_tenant_permission_sets_request_tenant_and_rls_context():
+def test_tenant_permission_consumes_prepared_context_without_database(django_assert_num_queries):
     user = criar_usuario()
     organization = Organizacao.objects.create(nome="Acme", slug="acme")
     membership = Vinculo.objects.create(usuario=user, organizacao=organization, papel=Papel.GESTOR)
     raw_request = APIRequestFactory().get("/times/", HTTP_X_ORGANIZATION="acme")
     force_authenticate(raw_request, user=user)
     request = Request(raw_request)
-    request.organizacao_slug = "acme"
+    request.tenant = ContextoOrganizacao(organizacao=organization, vinculo=membership)
 
-    with patch("apps.organizacoes.permissions.definir_organizacao_atual") as define_rls:
+    with django_assert_num_queries(0):
         assert TenantPermission().has_permission(request, TimeViewSet()) is True
 
-    assert request.tenant == TenantAccess(organization.pk, "acme", membership.pk, Papel.GESTOR)
-    define_rls.assert_called_once_with(request.tenant.organization_id)
+    assert request.tenant.organization_id == organization.pk
 
 
 def test_papel_minimo_permission_reads_tenant_dataclass():
@@ -60,16 +63,17 @@ def test_papel_minimo_rule_reuses_tenant_resolver(monkeypatch):
 
 
 @pytest.mark.django_db
-def test_tenant_permission_denies_cached_missing_membership():
+def test_middleware_resolves_missing_membership_once_per_request():
     user = criar_usuario()
     client = client_autenticado(user)
 
     first = client.get("/times/", HTTP_X_ORGANIZATION="missing")
-    with patch("apps.organizacoes.access.TenantAccessResolver._load", wraps=TenantAccessResolver._load) as loader:
+    with CaptureQueriesContext(connection) as queries:
         second = client.get("/times/", HTTP_X_ORGANIZATION="missing")
 
     assert first.status_code == second.status_code == 403
-    loader.assert_not_called()
+    selects_de_vinculo = [query for query in queries if 'FROM "vinculo"' in query["sql"]]
+    assert len(selects_de_vinculo) == 1
 
 
 @pytest.mark.django_db
@@ -113,7 +117,7 @@ def test_convite_serializer_compares_tenant_role():
 
 
 @pytest.mark.django_db
-def test_middleware_initializes_only_request_tenant():
+def test_middleware_initializes_only_request_tenant_on_public_route():
     seen = {}
 
     def response(request):
@@ -122,7 +126,7 @@ def test_middleware_initializes_only_request_tenant():
         seen["has_vinculo"] = hasattr(request, "vinculo")
         return Mock()
 
-    request = APIRequestFactory().get("/times/", HTTP_X_ORGANIZATION="acme")
+    request = APIRequestFactory().get("/health/")
     OrganizacaoMiddleware(response)(request)
 
     assert seen == {"tenant": None, "has_organizacao": False, "has_vinculo": False}

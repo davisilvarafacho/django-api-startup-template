@@ -158,6 +158,20 @@ def test_api_key_com_responsavel_sem_vinculo_na_organizacao_e_recusada():
     assert instance.suspended_at is not None
 
 
+@pytest.mark.parametrize("estado", [{"is_active": False}, {"is_deleted": True}])
+def test_api_key_de_organizacao_inativa_e_recusada_sem_trocar_tenant(estado):
+    usuario = criar_usuario()
+    organizacao = _organizacao("org-tenancy-inativa")
+    _vincular(usuario, organizacao)
+    client = _client_com_api_key(responsavel=usuario, organizacao=organizacao)
+    Organizacao.all_objects.filter(pk=organizacao.pk).update(**estado)
+
+    response = client.get("/times/")
+
+    assert response.status_code == 403
+    assert response.json()["errors"][0]["code"] == "organizations.organization_inactive"
+
+
 def test_api_key_ignora_permissions_pessoais_do_responsavel():
     """Sem scope de create, uma API key não cria Time mesmo que o responsável tenha papel de gestor."""
     usuario = criar_usuario()

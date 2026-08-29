@@ -529,8 +529,8 @@ def revoke_organization_api_keys(organization, *, actor=None, revoked_at=None, u
 def ensure_api_key_still_valid(token):
     """Suspende automática e idempotentemente uma API key sem responsável ativo/vinculado.
 
-    Chamado a cada request tenant-scoped (`TenantPermission`, onde o vínculo já
-    é resolvido): fail-closed materializado, não só recusado na hora.
+    Chamado pelo `OrganizacaoMiddleware` em cada request de API key: fail-closed
+    materializado, não só recusado na hora.
     """
     if token.type != TokenType.API_KEY or token.suspended_at is not None or token.revoked_at is not None:
         return token

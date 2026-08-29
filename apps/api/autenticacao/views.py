@@ -269,6 +269,7 @@ class LoginView(APIView):
                 )
 
 
+@no_tenancy
 class ReauthenticateView(APIView):
     """Confirma a identidade da sessão atual (step-up auth).
 
@@ -306,6 +307,7 @@ class SessionScopedViewMixin:
     session_only = True
 
 
+@no_tenancy
 class SessionViewSet(
     SessionScopedViewMixin,
     mixins.ListModelMixin,
@@ -356,6 +358,7 @@ class SessionViewSet(
         return Response({"revoked_count": revoked_count})
 
 
+@no_tenancy
 class LogoutView(APIView):
     """Revoga logicamente só a sessão atual; nunca API keys/reset."""
 
@@ -376,6 +379,7 @@ class LogoutView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+@no_tenancy
 class LogoutAllView(APIView):
     """Revoga logicamente todas as sessões do usuário, incluindo a atual."""
 

@@ -10,7 +10,7 @@ class OrganizacoesConfig(AppConfig):
         from apps.organizacoes.routes import tenant_free_registry
 
         # Varre os BUSINESS_APPS atrás de `tenant_free_routes.TENANT_FREE_ROUTES`.
-        # Sem isso a TenantPermission falha alto ao ser consultada.
+        # Sem isso o middleware não reconhece as isenções declarativas.
         tenant_free_registry.discover()
 
         from internal_frameworks.permission_cache.signals.tenant import connect_tenant_signals
