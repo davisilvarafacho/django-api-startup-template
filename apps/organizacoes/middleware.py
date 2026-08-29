@@ -1,6 +1,7 @@
 """Ponto único de resolução do tenant antes da view."""
 
 from django.db import transaction
+from django.db.models import Case, IntegerField, Value, When
 
 from django_rls.context import clear_rls_context
 
@@ -99,7 +100,18 @@ class OrganizacaoMiddleware:
         if user is None or not user.is_authenticated:
             return
 
-        vinculo = Vinculo.objects.select_related("organizacao").filter(usuario_id=user.pk, organizacao__slug=slug).first()
+        prioridade_organizacao = Case(
+            When(organizacao__is_deleted=False, organizacao__is_active=True, then=Value(0)),
+            When(organizacao__is_deleted=False, then=Value(1)),
+            default=Value(2),
+            output_field=IntegerField(),
+        )
+        vinculo = (
+            Vinculo.objects.select_related("organizacao")
+            .filter(usuario_id=user.pk, organizacao__slug=slug)
+            .order_by(prioridade_organizacao, "organizacao_id", "pk")
+            .first()
+        )
         if vinculo is None:
             raise APIError(
                 OrganizationErrorCode.MEMBERSHIP_REQUIRED,

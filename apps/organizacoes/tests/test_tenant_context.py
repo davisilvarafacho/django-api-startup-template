@@ -92,6 +92,98 @@ def test_middleware_resolve_sessao_em_uma_query_e_mantem_transacao_ate_a_respost
     assert context.CHAVE_TENANT not in get_active_rls_context()
 
 
+@pytest.mark.django_db(transaction=True)
+def test_middleware_prioriza_vinculo_da_organizacao_atual_quando_slug_foi_reutilizado():
+    usuario = criar_usuario()
+    organizacao_antiga = Organizacao.objects.create(nome="Acme antiga", slug="acme")
+    vinculo_antigo = Vinculo.objects.create(
+        usuario=usuario,
+        organizacao=organizacao_antiga,
+        papel=Papel.PROPRIETARIO,
+    )
+    organizacao_antiga.is_active = False
+    organizacao_antiga.is_deleted = True
+    organizacao_antiga.save(update_fields=["is_active", "is_deleted"])
+    vinculo_antigo.is_active = False
+    vinculo_antigo.save(update_fields=["is_active"])
+
+    organizacao_atual = Organizacao.objects.create(nome="Acme atual", slug="acme")
+    vinculo_atual = Vinculo.objects.create(
+        usuario=usuario,
+        organizacao=organizacao_atual,
+        papel=Papel.MEMBRO,
+    )
+    observado = {}
+
+    def responder(request):
+        observado["tenant"] = request.tenant
+        observado["rls"] = get_active_rls_context().get(context.CHAVE_TENANT)
+        return HttpResponse()
+
+    request = APIRequestFactory().get("/times/", **{META_HEADER_ORGANIZACAO: "acme"})
+    request.user = usuario
+
+    with CaptureQueriesContext(connection) as queries:
+        response = OrganizacaoMiddleware(responder)(request)
+
+    assert response.status_code == 200
+    assert observado == {
+        "tenant": context.ContextoOrganizacao(organizacao=organizacao_atual, vinculo=vinculo_atual),
+        "rls": str(organizacao_atual.pk),
+    }
+    selects_de_vinculo = [query for query in queries if 'FROM "vinculo"' in query["sql"]]
+    assert len(selects_de_vinculo) == 1
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("cenario", "codigo"),
+    [
+        ("sem_vinculo_atual", "organizations.organization_inactive"),
+        ("vinculo_atual_inativo", "organizations.membership_inactive"),
+        ("organizacao_atual_inativa", "organizations.organization_inactive"),
+        ("usuario_alheio_organizacao_atual_inativa", "organizations.membership_required"),
+    ],
+)
+def test_middleware_preserva_precisao_sem_enumerar_slug_reutilizado(cenario, codigo):
+    usuario = criar_usuario()
+    outro_usuario = criar_usuario() if cenario == "usuario_alheio_organizacao_atual_inativa" else usuario
+
+    organizacao_antiga = Organizacao.objects.create(nome="Acme antiga", slug="acme")
+    Vinculo.objects.create(
+        usuario=outro_usuario,
+        organizacao=organizacao_antiga,
+        papel=Papel.PROPRIETARIO,
+        is_active=False,
+    )
+    organizacao_antiga.is_active = False
+    organizacao_antiga.is_deleted = True
+    organizacao_antiga.save(update_fields=["is_active", "is_deleted"])
+
+    organizacao_atual = Organizacao.objects.create(nome="Acme atual", slug="acme")
+    if cenario != "sem_vinculo_atual":
+        Vinculo.objects.create(
+            usuario=outro_usuario,
+            organizacao=organizacao_atual,
+            papel=Papel.MEMBRO,
+            is_active=cenario != "vinculo_atual_inativo",
+        )
+    if cenario in {"organizacao_atual_inativa", "usuario_alheio_organizacao_atual_inativa"}:
+        organizacao_atual.is_active = False
+        organizacao_atual.save(update_fields=["is_active"])
+
+    request = APIRequestFactory().get("/times/", **{META_HEADER_ORGANIZACAO: "acme"})
+    request.user = usuario
+
+    with CaptureQueriesContext(connection) as queries:
+        response = OrganizacaoMiddleware(lambda request: HttpResponse())(request)
+
+    assert response.status_code == 403
+    assert _error_code(response) == codigo
+    selects_de_vinculo = [query for query in queries if 'FROM "vinculo"' in query["sql"]]
+    assert len(selects_de_vinculo) == 1
+
+
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     ("cenario", "codigo"),
