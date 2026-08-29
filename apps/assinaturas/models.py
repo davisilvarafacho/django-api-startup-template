@@ -1,11 +1,13 @@
-"""Catálogo comercial global, versionado e imutável após publicação."""
+"""Catálogo global e contratos tenantizados de assinatura."""
 
+from django.conf import settings
 from django.core.validators import RegexValidator
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
 from apps.api.base.models import (
     ActiveManagerMixin,
+    Base,
     BaseQuerySet,
     BaseTenantless,
     DeferredFieldsManagerMixin,
@@ -19,6 +21,47 @@ class Periodicidade(models.IntegerChoices):
 
     MENSAL = 10, _("Mensal")
     ANUAL = 20, _("Anual")
+
+
+class StatusAssinatura(models.IntegerChoices):
+    PENDENTE = 10, _("Pendente")
+    EM_TRIAL = 20, _("Em trial")
+    ATIVA = 30, _("Ativa")
+    ENCERRADA = 40, _("Encerrada")
+
+
+class StatusFinanceiro(models.IntegerChoices):
+    ISENTO = 10, _("Isento")
+    PENDENTE = 20, _("Pendente")
+    REGULAR = 30, _("Regular")
+    INADIMPLENTE = 40, _("Inadimplente")
+    IRRECUPERAVEL = 50, _("Irrecuperável")
+
+
+class PoliticaTrial(models.IntegerChoices):
+    SEM_FORMA_PAGAMENTO = 10, _("Sem forma de pagamento")
+    COM_FORMA_PAGAMENTO = 20, _("Com forma de pagamento")
+
+
+class TipoAlteracaoAssinatura(models.IntegerChoices):
+    UPGRADE_PLANO = 10, _("Upgrade de plano")
+    AUMENTO_SEATS = 20, _("Aumento de seats")
+    DOWNGRADE_PLANO = 30, _("Downgrade de plano")
+    REDUCAO_SEATS = 40, _("Redução de seats")
+    MUDANCA_PERIODICIDADE = 50, _("Mudança de periodicidade")
+
+
+class MomentoAplicacaoAlteracaoAssinatura(models.IntegerChoices):
+    IMEDIATA = 10, _("Imediata")
+    PROXIMO_CICLO = 20, _("Próximo ciclo")
+
+
+class StatusAlteracaoAssinatura(models.IntegerChoices):
+    SOLICITADA = 10, _("Solicitada")
+    AGUARDANDO_GATEWAY = 20, _("Aguardando gateway")
+    CONFIRMADA = 30, _("Confirmada")
+    FALHOU = 40, _("Falhou")
+    CANCELADA = 50, _("Cancelada")
 
 
 CAMPOS_OPERACIONAIS_VERSAO = frozenset({"atual", "is_active", "last_modified_at"})
@@ -146,6 +189,111 @@ class PrecosPlanoAtivosManager(
     ExcludeDeletedManagerMixin,
     DeferredFieldsManagerMixin,
     PrecosPlanoQuerySetManager,
+):
+    pass
+
+
+class AssinaturasOrganizacaoQuerySet(BaseQuerySet):
+    """Mantém snapshots de recursos completos também em escritas em lote."""
+
+    def update(self, **kwargs):
+        if "recursos" in kwargs:
+            kwargs["recursos"] = _materializar_recursos(kwargs["recursos"])
+        return super().update(**kwargs)
+
+    def bulk_create(
+        self,
+        objs,
+        batch_size=None,
+        ignore_conflicts=False,
+        update_conflicts=False,
+        update_fields=None,
+        unique_fields=None,
+    ):
+        objetos = tuple(objs)
+        for objeto in objetos:
+            objeto.recursos = _materializar_recursos(objeto.recursos)
+        return super().bulk_create(
+            objetos,
+            batch_size=batch_size,
+            ignore_conflicts=ignore_conflicts,
+            update_conflicts=update_conflicts,
+            update_fields=update_fields,
+            unique_fields=unique_fields,
+        )
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        objetos = tuple(objs)
+        if "recursos" in fields:
+            for objeto in objetos:
+                objeto.recursos = _materializar_recursos(objeto.recursos)
+        return super().bulk_update(objetos, fields, batch_size=batch_size)
+
+
+CAMPOS_PROCESSAMENTO_ALTERACAO = frozenset(
+    {
+        "status",
+        "processada_em",
+        "aplicada_em",
+        "evento_gateway",
+        "falha_codigo",
+        "falha_mensagem",
+        "revisao_aplicada",
+        "revisao_observada",
+        "ignorada_em",
+        "last_modified_at",
+    }
+)
+
+
+class AlteracoesAssinaturaQuerySet(BaseQuerySet):
+    """Impede que pedido e snapshots históricos sejam reescritos pelo ORM."""
+
+    def update(self, **kwargs):
+        if set(kwargs) - CAMPOS_PROCESSAMENTO_ALTERACAO:
+            raise ValueError("Pedido e snapshots da alteração são imutáveis.")
+        return super().update(**kwargs)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        if set(fields) - CAMPOS_PROCESSAMENTO_ALTERACAO:
+            raise ValueError("Pedido e snapshots da alteração são imutáveis.")
+        return super().bulk_update(tuple(objs), fields, batch_size=batch_size)
+
+
+AssinaturasOrganizacaoQuerySetManager = models.Manager.from_queryset(AssinaturasOrganizacaoQuerySet)
+AlteracoesAssinaturaQuerySetManager = models.Manager.from_queryset(AlteracoesAssinaturaQuerySet)
+
+
+class AssinaturasOrganizacaoManager(ExcludeDeletedManagerMixin, DeferredFieldsManagerMixin, AssinaturasOrganizacaoQuerySetManager):
+    pass
+
+
+class TodasAssinaturasOrganizacaoManager(DeferredFieldsManagerMixin, AssinaturasOrganizacaoQuerySetManager):
+    pass
+
+
+class AssinaturasOrganizacaoAtivasManager(
+    ActiveManagerMixin,
+    ExcludeDeletedManagerMixin,
+    DeferredFieldsManagerMixin,
+    AssinaturasOrganizacaoQuerySetManager,
+):
+    pass
+
+
+class AlteracoesAssinaturaManager(ExcludeDeletedManagerMixin, DeferredFieldsManagerMixin, AlteracoesAssinaturaQuerySetManager):
+    pass
+
+
+class TodasAlteracoesAssinaturaManager(DeferredFieldsManagerMixin, AlteracoesAssinaturaQuerySetManager):
+    pass
+
+
+class AlteracoesAssinaturaAtivasManager(
+    ActiveManagerMixin,
+    ExcludeDeletedManagerMixin,
+    DeferredFieldsManagerMixin,
+    AlteracoesAssinaturaQuerySetManager,
 ):
     pass
 
@@ -288,6 +436,288 @@ class PrecoPlano(BaseTenantless):
         ]
 
 
+class AssinaturaOrganizacao(Base):
+    """Snapshot corrente dos termos contratuais de uma organização."""
+
+    versao_plano = models.ForeignKey(
+        VersaoPlano,
+        verbose_name=_("versão do plano"),
+        on_delete=models.PROTECT,
+        related_name="assinaturas_organizacoes",
+        null=True,
+        blank=True,
+    )
+    status = models.PositiveSmallIntegerField(_("status"), choices=StatusAssinatura.choices)
+    status_financeiro = models.PositiveSmallIntegerField(_("status financeiro"), choices=StatusFinanceiro.choices)
+    revisao = models.PositiveSmallIntegerField(_("revisão"), default=1)
+    periodicidade = models.PositiveSmallIntegerField(_("periodicidade"), choices=Periodicidade.choices)
+    moeda = models.CharField(
+        _("moeda"),
+        max_length=3,
+        validators=[RegexValidator(regex=r"^[A-Z]{3}$", message=_("Informe três letras maiúsculas."))],
+    )
+    valor_base_centavos = models.PositiveBigIntegerField(_("valor base em centavos"))
+    valor_seat_centavos = models.PositiveBigIntegerField(_("valor por seat em centavos"))
+    seats_inclusos = models.PositiveSmallIntegerField(_("seats inclusos"), default=0)
+    seats_contratados = models.PositiveSmallIntegerField(_("seats contratados"), default=0)
+    expansao_automatica_seats = models.BooleanField(_("expansão automática de seats"), default=False)
+    recursos = models.JSONField(_("recursos"), default=dict)
+    politica_trial = models.PositiveSmallIntegerField(_("política de trial"), choices=PoliticaTrial.choices, null=True, blank=True)
+    trial_iniciado_em = models.DateTimeField(_("trial iniciado em"), null=True, blank=True)
+    trial_termina_em = models.DateTimeField(_("trial termina em"), null=True, blank=True)
+    periodo_atual_iniciado_em = models.DateTimeField(_("período atual iniciado em"), null=True, blank=True)
+    periodo_atual_termina_em = models.DateTimeField(_("período atual termina em"), null=True, blank=True)
+    carencia_pagamento_dias = models.PositiveSmallIntegerField(_("carência de pagamento em dias"), default=0)
+    carencia_pagamento_iniciada_em = models.DateTimeField(_("carência de pagamento iniciada em"), null=True, blank=True)
+    carencia_pagamento_termina_em = models.DateTimeField(_("carência de pagamento termina em"), null=True, blank=True)
+    carencia_excesso_seats_dias = models.PositiveSmallIntegerField(_("carência de excesso de seats em dias"), default=0)
+    carencia_excesso_seats_iniciada_em = models.DateTimeField(_("carência de excesso de seats iniciada em"), null=True, blank=True)
+    carencia_excesso_seats_termina_em = models.DateTimeField(_("carência de excesso de seats termina em"), null=True, blank=True)
+    cancelamento_agendado_para = models.DateTimeField(_("cancelamento agendado para"), null=True, blank=True)
+    encerrada_em = models.DateTimeField(_("encerrada em"), null=True, blank=True)
+    motivo_encerramento = models.CharField(_("motivo do encerramento"), max_length=100, null=True, blank=True)
+    chave_idempotencia = models.CharField(_("chave de idempotência"), max_length=120)
+
+    objects = AssinaturasOrganizacaoManager()  # type: ignore[misc, assignment]
+    all_objects = TodasAssinaturasOrganizacaoManager()  # type: ignore[misc, assignment]
+    ativos = AssinaturasOrganizacaoAtivasManager()  # type: ignore[misc, assignment]
+
+    def save(self, *args, **kwargs):
+        campos_atualizados = set(kwargs["update_fields"]) if kwargs.get("update_fields") is not None else None
+        if self._state.adding or campos_atualizados is None or "recursos" in campos_atualizados:
+            self.recursos = _materializar_recursos(self.recursos)
+        return super().save(*args, **kwargs)
+
+    def clean(self):
+        super().clean()
+        self.recursos = _materializar_recursos(self.recursos)
+
+    @property
+    def seats_cobrados(self) -> int:
+        return max(0, self.seats_contratados - self.seats_inclusos)
+
+    @property
+    def total_centavos(self) -> int:
+        return self.valor_base_centavos + self.seats_cobrados * self.valor_seat_centavos
+
+    def __str__(self):
+        return f"Assinatura #{self.pk or 'nova'} @ {self.organizacao_id}"
+
+    class Meta:
+        base_manager_name = "all_objects"
+        db_table = "assinatura_organizacao"
+        ordering = ("-created_at", "-pk")
+        verbose_name = _("Assinatura da organização")
+        verbose_name_plural = _("Assinaturas das organizações")
+        indexes = [models.Index(fields=("organizacao", "status"), name="assinatura_org_status_idx")]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(versao_plano__isnull=False),
+                name="assinatura_origem_catalogo_exige_versao",
+            ),
+            models.UniqueConstraint(
+                fields=("organizacao", "chave_idempotencia"),
+                name="assinatura_org_chave_idempotencia_unica",
+            ),
+            models.UniqueConstraint(
+                fields=("organizacao",),
+                condition=models.Q(status__in=(StatusAssinatura.PENDENTE, StatusAssinatura.EM_TRIAL, StatusAssinatura.ATIVA)),
+                name="assinatura_org_contrato_corrente_unico",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(status=StatusAssinatura.ENCERRADA, encerrada_em__isnull=False, motivo_encerramento__isnull=False)
+                    & ~models.Q(motivo_encerramento="")
+                )
+                | (~models.Q(status=StatusAssinatura.ENCERRADA) & models.Q(encerrada_em__isnull=True, motivo_encerramento__isnull=True)),
+                name="assinatura_encerramento_coerente",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        status=StatusAssinatura.EM_TRIAL,
+                        politica_trial__isnull=False,
+                        trial_iniciado_em__isnull=False,
+                        trial_termina_em__isnull=False,
+                        trial_iniciado_em__lt=models.F("trial_termina_em"),
+                    )
+                    | (
+                        models.Q(status__in=(StatusAssinatura.ATIVA, StatusAssinatura.ENCERRADA))
+                        & (
+                            models.Q(politica_trial__isnull=True, trial_iniciado_em__isnull=True, trial_termina_em__isnull=True)
+                            | models.Q(
+                                politica_trial__isnull=False,
+                                trial_iniciado_em__isnull=False,
+                                trial_termina_em__isnull=False,
+                                trial_iniciado_em__lt=models.F("trial_termina_em"),
+                            )
+                        )
+                    )
+                    | models.Q(
+                        status=StatusAssinatura.PENDENTE,
+                        politica_trial__isnull=True,
+                        trial_iniciado_em__isnull=True,
+                        trial_termina_em__isnull=True,
+                    )
+                ),
+                name="assinatura_trial_coerente",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(periodo_atual_iniciado_em__isnull=True, periodo_atual_termina_em__isnull=True)
+                    | models.Q(
+                        periodo_atual_iniciado_em__isnull=False,
+                        periodo_atual_termina_em__isnull=False,
+                        periodo_atual_iniciado_em__lt=models.F("periodo_atual_termina_em"),
+                    )
+                ),
+                name="assinatura_periodo_atual_coerente",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(carencia_pagamento_iniciada_em__isnull=True, carencia_pagamento_termina_em__isnull=True)
+                    | models.Q(
+                        carencia_pagamento_iniciada_em__isnull=False,
+                        carencia_pagamento_termina_em__isnull=False,
+                        carencia_pagamento_iniciada_em__lte=models.F("carencia_pagamento_termina_em"),
+                    )
+                ),
+                name="assinatura_carencia_pagamento_coerente",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(carencia_excesso_seats_iniciada_em__isnull=True, carencia_excesso_seats_termina_em__isnull=True)
+                    | models.Q(
+                        carencia_excesso_seats_iniciada_em__isnull=False,
+                        carencia_excesso_seats_termina_em__isnull=False,
+                        carencia_excesso_seats_iniciada_em__lte=models.F("carencia_excesso_seats_termina_em"),
+                    )
+                ),
+                name="assinatura_carencia_seats_coerente",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(status=StatusAssinatura.PENDENTE, status_financeiro=StatusFinanceiro.PENDENTE)
+                    | models.Q(status=StatusAssinatura.EM_TRIAL, status_financeiro=StatusFinanceiro.ISENTO)
+                    | models.Q(
+                        status=StatusAssinatura.ATIVA,
+                        status_financeiro__in=(
+                            StatusFinanceiro.ISENTO,
+                            StatusFinanceiro.REGULAR,
+                            StatusFinanceiro.INADIMPLENTE,
+                            StatusFinanceiro.IRRECUPERAVEL,
+                        ),
+                    )
+                    | models.Q(status=StatusAssinatura.ENCERRADA)
+                ),
+                name="assinatura_status_financeiro_coerente",
+            ),
+            models.CheckConstraint(condition=models.Q(moeda__regex=r"^[A-Z]{3}$"), name="assinatura_moeda_iso_maiuscula"),
+            models.CheckConstraint(condition=models.Q(revisao__gte=1), name="assinatura_revisao_positiva"),
+        ]
+
+
+class AlteracaoAssinatura(Base):
+    """Pedido imutável e metadados evolutivos de uma mudança contratual."""
+
+    assinatura = models.ForeignKey(
+        AssinaturaOrganizacao,
+        verbose_name=_("assinatura"),
+        on_delete=models.PROTECT,
+        related_name="alteracoes",
+    )
+    tipo = models.PositiveSmallIntegerField(_("tipo"), choices=TipoAlteracaoAssinatura.choices)
+    momento_aplicacao = models.PositiveSmallIntegerField(_("momento de aplicação"), choices=MomentoAplicacaoAlteracaoAssinatura.choices)
+    status = models.PositiveSmallIntegerField(_("status"), choices=StatusAlteracaoAssinatura.choices, default=StatusAlteracaoAssinatura.SOLICITADA)
+    revisao_esperada = models.PositiveSmallIntegerField(_("revisão esperada"))
+    chave_idempotencia = models.CharField(_("chave de idempotência"), max_length=120)
+    solicitada_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name=_("solicitada por"),
+        on_delete=models.PROTECT,
+        related_name="alteracoes_assinatura_solicitadas",
+        null=True,
+        blank=True,
+    )
+    pedido = models.JSONField(_("pedido"))
+    snapshot_anterior = models.JSONField(_("snapshot anterior"))
+    snapshot_pretendido = models.JSONField(_("snapshot pretendido"))
+    aplicar_em = models.DateTimeField(_("aplicar em"), null=True, blank=True)
+    processada_em = models.DateTimeField(_("processada em"), null=True, blank=True)
+    aplicada_em = models.DateTimeField(_("aplicada em"), null=True, blank=True)
+    evento_gateway = models.CharField(_("evento do gateway"), max_length=255, null=True, blank=True)
+    falha_codigo = models.CharField(_("código da falha"), max_length=100, null=True, blank=True)
+    falha_mensagem = models.CharField(_("mensagem da falha"), max_length=500, null=True, blank=True)
+    revisao_aplicada = models.PositiveSmallIntegerField(_("revisão aplicada"), null=True, blank=True)
+    revisao_observada = models.PositiveSmallIntegerField(_("revisão observada"), null=True, blank=True)
+    ignorada_em = models.DateTimeField(_("ignorada em"), null=True, blank=True)
+
+    objects = AlteracoesAssinaturaManager()  # type: ignore[misc, assignment]
+    all_objects = TodasAlteracoesAssinaturaManager()  # type: ignore[misc, assignment]
+    ativos = AlteracoesAssinaturaAtivasManager()  # type: ignore[misc, assignment]
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            anterior = dict(type(self)._base_manager.filter(pk=self.pk).values().first() or {})
+            if anterior:
+                campos_imutaveis = {
+                    field.name for field in self._meta.concrete_fields if field.name not in CAMPOS_PROCESSAMENTO_ALTERACAO and not field.primary_key
+                }
+                mudou = any(
+                    anterior[field.attname] != getattr(self, field.attname) for field in self._meta.concrete_fields if field.name in campos_imutaveis
+                )
+                if mudou:
+                    raise ValueError("Pedido e snapshots da alteração são imutáveis.")
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"Alteração #{self.pk or 'nova'} da assinatura {self.assinatura_id}"
+
+    class Meta:
+        base_manager_name = "all_objects"
+        db_table = "alteracao_assinatura"
+        ordering = ("-created_at", "-pk")
+        verbose_name = _("Alteração de assinatura")
+        verbose_name_plural = _("Alterações de assinatura")
+        indexes = [models.Index(fields=("organizacao", "assinatura", "status"), name="alteracao_org_ass_status_idx")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("organizacao", "chave_idempotencia"),
+                name="alteracao_org_chave_idempotencia_unica",
+            ),
+            models.CheckConstraint(condition=models.Q(revisao_esperada__gte=1), name="alteracao_revisao_esperada_positiva"),
+            models.CheckConstraint(
+                condition=(models.Q(momento_aplicacao=MomentoAplicacaoAlteracaoAssinatura.IMEDIATA) | models.Q(aplicar_em__isnull=False)),
+                name="alteracao_proximo_ciclo_exige_data",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(aplicada_em__isnull=True, revisao_aplicada__isnull=True)
+                    | models.Q(
+                        aplicada_em__isnull=False,
+                        revisao_aplicada__isnull=False,
+                        status=StatusAlteracaoAssinatura.CONFIRMADA,
+                        revisao_aplicada=models.F("revisao_esperada") + 1,
+                    )
+                ),
+                name="alteracao_aplicacao_coerente",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(ignorada_em__isnull=True, revisao_observada__isnull=True)
+                | models.Q(
+                    ignorada_em__isnull=False,
+                    revisao_observada__isnull=False,
+                    processada_em__isnull=False,
+                    aplicada_em__isnull=True,
+                    status=StatusAlteracaoAssinatura.CONFIRMADA,
+                ),
+                name="alteracao_evento_ignorado_coerente",
+            ),
+        ]
+
+
 register(Plano)
 register(VersaoPlano)
 register(PrecoPlano)
+register(AssinaturaOrganizacao)
+register(AlteracaoAssinatura)

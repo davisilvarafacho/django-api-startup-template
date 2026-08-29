@@ -42,6 +42,16 @@ class Vinculos:
     ) -> Convite:
         with transaction.atomic():
             organizacao = cls._bloquear_organizacao_aberta(organizacao.pk)
+            assinatura, papeis_isentos = cls._bloquear_contrato_corrente(organizacao)
+            if assinatura is not None:
+                ocupacao = cls.calcular_ocupacao(organizacao, papeis_isentos)
+                ocupacao_atual = ocupacao
+                if papel not in papeis_isentos:
+                    ocupacao = OcupacaoSeats(
+                        consumidos=ocupacao.consumidos,
+                        reservados=ocupacao.reservados + 1,
+                    )
+                cls._validar_capacidade(assinatura, ocupacao, contexto_ocupacao=ocupacao_atual)
             dados = {
                 "organizacao": organizacao,
                 "email": email,
@@ -56,10 +66,33 @@ class Vinculos:
     def aceitar_convite(cls, convite: Convite, usuario: Usuario) -> Vinculo:
         """Aceita um convite vivo e cria ou eleva o vínculo do usuário."""
         with transaction.atomic():
-            cls._bloquear_organizacao_aberta(convite.organizacao_id)
+            organizacao = cls._bloquear_organizacao_aberta(convite.organizacao_id)
+            assinatura, papeis_isentos = cls._bloquear_contrato_corrente(organizacao)
             convite_bloqueado = Convite.all_objects.select_for_update().get(pk=convite.pk)
             if not convite_bloqueado.pendente:
                 raise ValidationError(_("Convite expirado ou já utilizado."))
+
+            vinculo_existente = (
+                Vinculo.objects.select_for_update()
+                .filter(
+                    organizacao_id=convite_bloqueado.organizacao_id,
+                    usuario=usuario,
+                )
+                .first()
+            )
+            if assinatura is not None:
+                ocupacao = cls.calcular_ocupacao(organizacao, papeis_isentos)
+                ocupacao_atual = ocupacao
+                papel_anterior = vinculo_existente.papel if vinculo_existente is not None else None
+                papel_pretendido = max(papel_anterior, convite_bloqueado.papel) if papel_anterior is not None else convite_bloqueado.papel
+                consumo_anterior = int(papel_anterior is not None and papel_anterior not in papeis_isentos)
+                consumo_pretendido = int(papel_pretendido not in papeis_isentos)
+                reserva_atual = int(convite_bloqueado.papel not in papeis_isentos)
+                ocupacao = OcupacaoSeats(
+                    consumidos=ocupacao.consumidos - consumo_anterior + consumo_pretendido,
+                    reservados=ocupacao.reservados - reserva_atual,
+                )
+                cls._validar_capacidade(assinatura, ocupacao, contexto_ocupacao=ocupacao_atual)
 
             vinculo, criado = Vinculo.objects.get_or_create(
                 organizacao_id=convite_bloqueado.organizacao_id,
@@ -81,6 +114,26 @@ class Vinculos:
         if organizacao.encerramento_solicitado_em is not None:
             raise APIError(OrganizationErrorCode.CLOSURE_PENDING, status_code=409)
         return organizacao
+
+    @staticmethod
+    def _bloquear_contrato_corrente(organizacao: Organizacao):
+        """Mantém a ordem global organização -> assinatura antes da ocupação."""
+        from apps.assinaturas.subscriptions import Assinaturas
+        from apps.organizacoes.context import organizacao_atual_privilegiada
+
+        with organizacao_atual_privilegiada(organizacao.pk):
+            assinatura = Assinaturas.obter_corrente(organizacao, bloquear=True)
+        if assinatura is None:
+            # Organizações históricas anteriores ao onboarding contratual continuam
+            # operáveis; toda organização nova recebe contrato na mesma transação.
+            return None, frozenset()
+        return assinatura, Assinaturas.papeis_isentos_seat(assinatura)
+
+    @staticmethod
+    def _validar_capacidade(assinatura, ocupacao: OcupacaoSeats, *, contexto_ocupacao: OcupacaoSeats) -> None:
+        from apps.assinaturas.subscriptions import Assinaturas
+
+        Assinaturas.validar_capacidade(assinatura, ocupacao, contexto_ocupacao=contexto_ocupacao)
 
     @classmethod
     def calcular_ocupacao(cls, organizacao: Organizacao, papeis_isentos: frozenset[Papel]) -> OcupacaoSeats:
@@ -108,6 +161,7 @@ class Vinculos:
                 aceito_em__isnull=True,
                 expira_em__gt=timezone.now(),
             )
+            .exclude(papel__in=papeis_isentos)
             .order_by()
             .values("organizacao_id")
             .annotate(total=Count("pk"))

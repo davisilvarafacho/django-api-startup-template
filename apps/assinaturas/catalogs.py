@@ -180,9 +180,19 @@ class CatalogoPlanos:
         cls,
         *,
         codigo: str,
-        periodicidade: Periodicidade,
+        periodicidade: Periodicidade | str,
         moeda: str = "BRL",
     ) -> tuple[VersaoPlano, PrecoPlano]:
+        if isinstance(periodicidade, str):
+            try:
+                periodicidade = {
+                    "mensal": Periodicidade.MENSAL,
+                    "anual": Periodicidade.ANUAL,
+                }[periodicidade]
+            except KeyError as exc:
+                raise ValueError("Periodicidade inicial precisa ser 'mensal' ou 'anual'.") from exc
+        if not isinstance(periodicidade, Periodicidade):
+            raise ValueError("Periodicidade inicial precisa ser uma Periodicidade concreta.")
         plano = Plano.ativos.get(codigo=codigo)
         versao = VersaoPlano.ativos.get(plano=plano, atual=True, publicada_em__isnull=False)
         preco = PrecoPlano.ativos.get(
