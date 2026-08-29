@@ -116,6 +116,26 @@ def test_confirmacao_publica_invalida_usa_erro_generico(api_client):
     assert response.json()["errors"][0]["code"] == "account.reactivation_invalid"
 
 
+@override_settings(ACCOUNT_REACTIVATION_TOKEN_MAX_AGE_SECONDS=3600)
+def test_falha_de_entrega_nao_registra_token_ou_email(monkeypatch, caplog):
+    from apps.usuarios import tasks
+
+    usuario = criar_usuario(email="nao-logar@example.com")
+    Contas.desativar(usuario)
+    token = Contas.solicitar_reativacao(usuario.email)
+
+    def falhar_envio(*args, **kwargs):
+        raise RuntimeError(f"backend incluiu {usuario.email} e {token}")
+
+    monkeypatch.setattr(tasks, "send_mail", falhar_envio)
+    caplog.set_level("ERROR", logger="apps.usuarios.tasks")
+
+    tasks.send_account_reactivation.run(token)
+
+    assert token not in caplog.text
+    assert usuario.email not in caplog.text
+
+
 @override_settings(ACCOUNT_DELETION_GRACE_DAYS=7)
 def test_exclusao_com_mfa_exige_o_segundo_fator_da_reautenticacao(api_client, usuario, django_capture_on_commit_callbacks):
     enrollment = start_enrollment(usuario, MFAFactorType.TOTP)

@@ -61,4 +61,7 @@ def send_account_reactivation(token: str):
             [signed_token.email],
         )
     except Exception:
-        logger.exception("Falha ao enviar reativação de conta", extra={"user_id": signed_token.usuario_id})
+        # Exceções de backends de e-mail podem incluir recipient ou conteúdo da
+        # mensagem. Não anexe traceback/exception: o link assinado nunca pode
+        # chegar ao log.
+        logger.error("Falha ao enviar reativação de conta", extra={"user_id": signed_token.usuario_id})
