@@ -1,3 +1,5 @@
+import json
+
 from django.conf import settings
 from django.core.exceptions import FieldDoesNotExist
 from django.db import models
@@ -52,10 +54,36 @@ def test_exclui_campos_tecnicos_e_credenciais_sem_mutar_a_configuracao_global():
         # Cifrado em repouso: `sensitive_fields` exclui do auditlog automaticamente.
         "phone_number",
     }
-    for model in (Organizacao, Time, Vinculo, Convite):
+    for model in (Organizacao, Time, Vinculo):
         assert auditlog.get_model_fields(model)["exclude_fields"] == [*campos_base, "is_deleted"]
+    assert auditlog.get_model_fields(Convite)["exclude_fields"] == [*campos_base, "is_deleted", "email", "token"]
     assert auditlog.get_model_fields(IdentidadeExterna)["exclude_fields"] == [*campos_base, "is_deleted", "identificador"]
     assert auditlog.get_model_fields(TokenMetaData)["exclude_fields"] == campos_base
+
+
+@pytest.mark.django_db
+def test_novo_log_de_convite_nao_grava_email_ou_token():
+    organizacao = Organizacao.objects.create(nome="Org", slug="convite-sem-pii")
+    convite = Convite.objects.create(
+        organizacao=organizacao,
+        email="convidado-confidencial@example.com",
+        token="token-confidencial-do-convite",
+    )
+
+    registro = LogAlteracao.objects.get_for_object(convite).get()
+    conteudo = json.dumps(
+        {
+            "object_repr": registro.object_repr,
+            "serialized_data": registro.serialized_data,
+            "changes_text": registro.changes_text,
+            "changes": registro.changes,
+            "additional_data": registro.additional_data,
+        },
+        default=str,
+    )
+
+    assert convite.email not in conteudo
+    assert convite.token not in conteudo
 
 
 def test_base_tenantless_define_campos_comuns_sem_organizacao():

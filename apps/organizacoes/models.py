@@ -209,7 +209,7 @@ class Convite(BaseTenantless):
         return vinculo
 
     def __str__(self):
-        return f"{self.email} @ {self.organizacao}"
+        return f"Convite #{self.pk or 'novo'} @ {self.organizacao}"
 
     class Meta:
         db_table = "convite"
@@ -231,4 +231,4 @@ class Convite(BaseTenantless):
 register(Organizacao)
 register(Time)
 register(Vinculo)
-register(Convite)
+register(Convite, exclude_fields=["email", "token"])

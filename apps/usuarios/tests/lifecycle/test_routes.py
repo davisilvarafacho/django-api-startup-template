@@ -1,5 +1,6 @@
 """Contrato HTTP do ciclo de conta."""
 
+import json
 from urllib.parse import parse_qs, urlparse
 
 from django.core import mail
@@ -11,6 +12,7 @@ from rest_framework.test import APIClient
 
 import pyotp
 import pytest
+from celery.signals import before_task_publish
 
 from apps.api.autenticacao.mfa import confirm_enrollment, start_enrollment
 from apps.api.autenticacao.models import AuthToken, MFAFactor, MFAFactorType, TokenMetaData, TokenType
@@ -109,6 +111,46 @@ def test_pedido_publico_nao_enumera_e_confirmacao_reativa_sem_restaurar_vinculo(
     assert vinculo.is_active is False
 
 
+@override_settings(
+    ACCOUNT_REACTIVATION_FRONTEND_URL="https://example.com/reativar",
+    ACCOUNT_REACTIVATION_TOKEN_MAX_AGE_SECONDS=3600,
+    CELERY_BROKER_URL="memory://",
+    CELERY_TASK_ALWAYS_EAGER=False,
+)
+def test_pedido_publica_somente_id_tecnico_e_task_entrega_link_valido(django_capture_on_commit_callbacks, monkeypatch):
+    from apps.usuarios import accounts, tasks
+
+    usuario = criar_usuario(email="segredo-no-broker@example.com")
+    Contas.desativar(usuario)
+    mail.outbox.clear()
+    mensagens = []
+
+    def capturar_mensagem(sender=None, body=None, headers=None, **kwargs):
+        if sender == tasks.send_account_reactivation.name:
+            mensagens.append({"body": body, "headers": headers})
+
+    before_task_publish.connect(capturar_mensagem, weak=False)
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(accounts, "emitir_token_reativacao", lambda conta: "token-secreto-no-broker", raising=False)
+            with django_capture_on_commit_callbacks(execute=True):
+                response = APIClient().post(REACTIVATION_URL, {"email": usuario.email}, format="json")
+    finally:
+        before_task_publish.disconnect(capturar_mensagem)
+
+    mensagem_publicada = json.dumps(mensagens, default=str)
+    assert response.status_code == 202
+    assert mensagens[0]["body"][0] == (usuario.pk,)
+    assert "token-secreto-no-broker" not in mensagem_publicada
+    assert usuario.email not in mensagem_publicada
+
+    tasks.send_account_reactivation.run(usuario.pk)
+    token = _token_from(mail.outbox[0])
+
+    confirmacao = APIClient().post(REACTIVATION_CONFIRM_URL, {"token": token}, format="json")
+    assert confirmacao.status_code == 204
+
+
 def test_confirmacao_publica_invalida_usa_erro_generico(api_client):
     response = api_client.post(REACTIVATION_CONFIRM_URL, {"token": "invalido"}, format="json")
 
@@ -122,17 +164,19 @@ def test_falha_de_entrega_nao_registra_token_ou_email(monkeypatch, caplog):
 
     usuario = criar_usuario(email="nao-logar@example.com")
     Contas.desativar(usuario)
-    token = Contas.solicitar_reativacao(usuario.email)
+    tokens = []
 
     def falhar_envio(*args, **kwargs):
+        token = _token_from(type("Message", (), {"body": args[1]})())
+        tokens.append(token)
         raise RuntimeError(f"backend incluiu {usuario.email} e {token}")
 
     monkeypatch.setattr(tasks, "send_mail", falhar_envio)
     caplog.set_level("ERROR", logger="apps.usuarios.tasks")
 
-    tasks.send_account_reactivation.run(token)
+    tasks.send_account_reactivation.run(usuario.pk)
 
-    assert token not in caplog.text
+    assert tokens[0] not in caplog.text
     assert usuario.email not in caplog.text
 
 

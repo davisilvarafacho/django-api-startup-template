@@ -11,7 +11,7 @@ from apps.api.autenticacao.models import AuthToken, TokenMetaData, TokenType
 from apps.api.core.errors import APIError
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
 from apps.usuarios.accounts import Contas
-from apps.usuarios.emails import emitir_token_verificacao
+from apps.usuarios.emails import emitir_token_reativacao, emitir_token_verificacao
 from apps.usuarios.models import Usuario
 from tests.support.usuarios import criar_usuario
 
@@ -27,7 +27,7 @@ def test_confirmar_reativacao_cancela_exclusao_sem_restaurar_sessoes_ou_vinculos
     TokenMetaData.objects.create(token=sessao)
     Contas.agendar_exclusao(usuario)
 
-    token = Contas.solicitar_reativacao("reativar@example.com")
+    token = emitir_token_reativacao(usuario)
     reativado = Contas.confirmar_reativacao(token)
 
     reativado.refresh_from_db()
@@ -46,7 +46,7 @@ def test_confirmar_reativacao_cancela_exclusao_sem_restaurar_sessoes_ou_vinculos
 def test_confirmacao_depois_da_carencia_e_irreversivel_mesmo_antes_da_task():
     usuario = criar_usuario(email="prazo-vencido@example.com")
     Contas.agendar_exclusao(usuario)
-    token = Contas.solicitar_reativacao(usuario.email)
+    token = emitir_token_reativacao(usuario)
     Usuario.all_objects.filter(pk=usuario.pk).update(exclusao_agendada_para=timezone.now() - timedelta(seconds=1))
 
     with pytest.raises(APIError) as excinfo:

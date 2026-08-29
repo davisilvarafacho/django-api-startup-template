@@ -105,11 +105,11 @@ class AccountReactivationView(APIView):
     def post(self, request):
         serializer = EmailResendSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        token = Contas.solicitar_reativacao(serializer.validated_data["email"])
-        if token is not None:
+        user_id = Contas.solicitar_reativacao(serializer.validated_data["email"])
+        if user_id is not None:
             from .tasks import send_account_reactivation
 
-            transaction.on_commit(lambda: send_account_reactivation.delay(token))
+            transaction.on_commit(lambda: send_account_reactivation.delay(user_id))
         return Response({"detail": REACTIVATION_PUBLIC_DETAIL}, status=status.HTTP_202_ACCEPTED)
 
 

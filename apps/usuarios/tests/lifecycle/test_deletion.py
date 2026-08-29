@@ -9,6 +9,7 @@ from django.test import override_settings
 from django.utils import timezone
 
 import pytest
+from auditlog.context import set_actor
 from celery.schedules import crontab
 
 from apps.api.autenticacao.mfa import create_trusted_device
@@ -23,6 +24,7 @@ from apps.api.autenticacao.models import (
 )
 from apps.api.core.errors import APIError
 from apps.logs.models import LogAlteracao
+from apps.logs.serializers import LogAlteracaoSerpySerializer
 from apps.organizacoes.models import Convite, Organizacao, Papel, Vinculo
 from apps.usuarios import accounts
 from apps.usuarios.accounts import Contas
@@ -83,26 +85,66 @@ def test_unico_proprietario_ativo_nao_pode_agendar_exclusao():
 def test_anonimizacao_vencida_remove_pii_acessos_identidade_vinculos_e_convites():
     email_original = "apagar@example.com"
     sub_original = "google-sub-secreto"
-    usuario = criar_usuario(email=email_original, first_name="Nome", last_name="Sobrenome")
-    usuario.phone_number = "+5511999999999"
+    nome_historico = "PrimeiroNomeHistorico"
+    nome_atual = "PrimeiroNomeAtual"
+    sobrenome = "SobrenomeConfidencial"
+    telefone = "+5511999999999"
+    email_historico_do_ator = "email-historico-do-ator@example.com"
+    usuario = criar_usuario(email=email_original, first_name=nome_historico, last_name=sobrenome)
+    usuario.first_name = nome_atual
+    usuario.phone_number = telefone
     usuario.phone_verified_at = timezone.now()
     usuario.email_verificado_em = timezone.now()
-    usuario.save(update_fields=["phone_number", "phone_verified_at", "email_verificado_em"])
-    organizacao = Organizacao.objects.create(nome="Organização", slug="anonimizacao")
-    vinculo = Vinculo.objects.create(usuario=usuario, organizacao=organizacao, papel=Papel.MEMBRO, is_active=False)
-    convite = Convite.objects.create(organizacao=organizacao, email=email_original)
-    sub_excluido_original = "google-sub-excluido-secreto"
-    identidade_excluida = IdentidadeExterna.objects.create(
-        usuario=usuario,
-        provedor=ProvedorIdentidade.GOOGLE,
-        identificador=sub_excluido_original,
-    )
-    identidade_excluida.delete()
-    identidade = IdentidadeExterna.objects.create(
-        usuario=usuario,
-        provedor=ProvedorIdentidade.GOOGLE,
-        identificador=sub_original,
-    )
+    with set_actor(usuario):
+        usuario.save(update_fields=["first_name", "phone_number", "phone_verified_at", "email_verificado_em"])
+        organizacao = Organizacao.objects.create(nome="Organização Financeira", slug="anonimizacao")
+        vinculo = Vinculo.objects.create(usuario=usuario, organizacao=organizacao, papel=Papel.MEMBRO, is_active=False)
+        convite = Convite.objects.create(organizacao=organizacao, email=email_original, convidado_por=usuario)
+        sub_excluido_original = "google-sub-excluido-secreto"
+        identidade_excluida = IdentidadeExterna.objects.create(
+            usuario=usuario,
+            provedor=ProvedorIdentidade.GOOGLE,
+            identificador=sub_excluido_original,
+        )
+        identidade_excluida.delete()
+        identidade = IdentidadeExterna.objects.create(
+            usuario=usuario,
+            provedor=ProvedorIdentidade.GOOGLE,
+            identificador=sub_original,
+        )
+
+    # Representa uma linha legada, criada pelo auditlog antes das exclusões de
+    # campos sensíveis atuais, para provar a limpeza de todas as colunas livres.
+    log_legado = LogAlteracao.objects.get_for_object(identidade).latest("timestamp")
+    log_legado.actor = usuario
+    log_legado.actor_email = email_original
+    log_legado.object_repr = f"Identidade {sub_original} de {nome_historico}"
+    log_legado.changes = {
+        "identificador": [None, sub_original],
+        "phone_number": [None, telefone],
+        "first_name": [nome_historico, nome_atual],
+        "technical_status": ["pending", "linked"],
+    }
+    log_legado.changes_text = f"{email_original}; {sub_original}; {telefone}"
+    log_legado.serialized_data = {
+        "model": "autenticacao.identidadeexterna",
+        "pk": identidade.pk,
+        "fields": {"identificador": sub_original, "provedor": ProvedorIdentidade.GOOGLE},
+    }
+    log_legado.additional_data = {"email": email_original, "nome": nome_historico, "technical_id": usuario.pk}
+    log_legado.save(update_fields=["actor", "actor_email", "object_repr", "changes", "changes_text", "serialized_data", "additional_data"])
+
+    log_financeiro = LogAlteracao.objects.get_for_object(organizacao).latest("timestamp")
+    log_financeiro.actor_email = email_historico_do_ator
+    log_financeiro.additional_data = {"actor_email": email_historico_do_ator, "invoice_id": 8675309}
+    log_financeiro.save(update_fields=["actor_email", "additional_data"])
+    historico_financeiro = {
+        "id": log_financeiro.pk,
+        "object_repr": log_financeiro.object_repr,
+        "changes": log_financeiro.changes,
+        "action": log_financeiro.action,
+        "timestamp": log_financeiro.timestamp,
+    }
     token, _ = AuthToken.objects.create(responsavel=usuario, type=TokenType.TOKEN)
     dispositivo = create_trusted_device(usuario, {"device_name": "Notebook"}).instance
     fator = MFAFactor.objects.create(
@@ -119,7 +161,7 @@ def test_anonimizacao_vencida_remove_pii_acessos_identidade_vinculos_e_convites(
         exclusao_solicitada_em=agora - timedelta(days=7),
         exclusao_agendada_para=agora - timedelta(seconds=1),
     )
-    LogAlteracao.objects.all().delete()
+    audit_ids_antes = set(LogAlteracao.objects.values_list("pk", flat=True))
 
     processadas = accounts.anonimizar_contas_vencidas(now=agora, batch_size=10)
 
@@ -155,16 +197,58 @@ def test_anonimizacao_vencida_remove_pii_acessos_identidade_vinculos_e_convites(
     assert convite.is_deleted is True
     assert accounts.anonimizar_contas_vencidas(now=agora, batch_size=10) == 0
     assert criar_usuario(email=email_original).email == email_original
+    audit_ids_depois = set(LogAlteracao.objects.values_list("pk", flat=True))
+    assert audit_ids_antes <= audit_ids_depois
+    log_legado.refresh_from_db()
+    assert log_legado.changes == {"technical_status": ["pending", "linked"]}
+    assert log_legado.serialized_data["pk"] == identidade.pk
+    assert log_legado.serialized_data["fields"] == {"provedor": ProvedorIdentidade.GOOGLE}
+    assert log_legado.additional_data == {"technical_id": usuario.pk}
+    log_financeiro.refresh_from_db()
+    assert {
+        "id": log_financeiro.pk,
+        "object_repr": log_financeiro.object_repr,
+        "changes": log_financeiro.changes,
+        "action": log_financeiro.action,
+        "timestamp": log_financeiro.timestamp,
+    } == historico_financeiro
+    assert log_financeiro.actor_email is None
+    assert log_financeiro.additional_data == {"actor_email": "[redacted]", "invoice_id": 8675309}
     auditoria = json.dumps(
-        list(LogAlteracao.objects.values("changes", "object_repr", "additional_data")),
+        {
+            "rows": list(
+                LogAlteracao.objects.values(
+                    "id",
+                    "content_type_id",
+                    "object_pk",
+                    "object_id",
+                    "object_repr",
+                    "serialized_data",
+                    "action",
+                    "changes_text",
+                    "changes",
+                    "actor_id",
+                    "timestamp",
+                    "additional_data",
+                    "actor_email",
+                )
+            ),
+            "api": LogAlteracaoSerpySerializer(LogAlteracao.objects.select_related("actor", "content_type"), many=True).data,
+        },
         default=str,
     )
-    assert email_original not in auditoria
-    assert usuario.email not in auditoria
-    assert sub_original not in auditoria
-    assert sub_excluido_original not in auditoria
-    assert "Nome" not in auditoria
-    assert "Sobrenome" not in auditoria
+    for pii in (
+        email_original,
+        usuario.email,
+        sub_original,
+        sub_excluido_original,
+        nome_historico,
+        nome_atual,
+        sobrenome,
+        telefone,
+        email_historico_do_ator,
+    ):
+        assert pii not in auditoria
 
 
 @override_settings(ACCOUNT_DELETION_BATCH_SIZE=1)

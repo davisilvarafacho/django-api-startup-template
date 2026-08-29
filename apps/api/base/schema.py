@@ -32,8 +32,9 @@ CHANGES_DESCRIPTION = (
 SOMENTE_LEITURA_DESCRIPTION = (
     "O histórico é **somente leitura** e não aceita filtros: o recorte é o "
     "próprio registro da URL, do mais recente ao mais antigo. Os registros são "
-    "escritos pelo auditlog durante a request original e nunca reescritos — "
-    "editá-los invalidaria a trilha de auditoria."
+    "escritos pelo auditlog durante a request original. Na anonimização definitiva "
+    "de uma conta, somente campos com PII são sanitizados; IDs técnicos, ação e "
+    "timestamp do evento permanecem."
 )
 
 
@@ -41,8 +42,8 @@ class LogAlteracaoActorSchema(serializers.Serializer):
     """Espelho do bloco `user` — nulo quando a alteração não teve ator autenticado."""
 
     id = serializers.IntegerField()
-    nome = serializers.CharField()
-    email = serializers.EmailField()
+    nome = serializers.CharField(allow_null=True)
+    email = serializers.EmailField(allow_null=True)
 
 
 class LogAlteracaoSchema(serializers.Serializer):

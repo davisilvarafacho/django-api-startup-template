@@ -17,6 +17,8 @@ class LogAlteracaoSerpySerializer(BaseModelSerpySerializer):
 
     def get_user(self, obj):
         if obj.user:
+            if obj.user.is_deleted:
+                return {"id": obj.user.id, "nome": None, "email": None}
             return {
                 "id": obj.user.id,
                 "nome": obj.user.get_full_name(),

@@ -55,6 +55,12 @@ filtros — o recorte é o próprio registro da URL. Como a resolução passa pe
 Não existe endpoint global de logs: o app `logs` guarda só o model
 `LogAlteracao` e seu serializer.
 
+Na anonimização definitiva de uma conta, a trilha não é apagada: IDs técnicos,
+ação e timestamp permanecem, enquanto representações e payloads relacionados à
+conta são sanitizados. Eventos em que a conta era apenas a autora preservam o
+conteúdo não pessoal; no bloco `user`, o ID técnico permanece e os campos
+pessoais ficam nulos.
+
 ## Autenticação
 
 Todas as URLs usam `_` (nunca `-`) em palavras compostas. Detalhes de cada

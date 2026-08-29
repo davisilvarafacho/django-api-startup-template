@@ -11,7 +11,7 @@ from django.utils import timezone
 from celery import shared_task
 
 from .accounts import anonimizar_contas_vencidas as anonimizar_contas_vencidas_service
-from .emails import ACCOUNT_REACTIVATION_PURPOSE, carregar_token_email, normalizar_email
+from .emails import emitir_token_reativacao
 from .models import Usuario
 
 logger = logging.getLogger(__name__)
@@ -38,30 +38,23 @@ def anonimizar_contas_vencidas():
 
 
 @shared_task(name="usuarios.send_account_reactivation", ignore_result=True)
-def send_account_reactivation(token: str):
-    """Entrega o link somente enquanto a conta ainda pode ser reativada."""
-    signed_token = carregar_token_email(token, purpose=ACCOUNT_REACTIVATION_PURPOSE)
-    if signed_token is None:
-        return
-
-    conta = Usuario.objects.filter(pk=signed_token.usuario_id, is_active=False).first()
-    if (
-        conta is None
-        or normalizar_email(conta.email) != signed_token.email
-        or (conta.exclusao_agendada_para is not None and conta.exclusao_agendada_para <= timezone.now())
-    ):
+def send_account_reactivation(user_id: int):
+    """Relê a conta e só então gera e entrega o segredo de reativação."""
+    conta = Usuario.objects.filter(pk=user_id, is_active=False).first()
+    if conta is None or (conta.exclusao_agendada_para is not None and conta.exclusao_agendada_para <= timezone.now()):
         return
 
     try:
+        token = emitir_token_reativacao(conta)
         link = f"{settings.ACCOUNT_REACTIVATION_FRONTEND_URL}?token={token}"
         send_mail(
             "Reative sua conta",
             f"Para reativar sua conta, acesse: {link}",
             settings.DEFAULT_FROM_EMAIL,
-            [signed_token.email],
+            [conta.email],
         )
     except Exception:
         # Exceções de backends de e-mail podem incluir recipient ou conteúdo da
         # mensagem. Não anexe traceback/exception: o link assinado nunca pode
         # chegar ao log.
-        logger.error("Falha ao enviar reativação de conta", extra={"user_id": signed_token.usuario_id})
+        logger.error("Falha ao enviar reativação de conta", extra={"user_id": user_id})

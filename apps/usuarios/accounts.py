@@ -1,11 +1,14 @@
 """Casos de uso transacionais do ciclo de conta."""
 
+import re
 import uuid
 from datetime import timedelta
 
 from django.conf import settings
+from django.contrib.contenttypes.models import ContentType
 from django.core.cache import cache
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.api.autenticacao.services import lock_user_account, revoke_all_user_credentials
@@ -16,13 +19,163 @@ from .emails import (
     EMAIL_CHANGE_PURPOSE,
     EMAIL_VERIFICATION_PURPOSE,
     carregar_token_email,
-    emitir_token_reativacao,
     emitir_token_troca_email,
     emitir_token_verificacao,
     normalizar_email,
 )
 from .errors import AccountErrorCode
 from .models import Usuario
+
+_AUDITLOG_PII_KEYS = {
+    "actor_email",
+    "email",
+    "first_name",
+    "full_name",
+    "identificador",
+    "identifier",
+    "last_name",
+    "name",
+    "nome",
+    "phone",
+    "phone_number",
+    "sobrenome",
+    "sub",
+    "subject",
+    "telefone",
+    "token",
+    "username",
+}
+_EMAIL_PATTERN = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
+_PHONE_PATTERN = re.compile(r"(?<!\w)\+?\d(?:[\d ()-]{6,}\d)(?!\w)")
+_REDACTED = "[redacted]"
+
+
+def _pii_key(value) -> bool:
+    return str(value).casefold().replace("-", "_") in _AUDITLOG_PII_KEYS
+
+
+def _collect_string_values(value, output: set[str]) -> None:
+    if isinstance(value, dict):
+        for nested in value.values():
+            _collect_string_values(nested, output)
+    elif isinstance(value, (list, tuple, set)):
+        for nested in value:
+            _collect_string_values(nested, output)
+    elif isinstance(value, str) and value.casefold() not in {"", "none", "null"}:
+        output.add(value)
+
+
+def _collect_pii_values(value, output: set[str]) -> None:
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            if _pii_key(key):
+                _collect_string_values(nested, output)
+            _collect_pii_values(nested, output)
+    elif isinstance(value, (list, tuple, set)):
+        for nested in value:
+            _collect_pii_values(nested, output)
+
+
+def _redact_text(value: str, pii_values: set[str], *, redact_patterns: bool) -> str:
+    redacted = value
+    for pii in sorted(pii_values, key=len, reverse=True):
+        if len(pii) >= 2:
+            escaped = re.escape(pii)
+            pattern = rf"(?<!\w){escaped}(?!\w)" if pii.isalnum() else escaped
+            redacted = re.sub(pattern, _REDACTED, redacted, flags=re.IGNORECASE)
+    if redact_patterns:
+        redacted = _EMAIL_PATTERN.sub(_REDACTED, redacted)
+        redacted = _PHONE_PATTERN.sub(_REDACTED, redacted)
+    return redacted
+
+
+def _redact_json(value, pii_values: set[str], *, drop_pii_keys: bool, redact_patterns: bool):
+    if isinstance(value, dict):
+        return {
+            key: _redact_json(nested, pii_values, drop_pii_keys=drop_pii_keys, redact_patterns=redact_patterns)
+            for key, nested in value.items()
+            if not (drop_pii_keys and _pii_key(key))
+        }
+    if isinstance(value, list):
+        return [_redact_json(nested, pii_values, drop_pii_keys=drop_pii_keys, redact_patterns=redact_patterns) for nested in value]
+    if isinstance(value, tuple):
+        return [_redact_json(nested, pii_values, drop_pii_keys=drop_pii_keys, redact_patterns=redact_patterns) for nested in value]
+    if isinstance(value, str):
+        return _redact_text(value, pii_values, redact_patterns=redact_patterns)
+    return value
+
+
+def _sanitize_account_auditlog(
+    conta,
+    *,
+    identidades,
+    vinculos,
+    convites,
+    replacement_email: str,
+    using: str,
+) -> None:
+    """Remove PII da trilha ligada à conta sem apagar eventos nem IDs."""
+    from apps.api.autenticacao.models import IdentidadeExterna
+    from apps.logs.models import LogAlteracao
+    from apps.organizacoes.models import Convite, Vinculo
+
+    related_objects = {
+        Usuario: {conta.pk},
+        IdentidadeExterna: {identidade.pk for identidade in identidades},
+        Vinculo: {vinculo.pk for vinculo in vinculos},
+        Convite: {convite.pk for convite in convites},
+    }
+    content_types = ContentType.objects.db_manager(using).get_for_models(*related_objects)
+    related_keys = {(content_types[model].pk, str(object_id)) for model, object_ids in related_objects.items() for object_id in object_ids}
+    related_query = Q(pk__in=[])
+    for content_type_id, object_pk in related_keys:
+        related_query |= Q(content_type_id=content_type_id, object_pk=object_pk)
+
+    logs = list(
+        LogAlteracao.objects.using(using)
+        .select_for_update()
+        .filter(related_query | Q(actor_id=conta.pk) | Q(actor_email__iexact=conta.email))
+        .order_by("pk")
+    )
+    pii_values = {
+        value
+        for value in (
+            conta.email,
+            replacement_email,
+            conta.first_name,
+            conta.last_name,
+            conta.get_full_name(),
+            conta.phone_number,
+            *(identidade.identificador for identidade in identidades),
+            *(convite.email for convite in convites),
+            *(convite.token for convite in convites),
+        )
+        if isinstance(value, str) and value
+    }
+    for log in logs:
+        if log.actor_email:
+            pii_values.add(log.actor_email)
+        if (log.content_type_id, log.object_pk) in related_keys:
+            for payload in (log.changes, log.serialized_data, log.additional_data):
+                _collect_pii_values(payload, pii_values)
+
+    for log in logs:
+        related = (log.content_type_id, log.object_pk) in related_keys
+        if related:
+            log.object_repr = f"{log.content_type.app_label}.{log.content_type.model}#{log.object_pk}"
+        else:
+            log.object_repr = _redact_text(log.object_repr, pii_values, redact_patterns=False)
+        log.changes = _redact_json(log.changes, pii_values, drop_pii_keys=related, redact_patterns=related)
+        log.serialized_data = _redact_json(log.serialized_data, pii_values, drop_pii_keys=related, redact_patterns=related)
+        log.additional_data = _redact_json(log.additional_data, pii_values, drop_pii_keys=related, redact_patterns=related)
+        log.changes_text = _redact_text(log.changes_text, pii_values, redact_patterns=related)
+        log.actor_email = None
+
+    if logs:
+        LogAlteracao.objects.using(using).bulk_update(
+            logs,
+            ["object_repr", "changes", "serialized_data", "additional_data", "changes_text", "actor_email"],
+        )
 
 
 def _proteger_organizacoes_sem_outro_proprietario(conta, *, using: str) -> None:
@@ -83,6 +236,7 @@ def _anonimizar_conta_vencida(conta_id: int, *, now, using: str) -> bool:
             return False
 
         identidades = list(IdentidadeExterna.all_objects.using(using).select_for_update().filter(usuario=conta).order_by("pk"))
+        identificadores_anteriores = [identidade.identificador for identidade in identidades]
         for identidade in identidades:
             identidade.anonimizar(using=using)
 
@@ -100,18 +254,31 @@ def _anonimizar_conta_vencida(conta_id: int, *, now, using: str) -> bool:
         MFARecoveryCode.objects.using(using).filter(pk__in=recuperacao_ids, consumed_at__isnull=True).update(consumed_at=now)
 
         email_anterior = conta.email
+        email_substituto = f"deleted-{conta.pk}-{uuid.uuid4()}@invalid.local"
+        vinculos = list(Vinculo.all_objects.using(using).select_for_update().filter(usuario=conta).order_by("pk"))
+        convites = list(
+            Convite.all_objects.using(using).select_for_update().filter(Q(email__iexact=email_anterior) | Q(convidado_por=conta)).order_by("pk")
+        )
+        for identidade, identificador in zip(identidades, identificadores_anteriores, strict=True):
+            identidade.identificador = identificador
+        _sanitize_account_auditlog(
+            conta,
+            identidades=identidades,
+            vinculos=vinculos,
+            convites=convites,
+            replacement_email=email_substituto,
+            using=using,
+        )
         with disable_auditlog():
-            vinculos = list(Vinculo.objects.using(using).select_for_update().filter(usuario=conta).order_by("pk"))
             for vinculo in vinculos:
-                vinculo.delete(using=using)
+                if not vinculo.is_deleted:
+                    vinculo.delete(using=using)
 
-            convites = list(
-                Convite.objects.using(using).select_for_update().filter(email__iexact=email_anterior, aceito_em__isnull=True).order_by("pk")
-            )
             for convite in convites:
-                convite.delete(using=using)
+                if convite.email.casefold() == email_anterior.casefold() and convite.aceito_em is None and not convite.is_deleted:
+                    convite.delete(using=using)
 
-            conta.email = f"deleted-{conta.pk}-{uuid.uuid4()}@invalid.local"
+            conta.email = email_substituto
             conta.first_name = ""
             conta.last_name = ""
             conta.phone_number = None
@@ -189,8 +356,8 @@ class Contas:
         return conta
 
     @classmethod
-    def solicitar_reativacao(cls, email: str) -> str | None:
-        """Emite token somente para conta reversivelmente inativa, sem enumerá-la."""
+    def solicitar_reativacao(cls, email: str) -> int | None:
+        """Seleciona a conta reversivelmente inativa sem expor segredo ao broker."""
         email = Usuario.objects.normalize_email(email)
         cache_key = f"account-reactivation-request:{email.casefold()}"
         conta = Usuario.objects.filter(email__iexact=email, is_active=False).first()
@@ -200,7 +367,7 @@ class Contas:
             or not cache.add(cache_key, True, timeout=60)
         ):
             return None
-        return emitir_token_reativacao(conta)
+        return conta.pk
 
     @classmethod
     def confirmar_reativacao(cls, token: str):

@@ -538,6 +538,11 @@ O link usa token assinado com salt exclusivo e TTL controlado por
 cancela um pedido de exclusão ainda reversível, mas não restaura sessões,
 dispositivos ou vínculos suspensos.
 
+O broker recebe somente o `user_id` técnico. A task relê a conta, revalida o
+prazo e gera o token imediatamente antes de montar o e-mail; token e endereço
+não aparecem em argumentos ou metadados Celery. Alterar o e-mail depois da
+emissão ou ultrapassar a carência invalida o link na confirmação.
+
 ### Exclusão em duas fases
 
 O pedido autenticado grava `exclusao_solicitada_em` e
@@ -554,8 +559,13 @@ fatores MFA e dispositivos, remove vínculos, cancela convites pendentes e limpa
 os campos pessoais antes do soft delete definitivo. O e-mail antigo fica livre
 para um cadastro novo; depois desse ponto não existe recuperação.
 
-A anonimização desabilita a captura do auditlog durante a limpeza e altera o
-`sub` externo sem criar histórico. Logs da task contêm apenas duração e
+A anonimização desabilita a captura do auditlog durante a limpeza, altera o
+`sub` externo sem criar histórico e sanitiza as linhas históricas relacionadas
+de `Usuario`, `IdentidadeExterna`, `Vinculo` e `Convite`. As linhas, IDs
+técnicos, ações e timestamps permanecem; `actor_email`, representações e campos
+livres deixam de conter PII. Histórico não relacionado em que a conta foi
+apenas autora mantém o conteúdo operacional, sem os dados do ator. Novos logs
+de convite não incluem e-mail ou token. Logs da task contêm apenas duração e
 contagem: token, e-mail antigo, e-mail substituto e identificadores externos não
 são registrados.
 
