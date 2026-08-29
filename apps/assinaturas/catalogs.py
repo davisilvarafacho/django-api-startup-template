@@ -5,13 +5,15 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 
 from apps.assinaturas.features import CATALOGO_RECURSOS, ValoresRecursos
 from apps.assinaturas.models import Periodicidade, Plano, PrecoPlano, VersaoPlano
 
 MOEDA = re.compile(r"^[A-Z]{3}$")
+MAIOR_BIGINT = 2**63 - 1
+MAIOR_SMALLINT = 2**15 - 1
 
 
 @dataclass(frozen=True)
@@ -23,12 +25,15 @@ class DefinicaoPrecoPlano:
     is_active: bool = True
 
     def __post_init__(self):
-        if self.periodicidade not in Periodicidade.values:
-            raise ValueError("Periodicidade de preço inválida.")
-        if not MOEDA.fullmatch(self.moeda):
+        if not isinstance(self.periodicidade, Periodicidade):
+            raise ValueError("Periodicidade de preço deve ser uma Periodicidade concreta.")
+        if type(self.moeda) is not str or not MOEDA.fullmatch(self.moeda):
             raise ValueError("Moeda deve ter três letras maiúsculas.")
-        if self.valor_base_centavos < 0 or self.valor_seat_centavos < 0:
-            raise ValueError("Valores de preço não podem ser negativos.")
+        centavos = (self.valor_base_centavos, self.valor_seat_centavos)
+        if any(type(valor) is not int or not 0 <= valor <= MAIOR_BIGINT for valor in centavos):
+            raise ValueError("Valores em centavos devem ser inteiros não negativos no intervalo de bigint.")
+        if type(self.is_active) is not bool:
+            raise ValueError("is_active do preço deve ser booleano.")
 
 
 @dataclass(frozen=True)
@@ -53,10 +58,18 @@ class DefinicaoVersaoPlano:
             self.carencia_pagamento_dias,
             self.carencia_excesso_seats_dias,
         )
-        if any(type(valor) is not int or valor < 0 for valor in inteiros) or self.numero == 0:
-            raise ValueError("Número e limites da versão devem ser inteiros não negativos, com número maior que zero.")
-        if self.limite_seats_trial is not None and (type(self.limite_seats_trial) is not int or self.limite_seats_trial < 0):
-            raise ValueError("Limite de seats do trial deve ser nulo ou inteiro não negativo.")
+        if any(type(valor) is not int or not 0 <= valor <= MAIOR_SMALLINT for valor in inteiros) or self.numero == 0:
+            raise ValueError("Número e limites da versão devem ser inteiros no intervalo de smallint, com número maior que zero.")
+        if self.limite_seats_trial is not None and (type(self.limite_seats_trial) is not int or not 0 <= self.limite_seats_trial <= MAIOR_SMALLINT):
+            raise ValueError("Limite de seats do trial deve ser nulo ou inteiro no intervalo de smallint.")
+        if any(type(valor) is not bool for valor in (self.atual, self.expansao_automatica_seats, self.is_active)):
+            raise ValueError("Booleanos da versão devem ser valores bool concretos.")
+        if not isinstance(self.recursos, ValoresRecursos):
+            raise ValueError("Recursos da versão devem ser ValoresRecursos.")
+        if type(self.precos) is not tuple or not self.precos or not all(isinstance(preco, DefinicaoPrecoPlano) for preco in self.precos):
+            raise ValueError("Preços da versão devem ser uma tupla de DefinicaoPrecoPlano não vazia.")
+        if self.atual and (not self.is_active or not any(preco.is_active for preco in self.precos)):
+            raise ValueError("Versão atual deve estar ativa e possuir ao menos um preço ativo.")
 
 
 @dataclass(frozen=True)
@@ -69,8 +82,16 @@ class DefinicaoPlano:
     is_active: bool = True
 
     def __post_init__(self):
-        if not self.codigo or not self.nome or not self.versoes:
-            raise ValueError("Plano deve declarar código, nome e pelo menos uma versão.")
+        if type(self.codigo) is not str or not self.codigo or len(self.codigo) > 60:
+            raise ValueError("O código do plano deve ser texto não vazio com até 60 caracteres.")
+        if type(self.nome) is not str or not self.nome or len(self.nome) > 150:
+            raise ValueError("O nome do plano deve ser texto não vazio com até 150 caracteres.")
+        if type(self.descricao) is not str:
+            raise ValueError("A descrição do plano deve ser texto.")
+        if any(type(valor) is not bool for valor in (self.visivel, self.is_active)):
+            raise ValueError("Booleanos do plano devem ser valores bool concretos.")
+        if type(self.versoes) is not tuple or not self.versoes or not all(isinstance(versao, DefinicaoVersaoPlano) for versao in self.versoes):
+            raise ValueError("Versões do plano devem ser uma tupla de DefinicaoVersaoPlano não vazia.")
 
 
 def _recursos(*, quantidade_projetos: int) -> ValoresRecursos:
@@ -208,6 +229,8 @@ def sincronizar_planos(definicoes: tuple[DefinicaoPlano, ...], *, aplicar: bool)
     acoes: list[str] = []
     verbo = "criaria" if not aplicar else "criou"
     with transaction.atomic():
+        if aplicar:
+            _adquirir_lock_catalogo()
         for definicao_plano in definicoes:
             plano = Plano.all_objects.select_for_update().filter(codigo=definicao_plano.codigo, is_deleted=False).first()
             if plano is None:
@@ -229,6 +252,11 @@ def sincronizar_planos(definicoes: tuple[DefinicaoPlano, ...], *, aplicar: bool)
                 _sincronizar_versao(plano, definicao_versao, aplicar=aplicar, acoes=acoes, verbo=verbo)
             _sincronizar_versao_atual(plano, definicao_plano, aplicar=aplicar, acoes=acoes)
     return tuple(acoes)
+
+
+def _adquirir_lock_catalogo() -> None:
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ["apps.assinaturas.sync_plans"])
 
 
 def _descrever_ausencias(plano: DefinicaoPlano, acoes: list[str], verbo: str) -> None:
@@ -269,8 +297,11 @@ def _sincronizar_versao(
     acoes: list[str],
     verbo: str,
 ) -> None:
-    versao = VersaoPlano.all_objects.select_for_update().filter(plano=plano, numero=definicao.numero).first()
+    versao = VersaoPlano.objects.select_for_update().filter(plano=plano, numero=definicao.numero).first()
+    nova_versao = versao is None
     if versao is None:
+        if VersaoPlano.all_objects.filter(plano=plano, numero=definicao.numero, is_deleted=True).exists():
+            raise ErroCatalogoPlanos(f"{plano.codigo} v{definicao.numero} está excluída e não pode ser selecionada pelo catálogo.")
         acoes.append(f"{verbo} versão '{plano.codigo}' v{definicao.numero}")
         if not aplicar:
             for preco in definicao.precos:
@@ -287,19 +318,27 @@ def _sincronizar_versao(
             carencia_excesso_seats_dias=definicao.carencia_excesso_seats_dias,
             expansao_automatica_seats=definicao.expansao_automatica_seats,
             recursos=definicao.recursos.materializar(),
-            publicada_em=timezone.now(),
+            publicada_em=None,
             is_active=definicao.is_active,
         )
     else:
+        if versao.publicada_em is None:
+            raise ErroCatalogoPlanos(f"{plano.codigo} v{definicao.numero} existe, mas não está publicada; conclua ou remova o draft antes do sync.")
         _recusar_mutacao_versao(versao, definicao)
+        _comparar_precos_publicados(versao, definicao, aplicar=aplicar, acoes=acoes)
         if versao.is_active != definicao.is_active:
             acoes.append(f"{'atualizaria' if not aplicar else 'atualizou'} atividade de '{plano.codigo}' v{definicao.numero}")
             if aplicar:
                 versao.is_active = definicao.is_active
                 versao.save(update_fields=["is_active"])
 
-    for definicao_preco in definicao.precos:
-        _sincronizar_preco(versao, definicao_preco, aplicar=aplicar, acoes=acoes, verbo=verbo)
+    if nova_versao:
+        for definicao_preco in definicao.precos:
+            _criar_preco(versao, definicao_preco, aplicar=aplicar, acoes=acoes, verbo=verbo)
+
+    if nova_versao and aplicar:
+        versao.publicada_em = timezone.now()
+        versao.save(update_fields=["publicada_em"])
 
 
 def _recusar_mutacao_versao(versao: VersaoPlano, definicao: DefinicaoVersaoPlano) -> None:
@@ -322,7 +361,37 @@ def _recusar_mutacao_versao(versao: VersaoPlano, definicao: DefinicaoVersaoPlano
         raise ErroCatalogoPlanos(f"{versao.plano.codigo} v{versao.numero} diverge do catálogo; declare o próximo número de versão.")
 
 
-def _sincronizar_preco(
+def _comparar_precos_publicados(
+    versao: VersaoPlano,
+    definicao: DefinicaoVersaoPlano,
+    *,
+    aplicar: bool,
+    acoes: list[str],
+) -> None:
+    precos_atuais = {
+        (Periodicidade(preco.periodicidade), preco.moeda): preco for preco in PrecoPlano.objects.select_for_update().filter(versao_plano=versao)
+    }
+    precos_esperados = {(preco.periodicidade, preco.moeda): preco for preco in definicao.precos}
+    if set(precos_atuais) != set(precos_esperados):
+        raise ErroCatalogoPlanos(
+            f"O conjunto de preços de {versao.plano.codigo} v{versao.numero} diverge do catálogo; declare o próximo número de versão."
+        )
+
+    for chave, definicao_preco in precos_esperados.items():
+        preco = precos_atuais[chave]
+        termos_atuais = (preco.valor_base_centavos, preco.valor_seat_centavos)
+        termos_esperados = (definicao_preco.valor_base_centavos, definicao_preco.valor_seat_centavos)
+        descricao = f"'{versao.plano.codigo}' v{versao.numero} {definicao_preco.periodicidade.label}/{definicao_preco.moeda}"
+        if termos_atuais != termos_esperados:
+            raise ErroCatalogoPlanos(f"Preço de {descricao} diverge do catálogo; declare o próximo número de versão.")
+        if preco.is_active != definicao_preco.is_active:
+            acoes.append(f"{'atualizaria' if not aplicar else 'atualizou'} atividade do preço {descricao}")
+            if aplicar:
+                preco.is_active = definicao_preco.is_active
+                preco.save(update_fields=["is_active"])
+
+
+def _criar_preco(
     versao: VersaoPlano,
     definicao: DefinicaoPrecoPlano,
     *,
@@ -330,38 +399,17 @@ def _sincronizar_preco(
     acoes: list[str],
     verbo: str,
 ) -> None:
-    preco = (
-        PrecoPlano.all_objects.select_for_update()
-        .filter(
+    descricao = f"'{versao.plano.codigo}' v{versao.numero} {definicao.periodicidade.label}/{definicao.moeda}"
+    acoes.append(f"{verbo} preço {descricao}")
+    if aplicar:
+        PrecoPlano.objects.create(
             versao_plano=versao,
             periodicidade=definicao.periodicidade,
             moeda=definicao.moeda,
+            valor_base_centavos=definicao.valor_base_centavos,
+            valor_seat_centavos=definicao.valor_seat_centavos,
+            is_active=definicao.is_active,
         )
-        .first()
-    )
-    descricao = f"'{versao.plano.codigo}' v{versao.numero} {definicao.periodicidade.label}/{definicao.moeda}"
-    if preco is None:
-        acoes.append(f"{verbo} preço {descricao}")
-        if aplicar:
-            PrecoPlano.objects.create(
-                versao_plano=versao,
-                periodicidade=definicao.periodicidade,
-                moeda=definicao.moeda,
-                valor_base_centavos=definicao.valor_base_centavos,
-                valor_seat_centavos=definicao.valor_seat_centavos,
-                is_active=definicao.is_active,
-            )
-        return
-
-    termos_atuais = (preco.valor_base_centavos, preco.valor_seat_centavos)
-    termos_esperados = (definicao.valor_base_centavos, definicao.valor_seat_centavos)
-    if termos_atuais != termos_esperados:
-        raise ErroCatalogoPlanos(f"Preço de {descricao} diverge do catálogo; declare o próximo número de versão.")
-    if preco.is_active != definicao.is_active:
-        acoes.append(f"{'atualizaria' if not aplicar else 'atualizou'} atividade do preço {descricao}")
-        if aplicar:
-            preco.is_active = definicao.is_active
-            preco.save(update_fields=["is_active"])
 
 
 def _sincronizar_versao_atual(
@@ -372,12 +420,23 @@ def _sincronizar_versao_atual(
     acoes: list[str],
 ) -> None:
     numero_atual = next(versao.numero for versao in definicao.versoes if versao.atual)
-    atual_no_banco = VersaoPlano.all_objects.filter(plano=plano, atual=True, is_deleted=False).first()
+    atual_no_banco = VersaoPlano.objects.select_for_update().filter(plano=plano, atual=True).first()
     if atual_no_banco is not None and atual_no_banco.numero == numero_atual:
         return
     acoes.append(f"{'marcaria' if not aplicar else 'marcou'} '{plano.codigo}' v{numero_atual} como atual")
     if aplicar:
-        VersaoPlano.all_objects.filter(plano=plano, atual=True).update(atual=False)
-        alvo = VersaoPlano.all_objects.get(plano=plano, numero=numero_atual)
+        alvo = VersaoPlano.objects.select_for_update().filter(plano=plano, numero=numero_atual, publicada_em__isnull=False, is_active=True).first()
+        if alvo is None:
+            existente = VersaoPlano.all_objects.filter(plano=plano, numero=numero_atual).first()
+            if existente is not None and existente.is_deleted:
+                raise ErroCatalogoPlanos(f"{plano.codigo} v{numero_atual} está excluída e não pode ser marcada como atual.")
+            if existente is not None and existente.publicada_em is None:
+                raise ErroCatalogoPlanos(f"{plano.codigo} v{numero_atual} não está publicada e não pode ser marcada como atual.")
+            raise ErroCatalogoPlanos(f"{plano.codigo} v{numero_atual} não está ativa e contratável.")
+        if not PrecoPlano.ativos.filter(versao_plano=alvo).exists():
+            raise ErroCatalogoPlanos(f"{plano.codigo} v{numero_atual} não possui preço ativo e contratável.")
+        if atual_no_banco is not None:
+            atual_no_banco.atual = False
+            atual_no_banco.save(update_fields=["atual"])
         alvo.atual = True
         alvo.save(update_fields=["atual"])

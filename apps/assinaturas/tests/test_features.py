@@ -123,3 +123,27 @@ def test_system_check_reporta_default_com_tipo_invalido(monkeypatch):
             id="assinaturas.E001",
         )
     ]
+
+
+def test_system_check_rejeita_tipo_sem_json_schema(monkeypatch):
+    catalogo_invalido = CatalogoRecursos(
+        (
+            RecursoPlano(
+                chave="percentual",
+                titulo="Percentual",
+                descricao="Tipo deliberadamente não suportado.",
+                tipo=float,
+                padrao=1.0,
+                unidade=None,
+                exemplo=1.9,
+            ),
+        )
+    )
+    monkeypatch.setattr("apps.assinaturas.features.CATALOGO_RECURSOS", catalogo_invalido)
+
+    assert checks.recursos_planos_check(None) == [
+        Error(
+            "Recurso 'percentual': o tipo float não possui representação JSON Schema suportada.",
+            id="assinaturas.E001",
+        )
+    ]

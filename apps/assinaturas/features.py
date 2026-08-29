@@ -11,6 +11,7 @@ from typing import cast
 from apps.organizacoes.models import Papel
 
 CHAVE_RECURSO = re.compile(r"^[a-z][a-z0-9_]*$")
+TIPOS_RECURSO_COM_JSON_SCHEMA = frozenset({int, bool, str, frozenset})
 
 
 @dataclass(frozen=True)
@@ -105,6 +106,8 @@ class RecursoPlano[T]:
             erros.append("o título não pode ser vazio.")
         if not self.descricao.strip():
             erros.append("a descrição não pode ser vazia.")
+        if self.tipo not in TIPOS_RECURSO_COM_JSON_SCHEMA:
+            erros.append(f"o tipo {self.tipo.__name__} não possui representação JSON Schema suportada.")
 
         for origem, valor in (("o valor padrão", self.padrao), ("o exemplo", self.exemplo)):
             try:

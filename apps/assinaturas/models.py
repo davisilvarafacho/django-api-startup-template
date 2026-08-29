@@ -50,14 +50,46 @@ CAMPOS_IMUTAVEIS_PRECO = frozenset(
 CAMPOS_PROTEGIDOS_PRECO = CAMPOS_IMUTAVEIS_PRECO | {"created_at", "created_by", "is_deleted"}
 
 
+def _materializar_recursos(valores):
+    from apps.assinaturas.features import CATALOGO_RECURSOS
+
+    return CATALOGO_RECURSOS.validar_snapshot(valores).materializar()
+
+
 class VersoesPlanoQuerySet(BaseQuerySet):
     def update(self, **kwargs):
+        if "recursos" in kwargs:
+            kwargs["recursos"] = _materializar_recursos(kwargs["recursos"])
         if set(kwargs) - CAMPOS_OPERACIONAIS_VERSAO and self.filter(publicada_em__isnull=False).exists():
             raise ValueError("Versão de plano publicada é imutável.")
         return super().update(**kwargs)
 
+    def bulk_create(
+        self,
+        objs,
+        batch_size=None,
+        ignore_conflicts=False,
+        update_conflicts=False,
+        update_fields=None,
+        unique_fields=None,
+    ):
+        objetos = tuple(objs)
+        for objeto in objetos:
+            objeto.recursos = _materializar_recursos(objeto.recursos)
+        return super().bulk_create(
+            objetos,
+            batch_size=batch_size,
+            ignore_conflicts=ignore_conflicts,
+            update_conflicts=update_conflicts,
+            update_fields=update_fields,
+            unique_fields=unique_fields,
+        )
+
     def bulk_update(self, objs, fields, batch_size=None):
         objetos = tuple(objs)
+        if "recursos" in fields:
+            for objeto in objetos:
+                objeto.recursos = _materializar_recursos(objeto.recursos)
         if set(fields) - CAMPOS_OPERACIONAIS_VERSAO:
             ids = [obj.pk for obj in objetos if obj.pk is not None]
             if self.model._base_manager.filter(pk__in=ids, publicada_em__isnull=False).exists():
@@ -163,6 +195,12 @@ class VersaoPlano(BaseTenantless):
     ativos = VersoesPlanoAtivasManager()  # type: ignore[misc, assignment]
 
     def save(self, *args, **kwargs):
+        campos_atualizados = set(kwargs["update_fields"]) if kwargs.get("update_fields") is not None else None
+        publicando = campos_atualizados is not None and "publicada_em" in campos_atualizados and self.publicada_em is not None
+        if self._state.adding or campos_atualizados is None or "recursos" in campos_atualizados or publicando:
+            self.recursos = _materializar_recursos(self.recursos)
+        if publicando and campos_atualizados is not None and "recursos" not in campos_atualizados:
+            kwargs["update_fields"] = {*campos_atualizados, "recursos"}
         if self.pk is not None:
             anterior = type(self)._base_manager.filter(pk=self.pk).values("publicada_em", *CAMPOS_PROTEGIDOS_VERSAO).first()
             if anterior is not None and anterior["publicada_em"] is not None:
@@ -176,9 +214,7 @@ class VersaoPlano(BaseTenantless):
 
     def clean(self):
         super().clean()
-        from apps.assinaturas.features import CATALOGO_RECURSOS
-
-        self.recursos = CATALOGO_RECURSOS.validar_snapshot(self.recursos).materializar()
+        self.recursos = _materializar_recursos(self.recursos)
 
     def __str__(self):
         return f"{self.plano.codigo} v{self.numero}"
@@ -195,6 +231,10 @@ class VersaoPlano(BaseTenantless):
                 fields=("plano",),
                 condition=models.Q(atual=True, is_deleted=False),
                 name="versao_plano_atual_unica_por_plano",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(atual=False) | models.Q(publicada_em__isnull=False, is_deleted=False),
+                name="versao_plano_atual_publicada_viva",
             ),
         ]
 
