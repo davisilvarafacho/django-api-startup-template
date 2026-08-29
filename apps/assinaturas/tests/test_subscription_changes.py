@@ -3,9 +3,10 @@
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import timedelta
-from threading import Barrier
+from threading import Barrier, Event
+from time import monotonic, sleep
 
-from django.db import close_old_connections, connection, connections
+from django.db import DatabaseError, close_old_connections, connection, connections, transaction
 from django.utils import timezone
 
 import pytest
@@ -29,6 +30,7 @@ from apps.assinaturas.subscriptions import (
 )
 from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.models import Organizacao
+from apps.usuarios.models import Usuario
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
@@ -84,6 +86,24 @@ def _comando(assinatura, versao, preco, *, seats, chave, tipo=TipoAlteracaoAssin
         chave_idempotencia=chave,
         aplicar_em=aplicar_em,
     )
+
+
+def _pid_backend_atual() -> int:
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_backend_pid()")
+        return cursor.fetchone()[0]
+
+
+def _esperar_lock_postgresql(pid: int, *, timeout: float = 5) -> None:
+    limite = monotonic() + timeout
+    while monotonic() < limite:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT wait_event_type FROM pg_stat_activity WHERE pid = %s", [pid])
+            linha = cursor.fetchone()
+        if linha is not None and linha[0] == "Lock":
+            return
+        sleep(0.01)
+    raise AssertionError(f"A conexão PostgreSQL {pid} não aguardou lock dentro do limite.")
 
 
 def test_solicitar_alteracao_persiste_pedido_e_snapshots_completos_e_imutaveis():
@@ -162,6 +182,62 @@ def test_idempotencia_de_alteracao_inclui_assinatura_solicitante_e_momento_resol
     assert primeira.pedido["aplicar_em"] == aplicar_em.isoformat()
 
 
+@pytest.mark.django_db(transaction=True)
+def test_solicitacao_de_alteracao_bloqueia_solicitante_antes_da_organizacao():
+    organizacao, assinatura, versao, preco = _assinatura_profissional()
+    solicitante = criar_usuario(email="ordem-alteracao@example.com")
+    comando = replace(
+        _comando(assinatura, versao, preco, seats=8, chave="ordem-alteracao"),
+        solicitada_por=solicitante,
+    )
+    usuario_bloqueado = Event()
+    liberar_usuario = Event()
+    alteracao_iniciada = Event()
+    pid_alteracao = []
+
+    def manter_usuario_bloqueado():
+        close_old_connections()
+        try:
+            with transaction.atomic():
+                Usuario.all_objects.select_for_update().get(pk=solicitante.pk)
+                usuario_bloqueado.set()
+                if not liberar_usuario.wait(timeout=5):
+                    raise AssertionError("Lock do solicitante não foi liberado pelo teste.")
+        finally:
+            connections.close_all()
+
+    def solicitar():
+        close_old_connections()
+        try:
+            pid_alteracao.append(_pid_backend_atual())
+            alteracao_iniciada.set()
+            with organizacao_atual_privilegiada(organizacao.pk):
+                return Assinaturas.solicitar_alteracao(comando).pk
+        finally:
+            connections.close_all()
+
+    erro_lock_organizacao = None
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        usuario_futuro = executor.submit(manter_usuario_bloqueado)
+        assert usuario_bloqueado.wait(timeout=5)
+        alteracao_futura = executor.submit(solicitar)
+        assert alteracao_iniciada.wait(timeout=5)
+        _esperar_lock_postgresql(pid_alteracao[0])
+        try:
+            with transaction.atomic():
+                Organizacao.all_objects.select_for_update(nowait=True).get(pk=organizacao.pk)
+        except DatabaseError as exc:
+            erro_lock_organizacao = getattr(exc.__cause__, "pgcode", None)
+        finally:
+            liberar_usuario.set()
+        usuario_futuro.result(timeout=10)
+        alteracao_id = alteracao_futura.result(timeout=10)
+
+    assert erro_lock_organizacao is None
+    with organizacao_atual_privilegiada(organizacao.pk):
+        assert AlteracaoAssinatura.objects.get(pk=alteracao_id).solicitada_por_id == solicitante.pk
+
+
 def test_idempotencia_de_alteracao_nunca_retorna_pedido_de_ciclo_anterior():
     organizacao, assinatura_antiga, versao, preco = _assinatura_profissional()
     comando_antigo = _comando(assinatura_antiga, versao, preco, seats=8, chave="mesma-chave-outro-ciclo")
@@ -196,6 +272,80 @@ def test_aumento_de_seats_recusa_qualquer_delta_alem_da_quantidade_absoluta(term
 
     with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(ValueError, match="somente seats_contratados"):
         Assinaturas.solicitar_alteracao(replace(comando, termos_pretendidos=termos_mascarados(comando.termos_pretendidos)))
+
+
+def test_aumento_de_seats_usa_snapshot_da_versao_historica_desativada_e_preserva_idempotencia():
+    organizacao, assinatura, versao, preco = _assinatura_profissional()
+    versao.is_active = False
+    versao.save(update_fields=["is_active"])
+    comando = _comando(assinatura, versao, preco, seats=8, chave="aumento-versao-historica")
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        primeira = Assinaturas.solicitar_alteracao(comando)
+        repetida = Assinaturas.solicitar_alteracao(comando)
+
+    assert repetida.pk == primeira.pk
+    assert primeira.snapshot_pretendido["versao_plano_id"] == versao.pk
+    assert primeira.snapshot_pretendido["seats_contratados"] == 8
+
+
+def test_reducao_de_seats_usa_snapshot_da_versao_historica_desativada():
+    organizacao, assinatura, versao, preco = _assinatura_profissional(seats=8, periodo=True)
+    versao.is_active = False
+    versao.save(update_fields=["is_active"])
+    comando = replace(
+        _comando(
+            assinatura,
+            versao,
+            preco,
+            seats=6,
+            chave="reducao-versao-historica",
+            tipo=TipoAlteracaoAssinatura.REDUCAO_SEATS,
+        ),
+        seats_consumidos=6,
+    )
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        alteracao = Assinaturas.solicitar_alteracao(comando)
+
+    assert alteracao.snapshot_pretendido["versao_plano_id"] == versao.pk
+    assert alteracao.snapshot_pretendido["seats_contratados"] == 6
+
+
+def test_mudancas_reais_de_plano_e_periodicidade_ainda_exigem_catalogo_ativo():
+    organizacao, assinatura, versao_profissional, _ = _assinatura_profissional(periodo=True)
+    versao_gratuita, preco_gratuito = CatalogoPlanos.obter_versao_inicial(codigo="gratuito", periodicidade=Periodicidade.MENSAL)
+    _, preco_anual = CatalogoPlanos.obter_versao_inicial(codigo="profissional", periodicidade=Periodicidade.ANUAL)
+    versao_profissional.is_active = False
+    versao_profissional.save(update_fields=["is_active"])
+    versao_gratuita.is_active = False
+    versao_gratuita.save(update_fields=["is_active"])
+    mudar_periodicidade = CriacaoAlteracaoAssinatura(
+        assinatura=assinatura,
+        tipo=TipoAlteracaoAssinatura.MUDANCA_PERIODICIDADE,
+        origem_pretendida=OrigemVersaoPlano(versao_profissional),
+        termos_pretendidos=_termos(
+            versao_profissional,
+            preco_anual,
+            seats_contratados=assinatura.seats_contratados,
+            periodicidade=Periodicidade.ANUAL,
+        ),
+        revisao_esperada=assinatura.revisao,
+        chave_idempotencia="periodicidade-catalogo-inativo",
+    )
+    mudar_plano = CriacaoAlteracaoAssinatura(
+        assinatura=assinatura,
+        tipo=TipoAlteracaoAssinatura.DOWNGRADE_PLANO,
+        origem_pretendida=OrigemVersaoPlano(versao_gratuita),
+        termos_pretendidos=_termos(versao_gratuita, preco_gratuito, seats_contratados=assinatura.seats_contratados),
+        revisao_esperada=assinatura.revisao,
+        chave_idempotencia="plano-catalogo-inativo",
+    )
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        for comando in (mudar_periodicidade, mudar_plano):
+            with pytest.raises(ValueError, match="Versão pretendida precisa estar ativa"):
+                Assinaturas.solicitar_alteracao(comando)
 
 
 def test_mudanca_de_periodicidade_usa_preco_publicado_sem_mascarar_seats_ou_recursos():

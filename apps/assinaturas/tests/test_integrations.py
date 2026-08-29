@@ -2,9 +2,10 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
-from threading import Barrier
+from threading import Barrier, Event
+from time import monotonic, sleep
 
-from django.db import close_old_connections, connection, connections
+from django.db import DatabaseError, close_old_connections, connection, connections, transaction
 from django.utils import timezone
 
 import psycopg2
@@ -29,6 +30,8 @@ from apps.organizacoes.memberships import OcupacaoSeats, Vinculos
 from apps.organizacoes.models import Convite, Organizacao, Papel, Vinculo
 from apps.organizacoes.onboarding import OrganizationOnboarding
 from apps.organizacoes.organizations import EncerramentoAgendado, EncerramentoEfetivado, Organizacoes, TermoEncerramentoImediato
+from apps.usuarios.accounts import Contas
+from apps.usuarios.models import Usuario
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
@@ -70,6 +73,24 @@ def _organizacao_com_contrato(*, seats=2, slug="seats"):
             chave_idempotencia=f"contrato-{slug}",
         )
     return organizacao, assinatura
+
+
+def _pid_backend_atual() -> int:
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_backend_pid()")
+        return cursor.fetchone()[0]
+
+
+def _esperar_lock_postgresql(pid: int, *, timeout: float = 5) -> None:
+    limite = monotonic() + timeout
+    while monotonic() < limite:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT wait_event_type FROM pg_stat_activity WHERE pid = %s", [pid])
+            linha = cursor.fetchone()
+        if linha is not None and linha[0] == "Lock":
+            return
+        sleep(0.01)
+    raise AssertionError(f"A conexão PostgreSQL {pid} não aguardou lock dentro do limite.")
 
 
 @pytest.mark.parametrize(
@@ -180,6 +201,152 @@ def test_aceite_troca_reserva_por_consumo_sem_exceder_capacidade():
 
 
 @pytest.mark.django_db(transaction=True)
+def test_convite_e_desativacao_seguem_usuario_antes_de_organizacao_sem_deadlock(monkeypatch):
+    organizacao, _ = _organizacao_com_contrato(seats=4, slug="ordem-convite-desativacao")
+    convidado_por = criar_usuario(email="ordem-convite@example.com")
+    outro_proprietario = criar_usuario(email="ordem-convite-outro-owner@example.com")
+    Vinculo.objects.create(organizacao=organizacao, usuario=convidado_por, papel=Papel.PROPRIETARIO)
+    Vinculo.objects.create(organizacao=organizacao, usuario=outro_proprietario, papel=Papel.PROPRIETARIO)
+    organizacao_bloqueada = Event()
+    liberar_convite = Event()
+    desativacao_iniciada = Event()
+    pid_desativacao = []
+    bloquear_organizacao_original = Vinculos._bloquear_organizacao_aberta
+
+    def bloquear_organizacao_e_aguardar(organizacao_id, *, using="default"):
+        bloqueada = bloquear_organizacao_original(organizacao_id, using=using)
+        organizacao_bloqueada.set()
+        if not liberar_convite.wait(timeout=5):
+            raise AssertionError("Convite não foi liberado pelo teste.")
+        return bloqueada
+
+    monkeypatch.setattr(Vinculos, "_bloquear_organizacao_aberta", staticmethod(bloquear_organizacao_e_aguardar))
+
+    def convidar():
+        close_old_connections()
+        try:
+            try:
+                convite = Vinculos.criar_convite(
+                    organizacao=Organizacao.objects.get(pk=organizacao.pk),
+                    email="ordem-convite-destino@example.com",
+                    papel=Papel.MEMBRO,
+                    convidado_por=Usuario.objects.get(pk=convidado_por.pk),
+                )
+            except DatabaseError as exc:
+                return ("database_error", getattr(exc.__cause__, "pgcode", None))
+            return ("criado", convite.pk)
+        finally:
+            connections.close_all()
+
+    def desativar():
+        close_old_connections()
+        try:
+            pid_desativacao.append(_pid_backend_atual())
+            desativacao_iniciada.set()
+            try:
+                conta = Contas.desativar(Usuario.objects.get(pk=convidado_por.pk))
+            except DatabaseError as exc:
+                return ("database_error", getattr(exc.__cause__, "pgcode", None))
+            return ("desativada", conta.pk)
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        convite_futuro = executor.submit(convidar)
+        assert organizacao_bloqueada.wait(timeout=5)
+        desativacao_futura = executor.submit(desativar)
+        assert desativacao_iniciada.wait(timeout=5)
+        try:
+            _esperar_lock_postgresql(pid_desativacao[0])
+        finally:
+            liberar_convite.set()
+        resultado_convite = convite_futuro.result(timeout=10)
+        resultado_desativacao = desativacao_futura.result(timeout=10)
+
+    assert resultado_convite[0] == "criado"
+    assert resultado_desativacao == ("desativada", convidado_por.pk)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_aceite_bloqueia_usuario_antes_da_organizacao():
+    organizacao = Organizacao.objects.create(nome="Ordem aceite", slug="ordem-aceite")
+    usuario = criar_usuario(email="ordem-aceite@example.com")
+    convite = Convite.objects.create(
+        organizacao=organizacao,
+        email=usuario.email,
+        papel=Papel.MEMBRO,
+        expira_em=timezone.now() + timedelta(days=1),
+    )
+    usuario_bloqueado = Event()
+    liberar_usuario = Event()
+    aceite_iniciado = Event()
+    pid_aceite = []
+
+    def manter_usuario_bloqueado():
+        close_old_connections()
+        try:
+            with transaction.atomic():
+                Usuario.all_objects.select_for_update().get(pk=usuario.pk)
+                usuario_bloqueado.set()
+                if not liberar_usuario.wait(timeout=5):
+                    raise AssertionError("Lock do usuário não foi liberado pelo teste.")
+        finally:
+            connections.close_all()
+
+    def aceitar():
+        close_old_connections()
+        try:
+            pid_aceite.append(_pid_backend_atual())
+            aceite_iniciado.set()
+            return Vinculos.aceitar_convite(
+                Convite.objects.get(pk=convite.pk),
+                Usuario.objects.get(pk=usuario.pk),
+            ).pk
+        finally:
+            connections.close_all()
+
+    erro_lock_organizacao = None
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        usuario_futuro = executor.submit(manter_usuario_bloqueado)
+        assert usuario_bloqueado.wait(timeout=5)
+        aceite_futuro = executor.submit(aceitar)
+        assert aceite_iniciado.wait(timeout=5)
+        _esperar_lock_postgresql(pid_aceite[0])
+        try:
+            with transaction.atomic():
+                Organizacao.all_objects.select_for_update(nowait=True).get(pk=organizacao.pk)
+        except DatabaseError as exc:
+            erro_lock_organizacao = getattr(exc.__cause__, "pgcode", None)
+        finally:
+            liberar_usuario.set()
+        usuario_futuro.result(timeout=10)
+        vinculo_id = aceite_futuro.result(timeout=10)
+
+    assert erro_lock_organizacao is None
+    assert Vinculo.objects.get(pk=vinculo_id).usuario_id == usuario.pk
+
+
+def test_campos_de_usuario_sao_imutaveis_nas_atualizacoes_de_convite_e_vinculo():
+    organizacao = Organizacao.objects.create(nome="FK usuário imutável", slug="fk-usuario-imutavel")
+    usuario = criar_usuario(email="fk-usuario-imutavel@example.com")
+    outro = criar_usuario(email="fk-usuario-imutavel-outro@example.com")
+    vinculo = Vinculo.objects.create(organizacao=organizacao, usuario=usuario, papel=Papel.MEMBRO)
+    convite = Convite.objects.create(
+        organizacao=organizacao,
+        email="fk-usuario-imutavel-convite@example.com",
+        papel=Papel.MEMBRO,
+        convidado_por=usuario,
+    )
+
+    for campo, valor in (("convidado_por", outro), ("convidado_por_id", outro.pk)):
+        with pytest.raises(ValueError, match="convidado_por"):
+            Vinculos.atualizar_convite(convite, dados={campo: valor})
+    for campo, valor in (("usuario", outro), ("usuario_id", outro.pk)):
+        with pytest.raises(ValueError, match="usuario"):
+            Vinculos.atualizar_vinculo(vinculo, dados={campo: valor})
+
+
+@pytest.mark.django_db(transaction=True)
 def test_duas_criacoes_concorrentes_conquistam_o_ultimo_seat_uma_unica_vez():
     organizacao, _ = _organizacao_com_contrato(seats=2, slug="ultimo-seat")
     proprietario = criar_usuario(email="owner-ultimo-seat@example.com")
@@ -251,6 +418,33 @@ def test_expansao_automatica_cria_alteracao_idempotente_e_so_libera_convite_depo
     with organizacao_atual_privilegiada(organizacao.pk):
         assinatura.refresh_from_db()
     assert assinatura.seats_contratados == 2
+
+
+def test_expansao_automatica_usa_snapshot_historico_e_preserva_erro_nominal_e_idempotencia():
+    organizacao, assinatura = _organizacao_com_contrato(seats=1, slug="expansao-catalogo-historico")
+    proprietario = criar_usuario(email="owner-expansao-catalogo-historico@example.com")
+    Vinculo.objects.create(organizacao=organizacao, usuario=proprietario, papel=Papel.PROPRIETARIO)
+    assinatura.expansao_automatica_seats = True
+    assinatura.save(update_fields=["expansao_automatica_seats"])
+    versao_historica = assinatura.versao_plano
+    versao_historica.is_active = False
+    versao_historica.save(update_fields=["is_active"])
+
+    for _ in range(2):
+        with pytest.raises(APIError) as excinfo:
+            Vinculos.criar_convite(
+                organizacao=organizacao,
+                email="expansao-catalogo-historico@example.com",
+                papel=Papel.MEMBRO,
+                convidado_por=proprietario,
+            )
+        assert excinfo.value.code == BillingErrorCode.SEAT_LIMIT_REACHED
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        alteracoes = list(AlteracaoAssinatura.objects.filter(organizacao=organizacao))
+    assert len(alteracoes) == 1
+    assert alteracoes[0].snapshot_pretendido["versao_plano_id"] == versao_historica.pk
+    assert alteracoes[0].snapshot_pretendido["seats_contratados"] == 2
 
 
 @pytest.mark.django_db(transaction=True)

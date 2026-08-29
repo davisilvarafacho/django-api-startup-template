@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from django.db import transaction
 from django.utils import timezone
 
+from apps.api.autenticacao.services import lock_user_accounts
 from apps.api.core.errors import APIError
 from apps.assinaturas.errors import BillingErrorCode
 from apps.assinaturas.features import CATALOGO_RECURSOS, PAPEIS_ISENTOS_SEAT, ValoresRecursos
@@ -576,6 +577,8 @@ class Assinaturas:
         pedido = cls._pedido_alteracao(comando, momento=momento, aplicar_em=aplicar_em)
 
         with transaction.atomic(using=using):
+            usuarios_bloqueados = lock_user_accounts((comando.solicitada_por,), using=using)
+            solicitante = usuarios_bloqueados.get(comando.solicitada_por.pk) if comando.solicitada_por is not None else None
             organizacao = cls._bloquear_organizacao(assinatura_informada.organizacao_id, using=using)
             cls._validar_organizacao_contratavel(organizacao)
             assinatura = AssinaturaOrganizacao.all_objects.using(using).select_for_update().get(pk=assinatura_informada.pk, organizacao=organizacao)
@@ -610,7 +613,7 @@ class Assinaturas:
                 status=StatusAlteracaoAssinatura.SOLICITADA,
                 revisao_esperada=comando.revisao_esperada,
                 chave_idempotencia=comando.chave_idempotencia,
-                solicitada_por=comando.solicitada_por,
+                solicitada_por=solicitante,
                 pedido=pedido,
                 snapshot_anterior=snapshot_anterior,
                 snapshot_pretendido=snapshot_pretendido,
@@ -839,22 +842,24 @@ class Assinaturas:
     def _validar_mudanca(comando: CriacaoAlteracaoAssinatura, assinatura: AssinaturaOrganizacao) -> None:
         termos = comando.termos_pretendidos
         versao_pretendida = comando.origem_pretendida.versao_plano
-        if versao_pretendida.is_deleted or not versao_pretendida.is_active or versao_pretendida.publicada_em is None:
-            raise ValueError("Versão pretendida precisa estar ativa.")
         if comando.tipo in (TipoAlteracaoAssinatura.AUMENTO_SEATS, TipoAlteracaoAssinatura.REDUCAO_SEATS):
             esperado = Assinaturas._dados_termos_atuais(assinatura)
             esperado["seats_contratados"] = termos.seats_contratados
             if versao_pretendida.pk != assinatura.versao_plano_id or Assinaturas._dados_termos(termos) != esperado:
                 raise ValueError("Alteração de seats pode mudar somente seats_contratados.")
-        if comando.tipo == TipoAlteracaoAssinatura.AUMENTO_SEATS:
-            if termos.seats_contratados <= assinatura.seats_contratados:
-                raise ValueError("Aumento de seats exige uma quantidade absoluta maior.")
-        elif comando.tipo == TipoAlteracaoAssinatura.REDUCAO_SEATS:
-            if termos.seats_contratados >= assinatura.seats_contratados:
-                raise ValueError("Redução de seats exige uma quantidade absoluta menor.")
-            if comando.seats_consumidos is None or termos.seats_contratados < comando.seats_consumidos:
-                raise ValueError("A capacidade pretendida deve cobrir o consumo efetivo de seats.")
-        elif comando.tipo == TipoAlteracaoAssinatura.MUDANCA_PERIODICIDADE:
+            if comando.tipo == TipoAlteracaoAssinatura.AUMENTO_SEATS:
+                if termos.seats_contratados <= assinatura.seats_contratados:
+                    raise ValueError("Aumento de seats exige uma quantidade absoluta maior.")
+            else:
+                if termos.seats_contratados >= assinatura.seats_contratados:
+                    raise ValueError("Redução de seats exige uma quantidade absoluta menor.")
+                if comando.seats_consumidos is None or termos.seats_contratados < comando.seats_consumidos:
+                    raise ValueError("A capacidade pretendida deve cobrir o consumo efetivo de seats.")
+            return
+
+        if versao_pretendida.is_deleted or not versao_pretendida.is_active or versao_pretendida.publicada_em is None:
+            raise ValueError("Versão pretendida precisa estar ativa.")
+        if comando.tipo == TipoAlteracaoAssinatura.MUDANCA_PERIODICIDADE:
             if versao_pretendida.pk != assinatura.versao_plano_id or termos.periodicidade == assinatura.periodicidade:
                 raise ValueError("Mudança de periodicidade exige outra periodicidade do mesmo plano.")
             Assinaturas._validar_termos_publicados(assinatura, versao_pretendida, termos)

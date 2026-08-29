@@ -225,3 +225,86 @@ módulo duplicados, problema preexistente do repositório.
 - Não foi implementada funcionalidade das Tasks 10 ou posteriores. O backfill
   e a ativação final da exigência de assinatura continuam, conforme o plano,
   na Task 11.
+
+## Fix Round 2/5 — catálogo histórico e ordem global de usuários
+
+Os dois achados foram corrigidos no limite da Task 9, sem gateway,
+faturamento, `django-checkouts` ou origem comercial da Task 10:
+
+1. `AUMENTO_SEATS` e `REDUCAO_SEATS` validam primeiro o contrato bloqueado:
+   exigem exatamente seu `versao_plano_id` e permitem alterar somente
+   `seats_contratados` no snapshot corrente. Como esse contrato é a autoridade
+   histórica, sua versão pode estar `is_active=False`. Mudança real de plano
+   ou periodicidade continua exigindo versão ativa e publicada e os termos
+   canônicos do catálogo. A expansão automática na versão histórica mantém a
+   chave determinística, converge idempotentemente e devolve o erro nominal
+   `billing.seat_limit_reached` até a confirmação da alteração.
+2. Os caminhos que gravam FKs de usuário passaram a adquirir
+   `Usuario(s)` em ordem de PK antes de `Organizacao`, `Assinatura` e do
+   registro final. Convite usa a instância bloqueada de `convidado_por`, aceite
+   usa a instância bloqueada em `Vinculo.usuario` e alteração usa a instância
+   bloqueada em `solicitada_por`. A ordem coincide com `Contas.desativar` e
+   remove o ciclo que produzia `40P01`. Os campos `convidado_por`,
+   `convidado_por_id`, `usuario` e `usuario_id` são imutáveis nos casos de uso
+   de atualização. O onboarding já retém o lock de `Usuario` obtido por
+   `Contas.validar_para_onboarding` no atomic externo antes de criar a nova
+   organização e o vínculo proprietário.
+
+### Evidência RED→GREEN da Fix Round 2
+
+Os REDs de catálogo foram duas falhas de aumento/redução e uma de expansão
+automática, todos em `Versão pretendida precisa estar ativa.`; no último, o
+`ValueError` também substituía incorretamente o erro público de capacidade.
+Após separar a validação de seats da disponibilidade atual do catálogo, os
+três ficaram verdes e uma regressão adicional confirmou que mudança de plano
+e periodicidade ainda rejeita catálogo inativo.
+
+No grupo de locks, o teste real convite × desativação reproduziu
+deterministicamente `40P01`. O aceite e a criação de alteração provaram o lock
+tardio observando a organização já bloqueada (`55P03`) enquanto outra conexão
+retinha o usuário. Um quarto RED mostrou que o CRUD aceitava a troca direta
+das FKs, e um RED complementar cobriu os aliases `_id`. Depois do lock
+canônico `Usuario → Organizacao → Assinatura → registro`, as duas operações
+concorrentes terminam sem deadlock, e aceite/alteração aguardam o usuário sem
+reter a organização. A regressão existente de duas tentativas pelo último
+seat também permaneceu verde.
+
+```text
+RED catálogo histórico                                        3 failed
+RED locks/FKs inicial                                         4 failed
+RED aliases `_id` complementar                                1 failed
+GREEN nuclear A/B                                  7 passed, 34 deselected
+regressão assinaturas + organizações                         183 passed
+regressão assinaturas + organizações + contas                402 passed
+suíte global sem cobertura                                  1600 passed, 1 warning
+
+uv run ruff check .
+All checks passed!
+
+uv run ruff format --check .
+388 files already formatted
+
+uv run python manage.py check
+System check identified no issues (2 silenced)
+
+uv run python manage.py makemigrations --check --dry-run
+No changes detected
+
+uv run mkdocs build --strict
+exit 0
+
+uv run python scripts/check_version.py
+Versões alinhadas: 0.1.0
+
+git diff --check
+exit 0
+```
+
+O warning único continua sendo o `SECRET_KEY` temporário do baseline. O mypy
+focado com `--explicit-package-bases` permaneceu no baseline documentado de
+73 diagnósticos transitivos em 11 arquivos, sem erro em linha modificada nesta
+rodada. O skill de revisão recomenda revisor separado, mas a proibição
+explícita de subagentes desta tarefa foi preservada; a auto-revisão local
+auditou o diff, todas as chamadas que gravam FKs de usuário e os dois achados
+aprovados. Nenhum arquivo de migration, proposta, checkout, faturamento ou
+Task 10+ foi criado ou alterado.

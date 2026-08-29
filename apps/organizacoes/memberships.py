@@ -9,6 +9,7 @@ from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
+from apps.api.autenticacao.services import lock_user_accounts
 from apps.api.core.errors import APIError
 from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.models import Convite, Organizacao, Papel, Vinculo
@@ -42,8 +43,11 @@ class Vinculos:
     ) -> Convite:
         erro_capacidade = None
         convite_criado = None
-        with transaction.atomic():
-            organizacao = cls._bloquear_organizacao_aberta(organizacao.pk)
+        using = organizacao._state.db or "default"
+        with transaction.atomic(using=using):
+            usuarios_bloqueados = lock_user_accounts((convidado_por,), using=using)
+            convidado_por_bloqueado = usuarios_bloqueados.get(convidado_por.pk) if convidado_por is not None else None
+            organizacao = cls._bloquear_organizacao_aberta(organizacao.pk, using=using)
             assinatura, papeis_isentos = cls._bloquear_contrato_corrente(organizacao)
             if assinatura is not None:
                 ocupacao = cls.calcular_ocupacao(organizacao, papeis_isentos)
@@ -64,11 +68,11 @@ class Vinculos:
                     "organizacao": organizacao,
                     "email": email,
                     "papel": papel,
-                    "convidado_por": convidado_por,
+                    "convidado_por": convidado_por_bloqueado,
                 }
                 if expira_em is not None:
                     dados["expira_em"] = expira_em
-                convite_criado = Convite.objects.create(**dados)
+                convite_criado = Convite.objects.using(using).create(**dados)
         if erro_capacidade is not None:
             raise erro_capacidade
         assert convite_criado is not None
@@ -79,15 +83,18 @@ class Vinculos:
         """Aceita um convite vivo e cria ou eleva o vínculo do usuário."""
         erro_capacidade = None
         vinculo = None
-        with transaction.atomic():
-            organizacao = cls._bloquear_organizacao_aberta(convite.organizacao_id)
+        using = convite._state.db or "default"
+        with transaction.atomic(using=using):
+            usuario = lock_user_accounts((usuario,), using=using)[usuario.pk]
+            organizacao = cls._bloquear_organizacao_aberta(convite.organizacao_id, using=using)
             assinatura, papeis_isentos = cls._bloquear_contrato_corrente(organizacao)
-            convite_bloqueado = Convite.all_objects.select_for_update().get(pk=convite.pk)
+            convite_bloqueado = Convite.all_objects.using(using).select_for_update().get(pk=convite.pk)
             if not convite_bloqueado.pendente:
                 raise ValidationError(_("Convite expirado ou já utilizado."))
 
             vinculo_existente = (
-                Vinculo.objects.select_for_update()
+                Vinculo.objects.using(using)
+                .select_for_update()
                 .filter(
                     organizacao_id=convite_bloqueado.organizacao_id,
                     usuario=usuario,
@@ -114,7 +121,7 @@ class Vinculos:
                         cls._solicitar_expansao_automatica(organizacao, assinatura, ocupacao)
 
             if erro_capacidade is None:
-                vinculo, criado = Vinculo.objects.get_or_create(
+                vinculo, criado = Vinculo.objects.using(using).get_or_create(
                     organizacao_id=convite_bloqueado.organizacao_id,
                     usuario=usuario,
                     defaults={"papel": convite_bloqueado.papel},
@@ -134,6 +141,8 @@ class Vinculos:
     @classmethod
     def atualizar_convite(cls, convite: Convite, *, dados: dict) -> Convite:
         """Atualiza convite sem permitir que papel/expiração burlem a capacidade."""
+        if {"convidado_por", "convidado_por_id"} & dados.keys():
+            raise ValueError("O campo convidado_por é imutável.")
         erro_capacidade = None
         convite_atualizado = None
         with transaction.atomic():
@@ -187,6 +196,8 @@ class Vinculos:
     @classmethod
     def atualizar_vinculo(cls, vinculo: Vinculo, *, dados: dict) -> Vinculo:
         """Atualiza vínculo projetando qualquer mudança de papel sob os locks globais."""
+        if {"usuario", "usuario_id"} & dados.keys():
+            raise ValueError("O campo usuario é imutável.")
         erro_capacidade = None
         vinculo_atualizado = None
         with transaction.atomic():
@@ -228,8 +239,8 @@ class Vinculos:
         return vinculo_atualizado
 
     @staticmethod
-    def _bloquear_organizacao_aberta(organizacao_id: int) -> Organizacao:
-        organizacao = Organizacao.all_objects.select_for_update().get(pk=organizacao_id)
+    def _bloquear_organizacao_aberta(organizacao_id: int, *, using: str = "default") -> Organizacao:
+        organizacao = Organizacao.all_objects.using(using).select_for_update().get(pk=organizacao_id)
         if organizacao.encerramento_solicitado_em is not None:
             raise APIError(OrganizationErrorCode.CLOSURE_PENDING, status_code=409)
         return organizacao
