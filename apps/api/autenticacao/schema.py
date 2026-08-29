@@ -97,12 +97,24 @@ document_api_key_rotate = extend_schema(
     description=TOKEN_ONCE_DESCRIPTION,
 )
 
+document_api_key_update = extend_schema(
+    responses={
+        200: APIKeySerializer,
+        409: document_error_codes(OrganizationErrorCode.CLOSURE_PENDING, OrganizationErrorCode.INACTIVE),
+    }
+)
+
 document_api_key_suspend = extend_schema(responses={200: APIKeySerializer})
 
 document_api_key_resume = extend_schema(
     responses={
         200: APIKeySerializer,
-        409: document_error_codes(AuthErrorCode.REVOKED_TOKEN, AuthErrorCode.RESPONSIBLE_INACTIVE),
+        409: document_error_codes(
+            AuthErrorCode.REVOKED_TOKEN,
+            AuthErrorCode.RESPONSIBLE_INACTIVE,
+            OrganizationErrorCode.CLOSURE_PENDING,
+            OrganizationErrorCode.INACTIVE,
+        ),
     },
 )
 

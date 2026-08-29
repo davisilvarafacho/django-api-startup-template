@@ -224,6 +224,62 @@ def test_patch_altera_nome_sem_expor_segredo(ator, organizacao, responsavel):
     assert "token" not in response.data
 
 
+@pytest.mark.parametrize(
+    ("mutation", "payload", "suspend_first"),
+    [
+        ("patch", {"name": "Nome novo"}, False),
+        ("resume", {}, True),
+    ],
+)
+@pytest.mark.parametrize(
+    ("organization_state", "error_code"),
+    [
+        ("pending", "organizations.closure_pending"),
+        ("inactive_during_request", "organizations.inactive"),
+    ],
+)
+def test_patch_e_resume_retornam_conflito_para_organizacao_indisponivel(
+    monkeypatch,
+    ator,
+    organizacao,
+    responsavel,
+    mutation,
+    payload,
+    suspend_first,
+    organization_state,
+    error_code,
+):
+    client = _com_header(_client_com_sessao(ator), organizacao)
+    criada = client.post("/auth/api_keys/", {"name": "Nome antigo", "responsavel": responsavel.pk}, format="json").data
+    if suspend_first:
+        assert client.post(f"/auth/api_keys/{criada['uuid']}/suspend/").status_code == 200
+
+    if organization_state == "pending":
+        Organizacao.objects.filter(pk=organizacao.pk).update(encerramento_solicitado_em=timezone.now())
+    else:
+        from apps.api.autenticacao.views import APIKeyViewSet
+
+        original_get_object = APIKeyViewSet.get_object
+
+        def get_object_then_inactivate(view):
+            instance = original_get_object(view)
+            Organizacao.objects.filter(pk=organizacao.pk).update(is_active=False)
+            return instance
+
+        monkeypatch.setattr(APIKeyViewSet, "get_object", get_object_then_inactivate)
+
+    path = f"/auth/api_keys/{criada['uuid']}/{'' if mutation == 'patch' else 'resume/'}"
+    response = client.patch(path, payload, format="json") if mutation == "patch" else client.post(path, payload, format="json")
+
+    assert response.status_code == 409
+    assert response.data["errors"][0]["code"] == error_code
+    instance = AuthToken.objects.get(uuid=criada["uuid"])
+    if mutation == "patch":
+        assert instance.name == "Nome antigo"
+    else:
+        assert instance.suspended_at is not None
+
+
 def test_delete_revoga_sem_apagar(ator, organizacao, responsavel):
     client = _com_header(_client_com_sessao(ator), organizacao)
     criada = client.post("/auth/api_keys/", {"name": "Integração", "responsavel": responsavel.pk}, format="json").data

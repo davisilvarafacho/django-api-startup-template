@@ -47,6 +47,7 @@ from .schema import (
     document_api_key_resume,
     document_api_key_rotate,
     document_api_key_suspend,
+    document_api_key_update,
     document_google_connect,
     document_google_disconnect,
     document_google_login,
@@ -432,6 +433,7 @@ class APIKeyViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         return super().create(request, *args, **kwargs)
 
+    @document_api_key_update
     @require_recent_auth()
     def partial_update(self, request, *args, **kwargs):
         return super().partial_update(request, *args, **kwargs)

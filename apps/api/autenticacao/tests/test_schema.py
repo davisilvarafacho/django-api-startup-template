@@ -95,6 +95,29 @@ def test_rotacao_de_api_key_documenta_erros_e_nao_omite_o_sucesso():
     assert "organizations.inactive" in operation["responses"]["409"]["description"]
 
 
+def test_patch_de_api_key_documenta_erros_de_organizacao_com_status_409():
+    schema = _gerar_schema()
+
+    operation = schema["paths"]["/auth/api_keys/{uuid}/"]["patch"]
+
+    assert set(operation["responses"]) == {"200", "409"}
+    assert "organizations.closure_pending" in operation["responses"]["409"]["description"]
+    assert "organizations.inactive" in operation["responses"]["409"]["description"]
+
+
+def test_resume_de_api_key_documenta_erros_de_auth_e_organizacao_com_status_409():
+    schema = _gerar_schema()
+
+    operation = schema["paths"]["/auth/api_keys/{uuid}/resume/"]["post"]
+
+    assert set(operation["responses"]) == {"200", "409"}
+    description = operation["responses"]["409"]["description"]
+    assert "auth.revoked_token" in description
+    assert "auth.responsible_inactive" in description
+    assert "organizations.closure_pending" in description
+    assert "organizations.inactive" in description
+
+
 def test_schema_de_api_key_nunca_declara_campos_de_segredo():
     schema = _gerar_schema()
 
