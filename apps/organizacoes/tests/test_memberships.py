@@ -111,7 +111,6 @@ def test_aceitar_convite_pelo_model_preserva_fachada_publica():
 
     vinculo = convite.aceitar(usuario)
 
-    convite.refresh_from_db()
     assert vinculo.organizacao == organizacao
     assert vinculo.usuario == usuario
     assert vinculo.papel == Papel.GESTOR

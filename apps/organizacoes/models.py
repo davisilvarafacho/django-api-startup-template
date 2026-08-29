@@ -183,7 +183,9 @@ class Convite(BaseTenantless):
         """Compatibilidade para consumidores legados do aceite de convite."""
         from apps.organizacoes.memberships import Vinculos
 
-        return Vinculos.aceitar_convite(self, usuario)
+        vinculo = Vinculos.aceitar_convite(self, usuario)
+        self.refresh_from_db(fields=["aceito_em"])
+        return vinculo
 
     def __str__(self):
         return f"Convite #{self.pk or 'novo'} @ {self.organizacao}"
