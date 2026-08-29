@@ -5,8 +5,13 @@ from rest_framework.response import Response
 
 from apps.api.autenticacao.models import TokenType
 from apps.api.autenticacao.permissions import TokenScopePermission, require_token_scopes
+from apps.api.autenticacao.recent_auth import RecentAuthenticationPermission, require_recent_auth
+from apps.api.core.errors import APIError
 from apps.api.core.scope_mixins import ScopeResourceMixin
+from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.models import Convite, Organizacao, Papel, Time, Vinculo
+from apps.organizacoes.onboarding import OrganizationOnboarding
+from apps.organizacoes.organizations import AssinaturasCicloOrganizacao, Organizacoes
 from apps.organizacoes.permissions import PapelMinimoPermission, TenantPermission
 from apps.organizacoes.serializers import (
     AceitarConviteSerializer,
@@ -18,6 +23,13 @@ from apps.organizacoes.serializers import (
 )
 
 
+def _carregar_assinaturas() -> type[AssinaturasCicloOrganizacao]:
+    """Importa o ciclo comercial real somente quando a Task 9 estiver instalada."""
+    from apps.assinaturas.subscriptions import Assinaturas
+
+    return Assinaturas
+
+
 class OrganizacaoViewSet(
     ScopeResourceMixin,
     mixins.ListModelMixin,
@@ -26,11 +38,18 @@ class OrganizacaoViewSet(
     viewsets.GenericViewSet,
 ):
     serializer_class = OrganizacaoSerializer
-    permission_classes = [IsAuthenticated, TenantPermission, TokenScopePermission]
+    permission_classes = [IsAuthenticated, TenantPermission, TokenScopePermission, RecentAuthenticationPermission]
     # Sem `queryset` estático (depende do usuário autenticado); a superfície
     # pública corresponde ao model mesmo assim.
     scope_resource = "organizations"
-    session_only_actions = {"create"}
+    session_only_actions = {"create", "encerramento"}
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        organizacao = OrganizationOnboarding.criar(usuario=request.user, **serializer.validated_data)
+        output = self.get_serializer(organizacao)
+        return Response(output.data, status=status.HTTP_201_CREATED)
 
     def get_queryset(self):
         auth_token = getattr(self.request, "auth", None)
@@ -58,6 +77,42 @@ class OrganizacaoViewSet(
         )
         context["vinculos_por_organizacao"] = {vinculo.organizacao_id: vinculo for vinculo in vinculos}
         return context
+
+    def _organizacao_do_proprietario(self):
+        organizacao = self.get_object()
+        vinculo = Vinculo.objects.filter(
+            organizacao=organizacao,
+            usuario=self.request.user,
+            is_active=True,
+        ).first()
+        if vinculo is None or vinculo.papel != Papel.PROPRIETARIO:
+            raise APIError(OrganizationErrorCode.ROLE_INSUFFICIENT, status_code=403)
+        return organizacao
+
+    @action(detail=True, methods=["post", "delete"], url_path="encerramento")
+    @require_recent_auth()
+    def encerramento(self, request, *args, **kwargs):
+        organizacao = self._organizacao_do_proprietario()
+        if request.method == "DELETE":
+            Organizacoes.cancelar_encerramento(organizacao)
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        assinaturas = _carregar_assinaturas()
+        termo = assinaturas.obter_termo_encerramento(organizacao)
+        encerrada = Organizacoes.solicitar_encerramento(
+            organizacao,
+            termo,
+            assinaturas=assinaturas,
+            ator=request.user,
+        )
+        if encerrada:
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        organizacao.refresh_from_db(fields=["encerramento_agendado_para"])
+        return Response(
+            {"scheduled_for": organizacao.encerramento_agendado_para.isoformat()},
+            status=status.HTTP_202_ACCEPTED,
+        )
 
 
 class TenantViewSetMixin(ScopeResourceMixin):

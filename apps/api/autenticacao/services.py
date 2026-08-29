@@ -401,6 +401,39 @@ def revoke_api_key(instance, *, actor):
     return instance
 
 
+def revoke_organization_api_keys(organization, *, actor=None, revoked_at=None, using=None) -> int:
+    """Revoga sob lock somente as API keys ainda vivas de uma organização."""
+    database_alias = resolve_database_alias(organization, using)
+    auth_token_model = get_token_model()
+    revoked_at = revoked_at or timezone.now()
+
+    with transaction.atomic(using=database_alias):
+        api_keys = list(
+            auth_token_model.objects.using(database_alias)
+            .select_for_update()
+            .filter(
+                organization=organization,
+                type=TokenType.API_KEY,
+                revoked_at__isnull=True,
+            )
+            .order_by("pk")
+        )
+        for api_key in api_keys:
+            api_key.revoked_at = revoked_at
+            api_key.revoked_by = actor
+            api_key.save(using=database_alias, update_fields=["revoked_at", "revoked_by"])
+            transaction.on_commit(
+                lambda api_key=api_key: emit_api_key_event(
+                    "revoke",
+                    instance=api_key,
+                    actor=actor,
+                    reason="organization_closed",
+                ),
+                using=database_alias,
+            )
+        return len(api_keys)
+
+
 def ensure_api_key_still_valid(token):
     """Suspende automática e idempotentemente uma API key sem responsável ativo/vinculado.
 

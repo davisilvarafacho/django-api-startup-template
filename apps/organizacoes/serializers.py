@@ -1,12 +1,9 @@
-from django.db import transaction
-
 from rest_framework import serializers
 
 from apps.api.core.errors import APIError
 from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.memberships import Vinculos
 from apps.organizacoes.models import Convite, Organizacao, Time, Vinculo
-from apps.organizacoes.organizations import Organizacoes
 
 
 class UsuarioResumoSerializer(serializers.Serializer):
@@ -38,13 +35,6 @@ class OrganizacaoSerializer(serializers.ModelSerializer):
 
         vinculo = Vinculo.objects.filter(organizacao=obj, usuario=request.user, is_active=True).first()
         return vinculo.papel if vinculo else None
-
-    def create(self, validated_data):
-        usuario = self.context["request"].user
-        with transaction.atomic():
-            organizacao = Organizacoes.criar(**validated_data)
-            Vinculos.criar_proprietario(organizacao, usuario)
-        return organizacao
 
 
 class TimeSerializer(serializers.ModelSerializer):

@@ -300,6 +300,13 @@ ACCOUNT_DELETION_BATCH_SIZE = get_int_from_env("ACCOUNT_DELETION_BATCH_SIZE", 10
 ACCOUNT_REACTIVATION_TOKEN_MAX_AGE_SECONDS = get_int_from_env("ACCOUNT_REACTIVATION_TOKEN_MAX_AGE_SECONDS", 60 * 60)
 ACCOUNT_REACTIVATION_FRONTEND_URL = get_env_var("ACCOUNT_REACTIVATION_FRONTEND_URL", "http://localhost:3000/reativar-conta")
 
+# O catálogo e o contrato real são ligados ao orquestrador de onboarding na
+# Task 9. Até lá, estes valores alimentam apenas a seam tipada do caso de uso.
+ASSINATURAS_ONBOARDING_MODO = get_env_var("ASSINATURAS_ONBOARDING_MODO", "gratuito")
+ASSINATURAS_ONBOARDING_PLANO = get_env_var("ASSINATURAS_ONBOARDING_PLANO", "gratuito")
+ASSINATURAS_ONBOARDING_PERIODICIDADE = get_env_var("ASSINATURAS_ONBOARDING_PERIODICIDADE", "mensal")
+ORGANIZATION_CLOSURE_BATCH_SIZE = get_int_from_env("ORGANIZATION_CLOSURE_BATCH_SIZE", 100)
+
 AUTH_USER_MODEL = "usuarios.Usuario"
 
 
@@ -684,6 +691,10 @@ CELERY_BEAT_SCHEDULE = {
     "anonymize-expired-accounts": {
         "task": "usuarios.anonimizar_contas_vencidas",
         "schedule": crontab(hour=0, minute=30),
+    },
+    "close-expired-organizations": {
+        "task": "organizacoes.efetivar_encerramentos_vencidos",
+        "schedule": crontab(hour=1, minute=0),
     },
 }
 

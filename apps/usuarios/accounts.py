@@ -321,6 +321,20 @@ class Contas:
     """Orquestra mudanças de conta que precisam preservar invariantes."""
 
     @classmethod
+    def validar_para_onboarding(cls, usuario):
+        """Bloqueia e devolve uma conta apta a criar uma organização."""
+        from apps.api.autenticacao.errors import AuthErrorCode
+
+        database_alias = usuario._state.db or "default"
+        with transaction.atomic(using=database_alias):
+            conta = lock_user_account(usuario, using=database_alias)
+            if conta.is_deleted or not conta.is_active or conta.exclusao_agendada_para is not None:
+                raise APIError(AuthErrorCode.USER_INACTIVE, status_code=401)
+            if conta.email_verificado_em is None:
+                raise APIError(AccountErrorCode.EMAIL_NOT_VERIFIED, status_code=403)
+            return conta
+
+    @classmethod
     def desativar(cls, usuario):
         """Desativa a conta e suspende seu acesso sem apagar vínculos."""
         database_alias = usuario._state.db or "default"

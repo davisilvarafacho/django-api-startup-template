@@ -79,8 +79,21 @@ def test_lista_apenas_organizacoes_do_usuario_sem_exigir_header():
     }
 
 
-def test_cria_organizacao_e_vincula_usuario_como_proprietario():
-    usuario = criar_usuario()
+def test_cria_organizacao_e_vincula_usuario_como_proprietario(monkeypatch):
+    from apps.organizacoes import onboarding
+
+    class Catalogo:
+        @classmethod
+        def obter_versao_inicial(cls, **kwargs):
+            return object(), object()
+
+    class Assinaturas:
+        @classmethod
+        def criar_gratuita(cls, **kwargs):
+            return object()
+
+    monkeypatch.setattr(onboarding, "_carregar_colaboradores_comerciais", lambda: (Catalogo, Assinaturas))
+    usuario = criar_usuario(email_verificado_em=timezone.now())
 
     response = client_autenticado(usuario).post(
         "/organizacoes/",

@@ -9,6 +9,8 @@ from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
+from apps.api.core.errors import APIError
+from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.models import Convite, Organizacao, Papel, Vinculo
 from apps.usuarios.models import Usuario
 
@@ -38,20 +40,23 @@ class Vinculos:
         convidado_por: Usuario | None,
         expira_em=None,
     ) -> Convite:
-        dados = {
-            "organizacao": organizacao,
-            "email": email,
-            "papel": papel,
-            "convidado_por": convidado_por,
-        }
-        if expira_em is not None:
-            dados["expira_em"] = expira_em
-        return Convite.objects.create(**dados)
+        with transaction.atomic():
+            organizacao = cls._bloquear_organizacao_aberta(organizacao.pk)
+            dados = {
+                "organizacao": organizacao,
+                "email": email,
+                "papel": papel,
+                "convidado_por": convidado_por,
+            }
+            if expira_em is not None:
+                dados["expira_em"] = expira_em
+            return Convite.objects.create(**dados)
 
     @classmethod
     def aceitar_convite(cls, convite: Convite, usuario: Usuario) -> Vinculo:
         """Aceita um convite vivo e cria ou eleva o vínculo do usuário."""
         with transaction.atomic():
+            cls._bloquear_organizacao_aberta(convite.organizacao_id)
             convite_bloqueado = Convite.all_objects.select_for_update().get(pk=convite.pk)
             if not convite_bloqueado.pendente:
                 raise ValidationError(_("Convite expirado ou já utilizado."))
@@ -69,6 +74,13 @@ class Vinculos:
             convite_bloqueado.save(update_fields=["aceito_em"])
 
         return vinculo
+
+    @staticmethod
+    def _bloquear_organizacao_aberta(organizacao_id: int) -> Organizacao:
+        organizacao = Organizacao.all_objects.select_for_update().get(pk=organizacao_id)
+        if organizacao.encerramento_solicitado_em is not None:
+            raise APIError(OrganizationErrorCode.CLOSURE_PENDING, status_code=409)
+        return organizacao
 
     @classmethod
     def calcular_ocupacao(cls, organizacao: Organizacao, papeis_isentos: frozenset[Papel]) -> OcupacaoSeats:

@@ -16,3 +16,7 @@ class OrganizationErrorCode(models.TextChoices):
         "organizations.tenant_mismatch",
         _("O header X-Organization não corresponde à organização desta credencial."),
     )
+    CLOSURE_PENDING = (
+        "organizations.closure_pending",
+        _("Esta organização possui encerramento pendente."),
+    )
