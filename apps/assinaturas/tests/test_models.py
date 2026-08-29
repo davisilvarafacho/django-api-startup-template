@@ -295,6 +295,28 @@ def test_banco_recusa_delete_fisico_de_preco_publicado():
     assert PrecoPlano.all_objects.filter(pk=preco.pk).exists()
 
 
+def test_banco_recusa_alterar_pk_de_versao_publicada_por_sql():
+    versao = criar_versao(criar_plano())
+    novo_id = versao.pk + 1_000_000
+
+    with pytest.raises(DatabaseError, match="Versão de plano publicada é imutável"), transaction.atomic(), connection.cursor() as cursor:
+        cursor.execute("UPDATE versao_plano SET id = %s WHERE id = %s", [novo_id, versao.pk])
+
+    assert VersaoPlano.all_objects.filter(pk=versao.pk).exists()
+    assert VersaoPlano.all_objects.filter(pk=novo_id).exists() is False
+
+
+def test_banco_recusa_alterar_pk_de_preco_publicado_por_sql():
+    _, preco = criar_preco_publicado(codigo="pk-preco")
+    novo_id = preco.pk + 1_000_000
+
+    with pytest.raises(DatabaseError, match="Preço de versão publicada é imutável"), transaction.atomic(), connection.cursor() as cursor:
+        cursor.execute("UPDATE preco_plano SET id = %s WHERE id = %s", [novo_id, preco.pk])
+
+    assert PrecoPlano.all_objects.filter(pk=preco.pk).exists()
+    assert PrecoPlano.all_objects.filter(pk=novo_id).exists() is False
+
+
 @pytest.mark.django_db(transaction=True)
 def test_banco_serializa_publicacao_contra_atualizacao_concorrente():
     versao = criar_versao(criar_plano(), publicada=False)

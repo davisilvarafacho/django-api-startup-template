@@ -231,6 +231,7 @@ def sincronizar_planos(definicoes: tuple[DefinicaoPlano, ...], *, aplicar: bool)
     with transaction.atomic():
         if aplicar:
             _adquirir_lock_catalogo()
+            _bloquear_mutacoes_precos()
         for definicao_plano in definicoes:
             plano = Plano.all_objects.select_for_update().filter(codigo=definicao_plano.codigo, is_deleted=False).first()
             if plano is None:
@@ -257,6 +258,11 @@ def sincronizar_planos(definicoes: tuple[DefinicaoPlano, ...], *, aplicar: bool)
 def _adquirir_lock_catalogo() -> None:
     with connection.cursor() as cursor:
         cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ["apps.assinaturas.sync_plans"])
+
+
+def _bloquear_mutacoes_precos() -> None:
+    with connection.cursor() as cursor:
+        cursor.execute("LOCK TABLE preco_plano IN EXCLUSIVE MODE")
 
 
 def _descrever_ausencias(plano: DefinicaoPlano, acoes: list[str], verbo: str) -> None:

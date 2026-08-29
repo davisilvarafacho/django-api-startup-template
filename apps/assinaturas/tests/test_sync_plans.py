@@ -1,14 +1,16 @@
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from io import StringIO
-from threading import Barrier
+from threading import Barrier, Event
+from time import monotonic, sleep
 
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.db import close_old_connections, connections
+from django.db import close_old_connections, connection, connections, transaction
 
 import pytest
 
+from apps.assinaturas import catalogs
 from apps.assinaturas.catalogs import PLANOS_BOOTSTRAP, DefinicaoPrecoPlano, sincronizar_planos
 from apps.assinaturas.models import Periodicidade, Plano, PrecoPlano, VersaoPlano
 from apps.logs.models import LogAlteracao
@@ -261,3 +263,77 @@ def test_primeiro_sync_concorrente_converge_sem_integrity_error():
     assert Plano.objects.count() == 2
     assert VersaoPlano.objects.count() == 2
     assert PrecoPlano.objects.count() == 4
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("bloquear_antes", [False, True], ids=["update-direto", "select-for-update"])
+def test_sync_serializa_com_atualizacao_operacional_de_preco_sem_deadlock(monkeypatch, bloquear_antes):
+    sincronizar_planos(PLANOS_BOOTSTRAP, aplicar=True)
+    gratuito = PLANOS_BOOTSTRAP[0]
+    preco_inativo = replace(gratuito.versoes[0].precos[0], is_active=False)
+    versao_alterada = replace(gratuito.versoes[0], precos=(preco_inativo, gratuito.versoes[0].precos[1]))
+    definicoes = (replace(gratuito, versoes=(versao_alterada,)), PLANOS_BOOTSTRAP[1])
+    preco = PrecoPlano.objects.get(
+        versao_plano__plano__codigo="gratuito",
+        periodicidade=Periodicidade.MENSAL,
+        moeda="BRL",
+    )
+    versao_bloqueada = Event()
+    liberar_sync = Event()
+    atualizacao_iniciada = Event()
+    pid_atualizacao: list[int] = []
+    recusar_mutacao_original = catalogs._recusar_mutacao_versao
+
+    def pausar_sync_com_versao_bloqueada(versao, definicao):
+        recusar_mutacao_original(versao, definicao)
+        if versao.plano.codigo == "gratuito":
+            versao_bloqueada.set()
+            assert liberar_sync.wait(timeout=10)
+
+    monkeypatch.setattr(catalogs, "_recusar_mutacao_versao", pausar_sync_com_versao_bloqueada)
+
+    def executar_sync_concorrente():
+        close_old_connections()
+        try:
+            return sincronizar_planos(definicoes, aplicar=True)
+        finally:
+            connections.close_all()
+
+    def atualizar_preco_concorrente():
+        close_old_connections()
+        try:
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute("SELECT pg_backend_pid()")
+                pid_atualizacao.append(cursor.fetchone()[0])
+                atualizacao_iniciada.set()
+                if bloquear_antes:
+                    PrecoPlano.objects.select_for_update().get(pk=preco.pk)
+                return PrecoPlano.objects.filter(pk=preco.pk).update(is_active=False)
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futuro_sync = executor.submit(executar_sync_concorrente)
+        assert versao_bloqueada.wait(timeout=5)
+        futuro_atualizacao = executor.submit(atualizar_preco_concorrente)
+        assert atualizacao_iniciada.wait(timeout=5)
+
+        limite = monotonic() + 5
+        try:
+            while monotonic() < limite:
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT wait_event_type FROM pg_stat_activity WHERE pid = %s", [pid_atualizacao[0]])
+                    resultado = cursor.fetchone()
+                if resultado is not None and resultado[0] == "Lock":
+                    break
+                sleep(0.01)
+            else:
+                pytest.fail("a atualização concorrente não entrou em espera de lock")
+        finally:
+            liberar_sync.set()
+
+        assert futuro_sync.result(timeout=15) is not None
+        assert futuro_atualizacao.result(timeout=15) == 1
+
+    preco.refresh_from_db()
+    assert preco.is_active is False
