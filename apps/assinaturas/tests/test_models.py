@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
+from time import monotonic, sleep
 
 from django.db import DatabaseError, IntegrityError, close_old_connections, connection, connections, transaction
 from django.utils import timezone
@@ -357,6 +358,74 @@ def test_banco_serializa_publicacao_contra_atualizacao_concorrente():
     versao.refresh_from_db()
     assert versao.publicada_em is not None
     assert versao.seats_inclusos == 1
+
+
+@pytest.mark.django_db(transaction=True)
+def test_banco_serializa_publicacao_contra_mutacao_concorrente_de_preco():
+    versao = criar_versao(criar_plano(codigo="race-preco"), publicada=False)
+    preco = criar_preco(versao)
+    publicacao_escrita = Event()
+    liberar_publicacao = Event()
+    atualizacao_iniciada = Event()
+    pid_atualizacao: list[int] = []
+
+    def publicar():
+        close_old_connections()
+        try:
+            with transaction.atomic():
+                concorrente = VersaoPlano.objects.get(pk=versao.pk)
+                concorrente.publicada_em = timezone.now()
+                concorrente.save(update_fields=["publicada_em"])
+                publicacao_escrita.set()
+                assert liberar_publicacao.wait(timeout=10)
+            return "publicada"
+        finally:
+            connections.close_all()
+
+    def atualizar_preco():
+        close_old_connections()
+        try:
+            assert publicacao_escrita.wait(timeout=5)
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_backend_pid()")
+                pid_atualizacao.append(cursor.fetchone()[0])
+            atualizacao_iniciada.set()
+            try:
+                with transaction.atomic(), connection.cursor() as cursor:
+                    cursor.execute("UPDATE preco_plano SET valor_base_centavos = 100 WHERE id = %s", [preco.pk])
+            except DatabaseError:
+                return "bloqueada"
+            return "alterada"
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futuro_publicacao = executor.submit(publicar)
+        assert publicacao_escrita.wait(timeout=5)
+        futuro_atualizacao = executor.submit(atualizar_preco)
+        assert atualizacao_iniciada.wait(timeout=5)
+
+        limite = monotonic() + 5
+        try:
+            while monotonic() < limite:
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT wait_event_type FROM pg_stat_activity WHERE pid = %s", [pid_atualizacao[0]])
+                    resultado = cursor.fetchone()
+                if resultado is not None and resultado[0] == "Lock":
+                    break
+                sleep(0.01)
+            else:
+                pytest.fail("a mutação do preço não esperou a publicação")
+        finally:
+            liberar_publicacao.set()
+
+        assert futuro_publicacao.result(timeout=15) == "publicada"
+        assert futuro_atualizacao.result(timeout=15) == "bloqueada"
+
+    versao.refresh_from_db()
+    preco.refresh_from_db()
+    assert versao.publicada_em is not None
+    assert preco.valor_base_centavos == 0
 
 
 def test_create_rejeita_snapshot_de_recursos_desconhecido_antes_de_publicar():

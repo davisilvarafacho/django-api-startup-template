@@ -231,7 +231,6 @@ def sincronizar_planos(definicoes: tuple[DefinicaoPlano, ...], *, aplicar: bool)
     with transaction.atomic():
         if aplicar:
             _adquirir_lock_catalogo()
-            _bloquear_mutacoes_precos()
         for definicao_plano in definicoes:
             plano = Plano.all_objects.select_for_update().filter(codigo=definicao_plano.codigo, is_deleted=False).first()
             if plano is None:
@@ -258,11 +257,6 @@ def sincronizar_planos(definicoes: tuple[DefinicaoPlano, ...], *, aplicar: bool)
 def _adquirir_lock_catalogo() -> None:
     with connection.cursor() as cursor:
         cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ["apps.assinaturas.sync_plans"])
-
-
-def _bloquear_mutacoes_precos() -> None:
-    with connection.cursor() as cursor:
-        cursor.execute("LOCK TABLE preco_plano IN EXCLUSIVE MODE")
 
 
 def _descrever_ausencias(plano: DefinicaoPlano, acoes: list[str], verbo: str) -> None:
@@ -303,7 +297,7 @@ def _sincronizar_versao(
     acoes: list[str],
     verbo: str,
 ) -> None:
-    versao = VersaoPlano.objects.select_for_update().filter(plano=plano, numero=definicao.numero).first()
+    versao = VersaoPlano.objects.select_for_update(no_key=True).filter(plano=plano, numero=definicao.numero).first()
     nova_versao = versao is None
     if versao is None:
         if VersaoPlano.all_objects.filter(plano=plano, numero=definicao.numero, is_deleted=True).exists():
@@ -426,12 +420,16 @@ def _sincronizar_versao_atual(
     acoes: list[str],
 ) -> None:
     numero_atual = next(versao.numero for versao in definicao.versoes if versao.atual)
-    atual_no_banco = VersaoPlano.objects.select_for_update().filter(plano=plano, atual=True).first()
+    atual_no_banco = VersaoPlano.objects.select_for_update(no_key=True).filter(plano=plano, atual=True).first()
     if atual_no_banco is not None and atual_no_banco.numero == numero_atual:
         return
     acoes.append(f"{'marcaria' if not aplicar else 'marcou'} '{plano.codigo}' v{numero_atual} como atual")
     if aplicar:
-        alvo = VersaoPlano.objects.select_for_update().filter(plano=plano, numero=numero_atual, publicada_em__isnull=False, is_active=True).first()
+        alvo = (
+            VersaoPlano.objects.select_for_update(no_key=True)
+            .filter(plano=plano, numero=numero_atual, publicada_em__isnull=False, is_active=True)
+            .first()
+        )
         if alvo is None:
             existente = VersaoPlano.all_objects.filter(plano=plano, numero=numero_atual).first()
             if existente is not None and existente.is_deleted:

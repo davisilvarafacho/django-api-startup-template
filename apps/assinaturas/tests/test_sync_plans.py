@@ -7,6 +7,7 @@ from time import monotonic, sleep
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import close_old_connections, connection, connections, transaction
+from django.utils import timezone
 
 import pytest
 
@@ -281,7 +282,6 @@ def test_sync_serializa_com_atualizacao_operacional_de_preco_sem_deadlock(monkey
     versao_bloqueada = Event()
     liberar_sync = Event()
     atualizacao_iniciada = Event()
-    pid_atualizacao: list[int] = []
     recusar_mutacao_original = catalogs._recusar_mutacao_versao
 
     def pausar_sync_com_versao_bloqueada(versao, definicao):
@@ -302,9 +302,7 @@ def test_sync_serializa_com_atualizacao_operacional_de_preco_sem_deadlock(monkey
     def atualizar_preco_concorrente():
         close_old_connections()
         try:
-            with transaction.atomic(), connection.cursor() as cursor:
-                cursor.execute("SELECT pg_backend_pid()")
-                pid_atualizacao.append(cursor.fetchone()[0])
+            with transaction.atomic():
                 atualizacao_iniciada.set()
                 if bloquear_antes:
                     PrecoPlano.objects.select_for_update().get(pk=preco.pk)
@@ -318,22 +316,79 @@ def test_sync_serializa_com_atualizacao_operacional_de_preco_sem_deadlock(monkey
         futuro_atualizacao = executor.submit(atualizar_preco_concorrente)
         assert atualizacao_iniciada.wait(timeout=5)
 
+        try:
+            assert futuro_atualizacao.result(timeout=5) == 1
+        finally:
+            liberar_sync.set()
+
+        assert futuro_sync.result(timeout=15) is not None
+
+    preco.refresh_from_db()
+    assert preco.is_active is False
+
+
+@pytest.mark.django_db(transaction=True)
+def test_sync_nao_deadlocka_quando_transacao_bloqueia_versao_antes_do_preco():
+    sincronizar_planos(PLANOS_BOOTSTRAP, aplicar=True)
+    gratuito = PLANOS_BOOTSTRAP[0]
+    preco_inativo = replace(gratuito.versoes[0].precos[0], is_active=False)
+    versao_alterada = replace(gratuito.versoes[0], precos=(preco_inativo, gratuito.versoes[0].precos[1]))
+    definicoes = (replace(gratuito, versoes=(versao_alterada,)), PLANOS_BOOTSTRAP[1])
+    versao = VersaoPlano.objects.get(plano__codigo="gratuito", numero=1)
+    preco = PrecoPlano.objects.get(
+        versao_plano=versao,
+        periodicidade=Periodicidade.MENSAL,
+        moeda="BRL",
+    )
+    versao_bloqueada = Event()
+    liberar_preco = Event()
+    sync_iniciado = Event()
+    pid_sync: list[int] = []
+
+    def atualizar_versao_e_preco():
+        close_old_connections()
+        try:
+            with transaction.atomic():
+                assert VersaoPlano.objects.filter(pk=versao.pk).update(last_modified_at=timezone.now()) == 1
+                versao_bloqueada.set()
+                assert liberar_preco.wait(timeout=10)
+                return PrecoPlano.objects.filter(pk=preco.pk).update(is_active=False)
+        finally:
+            connections.close_all()
+
+    def executar_sync_concorrente():
+        close_old_connections()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_backend_pid()")
+                pid_sync.append(cursor.fetchone()[0])
+            sync_iniciado.set()
+            return sincronizar_planos(definicoes, aplicar=True)
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futuro_atualizacao = executor.submit(atualizar_versao_e_preco)
+        assert versao_bloqueada.wait(timeout=5)
+        futuro_sync = executor.submit(executar_sync_concorrente)
+        assert sync_iniciado.wait(timeout=5)
+
         limite = monotonic() + 5
         try:
             while monotonic() < limite:
                 with connection.cursor() as cursor:
-                    cursor.execute("SELECT wait_event_type FROM pg_stat_activity WHERE pid = %s", [pid_atualizacao[0]])
+                    cursor.execute("SELECT wait_event_type FROM pg_stat_activity WHERE pid = %s", [pid_sync[0]])
                     resultado = cursor.fetchone()
                 if resultado is not None and resultado[0] == "Lock":
                     break
                 sleep(0.01)
             else:
-                pytest.fail("a atualização concorrente não entrou em espera de lock")
+                pytest.fail("o sync concorrente não entrou em espera pela versão")
         finally:
-            liberar_sync.set()
+            liberar_preco.set()
 
-        assert futuro_sync.result(timeout=15) is not None
         assert futuro_atualizacao.result(timeout=15) == 1
+        assert futuro_sync.result(timeout=15) is not None
 
     preco.refresh_from_db()
     assert preco.is_active is False
