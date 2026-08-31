@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from typing import TYPE_CHECKING
 
 from django.db import transaction
@@ -20,7 +21,6 @@ from apps.assinaturas.models import (
     ModoAtivacaoProposta,
     Periodicidade,
     PropostaComercial,
-    StatusFinanceiro,
     StatusPropostaComercial,
     VersaoPlano,
 )
@@ -33,6 +33,13 @@ if TYPE_CHECKING:
 
 class ConflitoPropostaComercial(ValueError):
     """A proposta divergiu da revisao, validade ou transicao esperada."""
+
+
+class _ValorNaoInformado(Enum):
+    NAO_INFORMADO = "nao_informado"
+
+
+NAO_INFORMADO = _ValorNaoInformado.NAO_INFORMADO
 
 
 @dataclass(frozen=True)
@@ -65,7 +72,7 @@ class EdicaoPropostaComercial:
     revisao_esperada: int
     termos: TermosAssinatura
     valida_ate: datetime
-    versao_plano_referencia: VersaoPlano | None = None
+    versao_plano_referencia: VersaoPlano | None | _ValorNaoInformado = NAO_INFORMADO
     modo_ativacao: ModoAtivacaoProposta | None = None
 
     def __post_init__(self):
@@ -76,7 +83,11 @@ class EdicaoPropostaComercial:
             raise ValueError("Termos da proposta precisam ser TermosAssinatura.")
         if not isinstance(self.valida_ate, datetime):
             raise ValueError("Validade da proposta precisa ser um datetime.")
-        if self.versao_plano_referencia is not None and not isinstance(self.versao_plano_referencia, VersaoPlano):
+        if (
+            self.versao_plano_referencia is not NAO_INFORMADO
+            and self.versao_plano_referencia is not None
+            and not isinstance(self.versao_plano_referencia, VersaoPlano)
+        ):
             raise ValueError("Versao de referencia precisa ser uma VersaoPlano.")
         if self.modo_ativacao is not None and not isinstance(self.modo_ativacao, ModoAtivacaoProposta):
             raise ValueError("Modo de ativacao precisa ser um ModoAtivacaoProposta concreto.")
@@ -146,13 +157,13 @@ class Propostas:
             if comando.valida_ate <= timezone.now():
                 raise ConflitoPropostaComercial("A validade da proposta precisa estar no futuro.")
             cls._aplicar_termos(proposta, comando.termos)
-            if comando.versao_plano_referencia is not None:
+            if comando.versao_plano_referencia is not NAO_INFORMADO:
                 proposta.versao_plano_referencia = comando.versao_plano_referencia
             if comando.modo_ativacao is not None:
                 proposta.modo_ativacao = comando.modo_ativacao
             proposta.valida_ate = comando.valida_ate
             proposta.revisao += 1
-            proposta.save(
+            proposta._salvar_transicao(
                 update_fields=[
                     "versao_plano_referencia",
                     "modo_ativacao",
@@ -182,7 +193,7 @@ class Propostas:
             bloqueada.status = StatusPropostaComercial.ENVIADA
             bloqueada.enviada_em = agora
             bloqueada.revisao += 1
-            bloqueada.save(update_fields=["status", "enviada_em", "revisao", "last_modified_at"])
+            bloqueada._salvar_transicao(update_fields=["status", "enviada_em", "revisao", "last_modified_at"])
             return bloqueada
 
     @classmethod
@@ -201,7 +212,7 @@ class Propostas:
             cls._validar_proprietario(bloqueada, ator_id=ator_bloqueado.pk)
             cls._validar_vigente(bloqueada, agora=agora)
             if bloqueada.status == StatusPropostaComercial.ACEITA:
-                if bloqueada.aceita_por_id != ator_bloqueado.pk or revisao_esperada not in (bloqueada.revisao, bloqueada.revisao - 1):
+                if revisao_esperada not in (bloqueada.revisao, bloqueada.revisao - 1):
                     raise ConflitoPropostaComercial("A revisão da proposta mudou.")
                 return cls._resultado_aceite(bloqueada)
             cls._validar_revisao(bloqueada, revisao_esperada)
@@ -211,7 +222,7 @@ class Propostas:
             bloqueada.aceita_em = agora
             bloqueada.aceita_por = ator_bloqueado
             bloqueada.revisao += 1
-            bloqueada.save(update_fields=["status", "aceita_em", "aceita_por", "revisao", "last_modified_at"])
+            bloqueada._salvar_transicao(update_fields=["status", "aceita_em", "aceita_por", "revisao", "last_modified_at"])
             return cls._resultado_aceite(bloqueada)
 
     @classmethod
@@ -236,7 +247,7 @@ class Propostas:
             bloqueada.recusada_em = agora
             bloqueada.recusada_por = ator_bloqueado
             bloqueada.revisao += 1
-            bloqueada.save(update_fields=["status", "recusada_em", "recusada_por", "revisao", "last_modified_at"])
+            bloqueada._salvar_transicao(update_fields=["status", "recusada_em", "recusada_por", "revisao", "last_modified_at"])
             return bloqueada
 
     @classmethod
@@ -264,7 +275,7 @@ class Propostas:
             bloqueada.cancelada_em = agora
             bloqueada.cancelada_por = ator_bloqueado
             bloqueada.revisao += 1
-            bloqueada.save(update_fields=["status", "cancelada_em", "cancelada_por", "revisao", "last_modified_at"])
+            bloqueada._salvar_transicao(update_fields=["status", "cancelada_em", "cancelada_por", "revisao", "last_modified_at"])
             return bloqueada
 
     @classmethod
@@ -290,7 +301,7 @@ class Propostas:
             bloqueada.status = StatusPropostaComercial.EXPIRADA
             bloqueada.expirada_em = agora
             bloqueada.revisao += 1
-            bloqueada.save(update_fields=["status", "expirada_em", "revisao", "last_modified_at"])
+            bloqueada._salvar_transicao(update_fields=["status", "expirada_em", "revisao", "last_modified_at"])
             return bloqueada
 
     @classmethod
@@ -316,62 +327,37 @@ class Propostas:
             if not justificativa:
                 raise ConflitoPropostaComercial("A justificativa da ativacao contratual e obrigatoria.")
             cls._validar_mfa(operador_bloqueado, codigo_mfa=codigo_mfa, agora=agora)
-            return cls._ativar(
+            return cls._ativar_contratual(
                 bloqueada,
                 revisao_esperada=revisao_esperada,
-                modo=ModoAtivacaoProposta.CONTRATUAL,
-                status_financeiro=StatusFinanceiro.ISENTO,
                 agora=agora,
                 operador=operador_bloqueado,
                 justificativa=justificativa,
             )
 
     @classmethod
-    def ativar_pagamento_confirmado(
+    def _ativar_contratual(
         cls,
         proposta: PropostaComercial,
         *,
         revisao_esperada: int,
-        agora: datetime | None = None,
-    ) -> AssinaturaOrganizacao:
-        """Seam local consumido futuramente pela confirmacao nominal do checkout."""
-        _validar_revisao(revisao_esperada)
-        agora = agora or timezone.now()
-        with cls._proposta_bloqueada(proposta) as bloqueada:
-            return cls._ativar(
-                bloqueada,
-                revisao_esperada=revisao_esperada,
-                modo=ModoAtivacaoProposta.PAGAMENTO,
-                status_financeiro=StatusFinanceiro.REGULAR,
-                agora=agora,
-            )
-
-    @classmethod
-    def _ativar(
-        cls,
-        proposta: PropostaComercial,
-        *,
-        revisao_esperada: int,
-        modo: ModoAtivacaoProposta,
-        status_financeiro: StatusFinanceiro,
         agora: datetime,
-        operador: Usuario | None = None,
-        justificativa: str = "",
+        operador: Usuario,
+        justificativa: str,
     ) -> AssinaturaOrganizacao:
-        if proposta.status == StatusPropostaComercial.ATIVADA:
-            assinatura = AssinaturaOrganizacao.all_objects.filter(proposta_comercial=proposta).first()
-            if assinatura is not None and revisao_esperada in (proposta.revisao, proposta.revisao - 1):
-                return assinatura
-        cls._validar_revisao(proposta, revisao_esperada)
+        if proposta.modo_ativacao != ModoAtivacaoProposta.CONTRATUAL:
+            raise ConflitoPropostaComercial("A ativacao direta exige uma proposta contratual.")
         cls._validar_vigente(proposta, agora=agora)
+        if proposta.status == StatusPropostaComercial.ATIVADA:
+            if revisao_esperada not in (proposta.revisao, proposta.revisao - 1):
+                raise ConflitoPropostaComercial("A revisão da proposta mudou.")
+            return Assinaturas.criar_enterprise(proposta_comercial=proposta, agora=agora)
+        cls._validar_revisao(proposta, revisao_esperada)
         if proposta.status != StatusPropostaComercial.ACEITA:
             raise ConflitoPropostaComercial("Somente proposta aceita pode ser ativada.")
-        if proposta.modo_ativacao != modo:
-            raise ConflitoPropostaComercial("O modo de ativacao da proposta nao corresponde ao fluxo solicitado.")
 
         assinatura = Assinaturas.criar_enterprise(
             proposta_comercial=proposta,
-            status_financeiro=status_financeiro,
             agora=agora,
         )
         proposta.status = StatusPropostaComercial.ATIVADA
@@ -379,7 +365,7 @@ class Propostas:
         proposta.ativada_por = operador
         proposta.justificativa_ativacao = justificativa
         proposta.revisao += 1
-        proposta.save(
+        proposta._salvar_transicao(
             update_fields=[
                 "status",
                 "ativada_em",

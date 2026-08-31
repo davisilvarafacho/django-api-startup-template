@@ -316,6 +316,8 @@ class PropostasComerciaisQuerySet(BaseQuerySet):
     def update(self, **kwargs):
         if set(kwargs) & CAMPOS_IDENTIDADE_PROPOSTA:
             raise ValueError("Identidade da proposta é imutável.")
+        if set(kwargs) & CAMPOS_PROCESSAMENTO_PROPOSTA:
+            raise ValueError("Campos de processamento só podem mudar por transições nominais.")
         if set(kwargs) & CAMPOS_TERMOS_PROPOSTA and self.exclude(status=STATUS_PROPOSTA_EDITAVEL).exists():
             raise ValueError("Os termos de uma proposta enviada são imutáveis.")
         if "recursos" in kwargs:
@@ -347,6 +349,8 @@ class PropostasComerciaisQuerySet(BaseQuerySet):
         objetos = tuple(objs)
         if set(fields) & CAMPOS_IDENTIDADE_PROPOSTA:
             raise ValueError("Identidade da proposta é imutável.")
+        if set(fields) & CAMPOS_PROCESSAMENTO_PROPOSTA:
+            raise ValueError("Campos de processamento só podem mudar por transições nominais.")
         if set(fields) & CAMPOS_TERMOS_PROPOSTA:
             ids = [obj.pk for obj in objetos if obj.pk is not None]
             if self.model._base_manager.filter(pk__in=ids).exclude(status=STATUS_PROPOSTA_EDITAVEL).exists():
@@ -445,6 +449,131 @@ class AlteracoesAssinaturaAtivasManager(
     AlteracoesAssinaturaQuerySetManager,
 ):
     pass
+
+
+def _condicao_estado_datas_proposta() -> models.Q:
+    sem_ativacao_ou_terminal = models.Q(
+        ativada_em__isnull=True,
+        ativada_por__isnull=True,
+        justificativa_ativacao="",
+        recusada_em__isnull=True,
+        recusada_por__isnull=True,
+        expirada_em__isnull=True,
+        cancelada_em__isnull=True,
+        cancelada_por__isnull=True,
+    )
+    rascunho = (
+        models.Q(
+            status=StatusPropostaComercial.RASCUNHO,
+            enviada_em__isnull=True,
+            aceita_em__isnull=True,
+            aceita_por__isnull=True,
+        )
+        & sem_ativacao_ou_terminal
+    )
+    enviada = (
+        models.Q(
+            status=StatusPropostaComercial.ENVIADA,
+            enviada_em__isnull=False,
+            enviada_em__lt=models.F("valida_ate"),
+            aceita_em__isnull=True,
+            aceita_por__isnull=True,
+        )
+        & sem_ativacao_ou_terminal
+    )
+    aceita = (
+        models.Q(
+            status=StatusPropostaComercial.ACEITA,
+            enviada_em__isnull=False,
+            aceita_em__isnull=False,
+            aceita_por__isnull=False,
+            enviada_em__lte=models.F("aceita_em"),
+            aceita_em__lt=models.F("valida_ate"),
+        )
+        & sem_ativacao_ou_terminal
+    )
+    ativada = models.Q(
+        status=StatusPropostaComercial.ATIVADA,
+        modo_ativacao=ModoAtivacaoProposta.CONTRATUAL,
+        enviada_em__isnull=False,
+        aceita_em__isnull=False,
+        aceita_por__isnull=False,
+        ativada_em__isnull=False,
+        ativada_por__isnull=False,
+        enviada_em__lte=models.F("aceita_em"),
+        aceita_em__lte=models.F("ativada_em"),
+        ativada_em__lt=models.F("valida_ate"),
+        recusada_em__isnull=True,
+        recusada_por__isnull=True,
+        expirada_em__isnull=True,
+        cancelada_em__isnull=True,
+        cancelada_por__isnull=True,
+    ) & ~models.Q(justificativa_ativacao="")
+    recusada = models.Q(
+        status=StatusPropostaComercial.RECUSADA,
+        enviada_em__isnull=False,
+        aceita_em__isnull=True,
+        aceita_por__isnull=True,
+        ativada_em__isnull=True,
+        ativada_por__isnull=True,
+        justificativa_ativacao="",
+        recusada_em__isnull=False,
+        recusada_por__isnull=False,
+        enviada_em__lte=models.F("recusada_em"),
+        recusada_em__lt=models.F("valida_ate"),
+        expirada_em__isnull=True,
+        cancelada_em__isnull=True,
+        cancelada_por__isnull=True,
+    )
+    expirada = models.Q(
+        status=StatusPropostaComercial.EXPIRADA,
+        enviada_em__isnull=False,
+        ativada_em__isnull=True,
+        ativada_por__isnull=True,
+        justificativa_ativacao="",
+        recusada_em__isnull=True,
+        recusada_por__isnull=True,
+        expirada_em__isnull=False,
+        enviada_em__lte=models.F("expirada_em"),
+        valida_ate__lte=models.F("expirada_em"),
+        cancelada_em__isnull=True,
+        cancelada_por__isnull=True,
+    ) & (
+        models.Q(aceita_em__isnull=True, aceita_por__isnull=True)
+        | models.Q(
+            aceita_em__isnull=False,
+            aceita_por__isnull=False,
+            enviada_em__lte=models.F("aceita_em"),
+            aceita_em__lte=models.F("expirada_em"),
+        )
+    )
+    cancelada = models.Q(
+        status=StatusPropostaComercial.CANCELADA,
+        ativada_em__isnull=True,
+        ativada_por__isnull=True,
+        justificativa_ativacao="",
+        recusada_em__isnull=True,
+        recusada_por__isnull=True,
+        expirada_em__isnull=True,
+        cancelada_em__isnull=False,
+        cancelada_por__isnull=False,
+    ) & (
+        models.Q(enviada_em__isnull=True, aceita_em__isnull=True, aceita_por__isnull=True)
+        | models.Q(
+            enviada_em__isnull=False,
+            enviada_em__lte=models.F("cancelada_em"),
+            aceita_em__isnull=True,
+            aceita_por__isnull=True,
+        )
+        | models.Q(
+            enviada_em__isnull=False,
+            aceita_em__isnull=False,
+            aceita_por__isnull=False,
+            enviada_em__lte=models.F("aceita_em"),
+            aceita_em__lte=models.F("cancelada_em"),
+        )
+    )
+    return rascunho | enviada | aceita | ativada | recusada | expirada | cancelada
 
 
 class Plano(BaseTenantless):
@@ -678,7 +807,17 @@ class PropostaComercial(Base):
                         field = cast(models.Field, self._meta.get_field(campo))
                         if anterior[field.attname] != getattr(self, field.attname):
                             raise ValueError("Os termos de uma proposta enviada são imutáveis.")
+                for campo in CAMPOS_PROCESSAMENTO_PROPOSTA:
+                    field = cast(models.Field, self._meta.get_field(campo))
+                    if anterior[field.attname] != getattr(self, field.attname):
+                        raise ValueError("Transições de proposta só podem ser executadas pelos casos de uso nominais.")
         return super().save(*args, **kwargs)
+
+    def _salvar_transicao(self, *, update_fields: list[str]):
+        """Persiste uma transição já validada pelo caso de uso nominal."""
+        if "recursos" in update_fields:
+            self.recursos = _materializar_recursos(self.recursos)
+        return super().save(update_fields=update_fields)
 
     def clean(self):
         super().clean()
@@ -708,114 +847,7 @@ class PropostaComercial(Base):
             models.CheckConstraint(condition=models.Q(carencia_pagamento_dias__gte=0), name="proposta_carencia_pagamento_nao_negativa"),
             models.CheckConstraint(condition=models.Q(carencia_excesso_seats_dias__gte=0), name="proposta_carencia_seats_nao_negativa"),
             models.CheckConstraint(
-                condition=(
-                    models.Q(
-                        status=StatusPropostaComercial.RASCUNHO,
-                        enviada_em__isnull=True,
-                        aceita_em__isnull=True,
-                        aceita_por__isnull=True,
-                        ativada_em__isnull=True,
-                        ativada_por__isnull=True,
-                        justificativa_ativacao="",
-                        recusada_em__isnull=True,
-                        recusada_por__isnull=True,
-                        expirada_em__isnull=True,
-                        cancelada_em__isnull=True,
-                        cancelada_por__isnull=True,
-                    )
-                    | models.Q(
-                        status=StatusPropostaComercial.ENVIADA,
-                        enviada_em__isnull=False,
-                        aceita_em__isnull=True,
-                        aceita_por__isnull=True,
-                        ativada_em__isnull=True,
-                        ativada_por__isnull=True,
-                        justificativa_ativacao="",
-                        recusada_em__isnull=True,
-                        recusada_por__isnull=True,
-                        expirada_em__isnull=True,
-                        cancelada_em__isnull=True,
-                        cancelada_por__isnull=True,
-                    )
-                    | models.Q(
-                        status=StatusPropostaComercial.ACEITA,
-                        enviada_em__isnull=False,
-                        aceita_em__isnull=False,
-                        aceita_por__isnull=False,
-                        ativada_em__isnull=True,
-                        ativada_por__isnull=True,
-                        justificativa_ativacao="",
-                        recusada_em__isnull=True,
-                        recusada_por__isnull=True,
-                        expirada_em__isnull=True,
-                        cancelada_em__isnull=True,
-                        cancelada_por__isnull=True,
-                    )
-                    | (
-                        models.Q(
-                            status=StatusPropostaComercial.ATIVADA,
-                            enviada_em__isnull=False,
-                            aceita_em__isnull=False,
-                            aceita_por__isnull=False,
-                            ativada_em__isnull=False,
-                            recusada_em__isnull=True,
-                            recusada_por__isnull=True,
-                            expirada_em__isnull=True,
-                            cancelada_em__isnull=True,
-                            cancelada_por__isnull=True,
-                        )
-                        & (
-                            models.Q(modo_ativacao=ModoAtivacaoProposta.PAGAMENTO, ativada_por__isnull=True, justificativa_ativacao="")
-                            | (
-                                models.Q(modo_ativacao=ModoAtivacaoProposta.CONTRATUAL, ativada_por__isnull=False)
-                                & ~models.Q(justificativa_ativacao="")
-                            )
-                        )
-                    )
-                    | models.Q(
-                        status=StatusPropostaComercial.RECUSADA,
-                        enviada_em__isnull=False,
-                        aceita_em__isnull=True,
-                        aceita_por__isnull=True,
-                        ativada_em__isnull=True,
-                        ativada_por__isnull=True,
-                        justificativa_ativacao="",
-                        recusada_em__isnull=False,
-                        recusada_por__isnull=False,
-                        expirada_em__isnull=True,
-                        cancelada_em__isnull=True,
-                        cancelada_por__isnull=True,
-                    )
-                    | (
-                        models.Q(
-                            status=StatusPropostaComercial.EXPIRADA,
-                            enviada_em__isnull=False,
-                            ativada_em__isnull=True,
-                            ativada_por__isnull=True,
-                            justificativa_ativacao="",
-                            recusada_em__isnull=True,
-                            recusada_por__isnull=True,
-                            expirada_em__isnull=False,
-                            cancelada_em__isnull=True,
-                            cancelada_por__isnull=True,
-                        )
-                        & (models.Q(aceita_em__isnull=True, aceita_por__isnull=True) | models.Q(aceita_em__isnull=False, aceita_por__isnull=False))
-                    )
-                    | (
-                        models.Q(
-                            status=StatusPropostaComercial.CANCELADA,
-                            ativada_em__isnull=True,
-                            ativada_por__isnull=True,
-                            justificativa_ativacao="",
-                            recusada_em__isnull=True,
-                            recusada_por__isnull=True,
-                            expirada_em__isnull=True,
-                            cancelada_em__isnull=False,
-                            cancelada_por__isnull=False,
-                        )
-                        & (models.Q(aceita_em__isnull=True, aceita_por__isnull=True) | models.Q(aceita_em__isnull=False, aceita_por__isnull=False))
-                    )
-                ),
+                condition=_condicao_estado_datas_proposta(),
                 name="proposta_estado_datas_coerente",
             ),
         ]

@@ -7,12 +7,16 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 import pytest
+from drf_spectacular.generators import SchemaGenerator
 
-from apps.api.autenticacao.models import AuthToken, TokenMetaData
+from apps.api.autenticacao.models import AuthToken, TokenMetaData, TokenType
+from apps.api.core.errors import discover_error_codes
+from apps.assinaturas import urls as assinaturas_urls
 from apps.assinaturas.features import CATALOGO_RECURSOS, ValoresRecursos
 from apps.assinaturas.models import ModoAtivacaoProposta, Periodicidade, StatusPropostaComercial
 from apps.assinaturas.proposals import CriacaoPropostaComercial, Propostas
 from apps.assinaturas.subscriptions import TermosAssinatura
+from apps.assinaturas.views import AceitarPropostaView
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
 from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
@@ -153,3 +157,82 @@ def test_revisao_invalida_retorna_conflito_publico_estavel():
 
     assert response.status_code == 409
     assert response.json()["errors"][0]["code"] == "billing.proposal_invalid"
+
+
+def test_erros_reais_de_auth_e_tenant_estao_documentados_no_status_runtime(monkeypatch):
+    proprietario = criar_usuario(email="owner-schema-runtime@example.com")
+    organizacao = _organizacao_do(proprietario, nome="Schema runtime", slug="proposta-schema-runtime")
+    url = "/assinatura/propostas/999999999/aceitar/"
+    payload = {"revisao_esperada": 1}
+    respostas = []
+
+    respostas.append(APIClient().post(url, payload, format="json", HTTP_X_ORGANIZATION=organizacao.slug))
+    respostas.append(
+        APIClient().post(
+            url,
+            payload,
+            format="json",
+            HTTP_AUTHORIZATION="Bearer token-invalido",
+            HTTP_X_ORGANIZATION=organizacao.slug,
+        )
+    )
+
+    expirado = _client(proprietario, organizacao)
+    AuthToken.objects.filter(metadata__isnull=False, responsavel=proprietario).update(expiry=timezone.now() - timedelta(seconds=1))
+    respostas.append(expirado.post(url, payload, format="json"))
+
+    revogado = _client(proprietario, organizacao)
+    AuthToken.objects.filter(metadata__isnull=False, responsavel=proprietario, revoked_at__isnull=True).update(revoked_at=timezone.now())
+    respostas.append(revogado.post(url, payload, format="json"))
+
+    sem_header = _client(proprietario, organizacao)
+    sem_header.defaults.pop(META_HEADER_ORGANIZACAO)
+    respostas.append(sem_header.post(url, payload, format="json"))
+
+    sem_vinculo = criar_usuario(email="sem-vinculo-schema-runtime@example.com")
+    respostas.append(_client(sem_vinculo, organizacao).post(url, payload, format="json"))
+
+    vinculo_inativo = criar_usuario(email="vinculo-inativo-schema-runtime@example.com")
+    org_vinculo_inativo = _organizacao_do(vinculo_inativo, nome="Vínculo inativo schema", slug="vinculo-inativo-schema")
+    Vinculo.objects.filter(organizacao=org_vinculo_inativo, usuario=vinculo_inativo).update(is_active=False)
+    respostas.append(_client(vinculo_inativo, org_vinculo_inativo).post(url, payload, format="json"))
+
+    org_inativa_usuario = criar_usuario(email="org-inativa-schema-runtime@example.com")
+    org_inativa = _organizacao_do(org_inativa_usuario, nome="Org inativa schema", slug="org-inativa-schema")
+    Organizacao.objects.filter(pk=org_inativa.pk).update(is_active=False)
+    respostas.append(_client(org_inativa_usuario, org_inativa).post(url, payload, format="json"))
+
+    api_key, plain_api_key = AuthToken.objects.create(
+        user=proprietario,
+        type=TokenType.API_KEY,
+        organization=organizacao,
+        name="Schema runtime",
+        scopes=[],
+        created_by=proprietario,
+    )
+    TokenMetaData.objects.create(token=api_key)
+    tenant_divergente = Organizacao.objects.create(nome="Tenant divergente", slug="tenant-divergente-schema")
+    client_api_key = APIClient()
+    client_api_key.credentials(HTTP_AUTHORIZATION=f"Bearer {plain_api_key}")
+    respostas.append(client_api_key.post(url, payload, format="json", HTTP_X_ORGANIZATION=tenant_divergente.slug))
+
+    monkeypatch.setattr(AceitarPropostaView, "versioning_class", None)
+    discover_error_codes(force=True)
+    schema = SchemaGenerator(patterns=assinaturas_urls.urlpatterns).get_schema(request=None, public=True)
+    documentadas = schema["paths"]["/assinatura/propostas/{id}/aceitar/"]["post"]["responses"]
+
+    observados = {(str(response.status_code), response.json()["errors"][0]["code"]) for response in respostas}
+    esperados = {
+        ("401", "auth.token_not_provided"),
+        ("401", "auth.invalid_token"),
+        ("401", "auth.expired_token"),
+        ("401", "auth.revoked_token"),
+        ("422", "organizations.header_required"),
+        ("403", "organizations.membership_required"),
+        ("403", "organizations.membership_inactive"),
+        ("403", "organizations.organization_inactive"),
+        ("409", "organizations.tenant_mismatch"),
+    }
+    assert observados == esperados
+    for status_code, codigo in observados:
+        assert codigo in documentadas[status_code]["description"]

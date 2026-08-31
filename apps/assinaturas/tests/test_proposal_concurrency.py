@@ -12,6 +12,7 @@ from apps.assinaturas.features import CATALOGO_RECURSOS, ValoresRecursos
 from apps.assinaturas.models import (
     AlteracaoAssinatura,
     AssinaturaOrganizacao,
+    ModoAtivacaoProposta,
     PropostaComercial,
     StatusAlteracaoAssinatura,
     StatusAssinatura,
@@ -142,12 +143,12 @@ def test_aceite_concorrente_com_expiracao_nao_aceita_proposta_fora_da_validade()
     assert atual.status == StatusPropostaComercial.EXPIRADA
 
 
-def test_ativacao_concorrente_com_mudanca_do_contrato_converge_para_novo_ciclo():
+def test_criacao_enterprise_concorrente_com_mudanca_do_contrato_converge_para_novo_ciclo():
     organizacao = Organizacao.objects.create(nome="Ativação e mudança", slug="proposta-ativacao-mudanca")
     proprietario = criar_usuario(email="owner-ativacao-mudanca@example.com")
     Vinculo.objects.create(organizacao=organizacao, usuario=proprietario, papel=Papel.PROPRIETARIO)
     anterior = _contrato_atual(organizacao)
-    proposta = _enviar(_criar_rascunho(organizacao))
+    proposta = _enviar(_criar_rascunho(organizacao, modo=ModoAtivacaoProposta.CONTRATUAL))
     proposta = Propostas.aceitar(proposta, ator=proprietario, revisao_esperada=2).proposta
     termos_aumentados = TermosAssinatura(
         periodicidade=anterior.periodicidade,
@@ -173,7 +174,7 @@ def test_ativacao_concorrente_com_mudanca_do_contrato_converge_para_novo_ciclo()
 
     def ativar():
         barreira.wait(timeout=5)
-        return Propostas.ativar_pagamento_confirmado(proposta, revisao_esperada=3).pk
+        return Assinaturas.criar_enterprise(proposta_comercial=proposta).pk
 
     def alterar():
         barreira.wait(timeout=5)

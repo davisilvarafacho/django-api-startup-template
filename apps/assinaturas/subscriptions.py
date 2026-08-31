@@ -19,6 +19,7 @@ from apps.assinaturas.features import CATALOGO_RECURSOS, PAPEIS_ISENTOS_SEAT, Va
 from apps.assinaturas.models import (
     AlteracaoAssinatura,
     AssinaturaOrganizacao,
+    ModoAtivacaoProposta,
     MomentoAplicacaoAlteracaoAssinatura,
     Periodicidade,
     PoliticaTrial,
@@ -74,7 +75,7 @@ class OrigemPropostaComercial:
             raise ValueError("Origem enterprise exige uma PropostaComercial.")
 
 
-type OrigemAssinatura = OrigemVersaoPlano | OrigemPropostaComercial
+type OrigemAssinatura = OrigemVersaoPlano
 
 
 @dataclass(frozen=True)
@@ -126,10 +127,8 @@ class CriacaoAssinatura:
     def __post_init__(self):
         if getattr(self.organizacao, "pk", None) is None:
             raise ValueError("Organização da assinatura precisa estar persistida.")
-        if not isinstance(self.origem, (OrigemVersaoPlano, OrigemPropostaComercial)):
-            raise ValueError("Origem da assinatura precisa ser catálogo ou proposta comercial.")
-        if isinstance(self.origem, OrigemPropostaComercial) and self.origem.proposta_comercial.organizacao_id != self.organizacao.pk:
-            raise ValueError("A proposta precisa pertencer à organização da assinatura.")
+        if not isinstance(self.origem, OrigemVersaoPlano):
+            raise ValueError("Origem da assinatura precisa ser uma origem de catálogo.")
         if not isinstance(self.termos, TermosAssinatura):
             raise ValueError("Termos da assinatura precisam ser TermosAssinatura.")
         if not isinstance(self.status, StatusAssinatura):
@@ -442,30 +441,18 @@ class Assinaturas:
             if corrente is not None:
                 raise ConflitoRevisaoAssinatura("A organização já possui um contrato corrente.")
 
-            termos = comando.termos
-            versao_plano = comando.origem.versao_plano if isinstance(comando.origem, OrigemVersaoPlano) else None
-            proposta_comercial = comando.origem.proposta_comercial if isinstance(comando.origem, OrigemPropostaComercial) else None
-            return AssinaturaOrganizacao.objects.using(using).create(
+            return cls._persistir_assinatura(
                 organizacao=organizacao_bloqueada,
-                versao_plano=versao_plano,
-                proposta_comercial=proposta_comercial,
+                versao_plano=comando.origem.versao_plano,
+                proposta_comercial=None,
+                termos=comando.termos,
                 status=comando.status,
                 status_financeiro=comando.status_financeiro,
-                revisao=1,
-                periodicidade=termos.periodicidade,
-                moeda=termos.moeda,
-                valor_base_centavos=termos.valor_base_centavos,
-                valor_seat_centavos=termos.valor_seat_centavos,
-                seats_inclusos=termos.seats_inclusos,
-                seats_contratados=termos.seats_contratados,
-                expansao_automatica_seats=termos.expansao_automatica_seats,
-                recursos=termos.recursos.materializar(),
                 politica_trial=comando.politica_trial,
-                trial_iniciado_em=agora if comando.status == StatusAssinatura.EM_TRIAL else None,
                 trial_termina_em=comando.trial_termina_em,
-                carencia_pagamento_dias=termos.carencia_pagamento_dias,
-                carencia_excesso_seats_dias=termos.carencia_excesso_seats_dias,
                 chave_idempotencia=comando.chave_idempotencia,
+                agora=agora,
+                using=using,
             )
 
     @classmethod
@@ -473,17 +460,14 @@ class Assinaturas:
         cls,
         *,
         proposta_comercial: PropostaComercial,
-        status_financeiro: StatusFinanceiro,
         agora: datetime | None = None,
     ) -> AssinaturaOrganizacao:
-        """Substitui o ciclo corrente por um snapshot originado da proposta."""
+        """Ativa uma proposta contratual por uma fronteira interna e fechada."""
         from apps.organizacoes.context import organizacao_atual_privilegiada
         from apps.organizacoes.models import Organizacao
 
         if not isinstance(proposta_comercial, PropostaComercial) or proposta_comercial.pk is None:
             raise ValueError("Criação enterprise exige uma proposta persistida.")
-        if status_financeiro not in (StatusFinanceiro.ISENTO, StatusFinanceiro.REGULAR):
-            raise ValueError("Criação enterprise exige estado financeiro confirmado.")
         agora = agora or timezone.now()
         using = proposta_comercial._state.db or "default"
         chave = f"assinatura:proposta:{proposta_comercial.pk}"
@@ -492,21 +476,34 @@ class Assinaturas:
             organizacao = Organizacao.all_objects.using(using).select_for_update().get(pk=proposta_comercial.organizacao_id)
             cls._validar_organizacao_contratavel(organizacao)
             with organizacao_atual_privilegiada(organizacao.pk):
-                existente = (
-                    AssinaturaOrganizacao.all_objects.using(using)
-                    .select_for_update()
-                    .filter(organizacao=organizacao, proposta_comercial_id=proposta_comercial.pk)
-                    .first()
-                )
-                if existente is not None:
-                    return existente
-
                 corrente = cls.obter_corrente(organizacao, bloquear=True)
                 proposta = PropostaComercial.all_objects.using(using).select_for_update().get(pk=proposta_comercial.pk)
                 if proposta.organizacao_id != organizacao.pk:
                     raise ConflitoRevisaoAssinatura("A proposta pertence a outra organização.")
-                if proposta.status != StatusPropostaComercial.ACEITA:
+                if proposta.modo_ativacao != ModoAtivacaoProposta.CONTRATUAL:
+                    raise ConflitoRevisaoAssinatura("A criação enterprise exige proposta contratual.")
+                if proposta.valida_ate <= agora:
+                    raise ConflitoRevisaoAssinatura("A proposta enterprise expirou.")
+                if proposta.status not in (StatusPropostaComercial.ACEITA, StatusPropostaComercial.ATIVADA):
                     raise ConflitoRevisaoAssinatura("A proposta precisa estar aceita para criar o ciclo enterprise.")
+
+                existente = (
+                    AssinaturaOrganizacao.all_objects.using(using)
+                    .select_for_update()
+                    .filter(organizacao=organizacao, chave_idempotencia=chave)
+                    .first()
+                )
+                if existente is not None:
+                    if (
+                        existente.versao_plano_id is not None
+                        or existente.proposta_comercial_id != proposta.pk
+                        or existente.status != StatusAssinatura.ATIVA
+                        or existente.status_financeiro != StatusFinanceiro.ISENTO
+                    ):
+                        raise ConflitoIdempotenciaAssinatura("O ciclo enterprise existente diverge da proposta contratual.")
+                    return existente
+                if proposta.status != StatusPropostaComercial.ACEITA:
+                    raise ConflitoIdempotenciaAssinatura("Proposta ativada não possui ciclo enterprise compatível.")
 
                 if corrente is not None:
                     cls._cancelar_alteracoes_pendentes_por_encerramento(corrente, agora=agora, using=using)
@@ -538,19 +535,57 @@ class Assinaturas:
                     carencia_pagamento_dias=proposta.carencia_pagamento_dias,
                     carencia_excesso_seats_dias=proposta.carencia_excesso_seats_dias,
                 )
-                return cls.criar(
-                    CriacaoAssinatura(
-                        organizacao=organizacao,
-                        origem=OrigemPropostaComercial(proposta),
-                        termos=termos,
-                        status=StatusAssinatura.ATIVA,
-                        status_financeiro=status_financeiro,
-                        politica_trial=None,
-                        trial_termina_em=None,
-                        chave_idempotencia=chave,
-                    ),
+                return cls._persistir_assinatura(
+                    organizacao=organizacao,
+                    versao_plano=None,
+                    proposta_comercial=proposta,
+                    termos=termos,
+                    status=StatusAssinatura.ATIVA,
+                    status_financeiro=StatusFinanceiro.ISENTO,
+                    politica_trial=None,
+                    trial_termina_em=None,
+                    chave_idempotencia=chave,
                     agora=agora,
+                    using=using,
                 )
+
+    @staticmethod
+    def _persistir_assinatura(
+        *,
+        organizacao: Organizacao,
+        versao_plano: VersaoPlano | None,
+        proposta_comercial: PropostaComercial | None,
+        termos: TermosAssinatura,
+        status: StatusAssinatura,
+        status_financeiro: StatusFinanceiro,
+        politica_trial: PoliticaTrial | None,
+        trial_termina_em: datetime | None,
+        chave_idempotencia: str,
+        agora: datetime,
+        using: str,
+    ) -> AssinaturaOrganizacao:
+        return AssinaturaOrganizacao.objects.using(using).create(
+            organizacao=organizacao,
+            versao_plano=versao_plano,
+            proposta_comercial=proposta_comercial,
+            status=status,
+            status_financeiro=status_financeiro,
+            revisao=1,
+            periodicidade=termos.periodicidade,
+            moeda=termos.moeda,
+            valor_base_centavos=termos.valor_base_centavos,
+            valor_seat_centavos=termos.valor_seat_centavos,
+            seats_inclusos=termos.seats_inclusos,
+            seats_contratados=termos.seats_contratados,
+            expansao_automatica_seats=termos.expansao_automatica_seats,
+            recursos=termos.recursos.materializar(),
+            politica_trial=politica_trial,
+            trial_iniciado_em=agora if status == StatusAssinatura.EM_TRIAL else None,
+            trial_termina_em=trial_termina_em,
+            carencia_pagamento_dias=termos.carencia_pagamento_dias,
+            carencia_excesso_seats_dias=termos.carencia_excesso_seats_dias,
+            chave_idempotencia=chave_idempotencia,
+        )
 
     @classmethod
     def criar_gratuita(
@@ -1208,11 +1243,9 @@ class Assinaturas:
     @staticmethod
     def _equivale_ao_comando(assinatura: AssinaturaOrganizacao, comando: CriacaoAssinatura) -> bool:
         termos = comando.termos
-        versao_plano_id = comando.origem.versao_plano.pk if isinstance(comando.origem, OrigemVersaoPlano) else None
-        proposta_comercial_id = comando.origem.proposta_comercial.pk if isinstance(comando.origem, OrigemPropostaComercial) else None
         esperado = {
-            "versao_plano_id": versao_plano_id,
-            "proposta_comercial_id": proposta_comercial_id,
+            "versao_plano_id": comando.origem.versao_plano.pk,
+            "proposta_comercial_id": None,
             "status": comando.status,
             "status_financeiro": comando.status_financeiro,
             "periodicidade": termos.periodicidade,

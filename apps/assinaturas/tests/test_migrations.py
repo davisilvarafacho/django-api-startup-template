@@ -183,3 +183,39 @@ def test_migration_0007_fecha_xor_rls_e_reverse_restaura_origem_catalogo():
     finally:
         executor = MigrationExecutor(connection)
         executor.migrate(alvos_finais)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_migration_0008_protege_transicoes_e_reverse_restaura_guarda_0007():
+    from apps.assinaturas.tests.test_proposal_models import _criar_proposta
+    from apps.organizacoes.context import organizacao_atual_privilegiada
+    from apps.organizacoes.models import Organizacao
+
+    executor = MigrationExecutor(connection)
+    alvos_finais = executor.loader.graph.leaf_nodes()
+
+    try:
+        executor.migrate([("assinaturas", "0007_propostas_comerciais_enterprise")])
+        organizacao = Organizacao.objects.create(nome="Migration 0008", slug="migration-proposta-0008")
+        proposta = _criar_proposta(organizacao)
+
+        with organizacao_atual_privilegiada(organizacao.pk), connection.cursor() as cursor:
+            cursor.execute("UPDATE proposta_comercial SET revisao = revisao + 1 WHERE id = %s", [proposta.pk])
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([("assinaturas", "0008_endurecer_transicoes_propostas")])
+        with (
+            organizacao_atual_privilegiada(organizacao.pk),
+            pytest.raises(DatabaseError, match="revisão"),
+            transaction.atomic(),
+            connection.cursor() as cursor,
+        ):
+            cursor.execute("UPDATE proposta_comercial SET revisao = revisao + 1 WHERE id = %s", [proposta.pk])
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([("assinaturas", "0007_propostas_comerciais_enterprise")])
+        with organizacao_atual_privilegiada(organizacao.pk), connection.cursor() as cursor:
+            cursor.execute("UPDATE proposta_comercial SET revisao = revisao + 1 WHERE id = %s", [proposta.pk])
+    finally:
+        executor = MigrationExecutor(connection)
+        executor.migrate(alvos_finais)

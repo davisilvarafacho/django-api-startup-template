@@ -235,6 +235,125 @@ def test_proposta_enviada_protege_termos_e_identidade_contra_orm_e_sql():
             )
 
 
+@pytest.mark.parametrize("campo", ["status", "revisao", "enviada_em", "aceita_por", "cancelada_em"])
+def test_querysets_bloqueiam_campos_de_transicao_da_proposta(campo):
+    organizacao = Organizacao.objects.create(nome=f"Guard ORM {campo}", slug=f"proposta-guard-orm-{campo.replace('_', '-')}")
+    proposta = _criar_proposta(organizacao)
+    valores = {
+        "status": StatusPropostaComercial.ENVIADA,
+        "revisao": 2,
+        "enviada_em": timezone.now(),
+        "aceita_por": criar_usuario(email=f"guard-{campo}@example.com"),
+        "cancelada_em": timezone.now(),
+    }
+
+    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(ValueError, match="transições nominais"):
+        PropostaComercial.objects.filter(pk=proposta.pk).update(**{campo: valores[campo]})
+
+    setattr(proposta, campo, valores[campo])
+    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(ValueError, match="transições nominais"):
+        PropostaComercial.objects.bulk_update([proposta], [campo])
+
+
+def test_save_publico_nao_executa_transicao_de_proposta():
+    organizacao = Organizacao.objects.create(nome="Guard save", slug="proposta-guard-save")
+    proposta = _criar_proposta(organizacao)
+    proposta.status = StatusPropostaComercial.ENVIADA
+    proposta.enviada_em = timezone.now()
+    proposta.revisao += 1
+
+    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(ValueError, match="casos de uso nominais"):
+        proposta.save(update_fields=["status", "enviada_em", "revisao"])
+
+
+def test_trigger_recusa_salto_de_estado_e_revisao_isolada():
+    organizacao = Organizacao.objects.create(nome="Guard SQL", slug="proposta-guard-sql")
+    proposta = _criar_proposta(organizacao)
+    ator = criar_usuario(email="guard-sql@example.com")
+    agora = timezone.now()
+
+    with (
+        organizacao_atual_privilegiada(organizacao.pk),
+        pytest.raises(DatabaseError, match="Transição inválida"),
+        transaction.atomic(),
+        connection.cursor() as cursor,
+    ):
+        cursor.execute(
+            """
+            UPDATE proposta_comercial
+               SET status = %s, revisao = 2, enviada_em = %s,
+                   aceita_em = %s, aceita_por_id = %s
+             WHERE id = %s
+            """,
+            [StatusPropostaComercial.ACEITA, agora, agora, ator.pk, proposta.pk],
+        )
+
+    with (
+        organizacao_atual_privilegiada(organizacao.pk),
+        pytest.raises(DatabaseError, match="revisão"),
+        transaction.atomic(),
+        connection.cursor() as cursor,
+    ):
+        cursor.execute("UPDATE proposta_comercial SET revisao = revisao + 1 WHERE id = %s", [proposta.pk])
+
+
+@pytest.mark.parametrize(
+    "sobrescritos",
+    [
+        {
+            "status": StatusPropostaComercial.ACEITA,
+            "enviada_em": timezone.now(),
+            "aceita_em": timezone.now() - timedelta(seconds=1),
+            "aceita_por": criar_usuario,
+        },
+        {
+            "status": StatusPropostaComercial.CANCELADA,
+            "enviada_em": None,
+            "aceita_em": timezone.now(),
+            "aceita_por": criar_usuario,
+            "cancelada_em": timezone.now() + timedelta(seconds=1),
+            "cancelada_por": criar_usuario,
+        },
+        {
+            "status": StatusPropostaComercial.EXPIRADA,
+            "enviada_em": timezone.now(),
+            "expirada_em": timezone.now() + timedelta(seconds=1),
+        },
+    ],
+)
+def test_banco_recusa_cronologia_incoerente_em_aceite_e_cancelamento(sobrescritos):
+    organizacao = Organizacao.objects.create(nome="Cronologia inválida", slug=f"proposta-cronologia-{hash(str(sobrescritos))}")
+    dados = _dados_proposta(organizacao)
+    dados.update(
+        {
+            campo: criar_usuario(email=f"cronologia-{campo}-{organizacao.pk}@example.com") if valor is criar_usuario else valor
+            for campo, valor in sobrescritos.items()
+        }
+    )
+
+    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(IntegrityError), transaction.atomic():
+        PropostaComercial.objects.create(**dados)
+
+
+def test_banco_nao_admite_estado_ativado_para_proposta_de_pagamento():
+    organizacao = Organizacao.objects.create(nome="Pagamento não ativa", slug="proposta-pagamento-nao-ativa")
+    ator = criar_usuario(email="pagamento-nao-ativa@example.com")
+    agora = timezone.now()
+
+    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(IntegrityError), transaction.atomic():
+        PropostaComercial.objects.create(
+            **_dados_proposta(
+                organizacao,
+                status=StatusPropostaComercial.ATIVADA,
+                modo_ativacao=ModoAtivacaoProposta.PAGAMENTO,
+                enviada_em=agora,
+                aceita_em=agora,
+                aceita_por=ator,
+                ativada_em=agora,
+            )
+        )
+
+
 @pytest.mark.django_db(transaction=True)
 def test_rls_real_isola_propostas_para_papel_postgresql_comum(papel_rls_propostas):
     org_a = Organizacao.objects.create(nome="RLS A", slug="proposta-rls-a")
