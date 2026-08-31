@@ -30,7 +30,6 @@ from apps.assinaturas.proposals import (
 from apps.assinaturas.subscriptions import (
     Assinaturas,
     ConflitoIdempotenciaAssinatura,
-    ConflitoRevisaoAssinatura,
     CriacaoAssinatura,
     OrigemPropostaComercial,
     OrigemVersaoPlano,
@@ -96,6 +95,14 @@ def _contrato_atual(organizacao: Organizacao):
                 chave_idempotencia=f"contrato-atual-{organizacao.pk}",
             )
         )
+
+
+def _operador_com_totp(email: str):
+    operador = criar_usuario(email=email, is_staff=True, is_superuser=True)
+    enrollment = start_enrollment(operador, MFAFactorType.TOTP)
+    confirm_enrollment(operador, MFAFactorType.TOTP, pyotp.TOTP(enrollment.plain_secret).now())
+    MFAFactor.objects.filter(pk=enrollment.factor.pk).update(totp_last_counter=None)
+    return operador, enrollment.plain_secret
 
 
 def test_criar_editar_e_enviar_preservam_revisao_otimista_e_snapshot():
@@ -337,6 +344,23 @@ def test_t10_nao_expoe_capacidade_local_para_ativar_aceite_pago():
     assert aceite.proposta.status == StatusPropostaComercial.ACEITA
 
 
+def test_assinaturas_nao_expoe_criacao_enterprise_fora_da_ativacao_nominal():
+    agora = timezone.now()
+    organizacao = Organizacao.objects.create(nome="Sem bypass enterprise", slug="sem-bypass-enterprise")
+    proprietario = criar_usuario(email="owner-sem-bypass-enterprise@example.com")
+    Vinculo.objects.create(organizacao=organizacao, usuario=proprietario, papel=Papel.PROPRIETARIO)
+    proposta = _enviar(_criar_rascunho(organizacao, modo=ModoAtivacaoProposta.CONTRATUAL, agora=agora), agora=agora)
+    proposta = Propostas.aceitar(proposta, ator=proprietario, revisao_esperada=2, agora=agora).proposta
+
+    with pytest.raises(AttributeError):
+        Assinaturas.criar_enterprise(proposta_comercial=proposta, agora=agora)
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        proposta.refresh_from_db()
+        assert not AssinaturaOrganizacao.objects.filter(proposta_comercial=proposta).exists()
+    assert proposta.status == StatusPropostaComercial.ACEITA
+
+
 def test_retry_do_aceite_e_permitido_a_outro_proprietario_atual_sem_reescrever_historico():
     agora = timezone.now()
     organizacao = Organizacao.objects.create(nome="Retry proprietário", slug="proposta-retry-proprietario")
@@ -396,9 +420,17 @@ def test_criacao_enterprise_valida_modo_antes_da_idempotencia():
     proposta = _enviar(_criar_rascunho(organizacao, modo=ModoAtivacaoProposta.PAGAMENTO, agora=agora), agora=agora)
     proposta = Propostas.aceitar(proposta, ator=proprietario, revisao_esperada=2, agora=agora).proposta
     _persistir_ciclo_incompativel(proposta, status_financeiro=StatusFinanceiro.ISENTO)
+    operador, segredo = _operador_com_totp("operador-modo-antes-chave@example.com")
 
-    with pytest.raises(ConflitoRevisaoAssinatura, match="contratual"):
-        Assinaturas.criar_enterprise(proposta_comercial=proposta, agora=agora)
+    with pytest.raises(ConflitoPropostaComercial, match="contratual"):
+        Propostas.ativar_contratual(
+            proposta,
+            operador=operador,
+            revisao_esperada=3,
+            codigo_mfa=pyotp.TOTP(segredo).now(),
+            justificativa="Validar modo antes da idempotência",
+            agora=agora,
+        )
 
 
 def test_idempotencia_enterprise_rejeita_estado_financeiro_incompativel():
@@ -409,9 +441,17 @@ def test_idempotencia_enterprise_rejeita_estado_financeiro_incompativel():
     proposta = _enviar(_criar_rascunho(organizacao, modo=ModoAtivacaoProposta.CONTRATUAL, agora=agora), agora=agora)
     proposta = Propostas.aceitar(proposta, ator=proprietario, revisao_esperada=2, agora=agora).proposta
     _persistir_ciclo_incompativel(proposta, status_financeiro=StatusFinanceiro.REGULAR)
+    operador, segredo = _operador_com_totp("operador-financeiro-incompativel@example.com")
 
     with pytest.raises(ConflitoIdempotenciaAssinatura, match="diverge"):
-        Assinaturas.criar_enterprise(proposta_comercial=proposta, agora=agora)
+        Propostas.ativar_contratual(
+            proposta,
+            operador=operador,
+            revisao_esperada=3,
+            codigo_mfa=pyotp.TOTP(segredo).now(),
+            justificativa="Validar estado financeiro existente",
+            agora=agora,
+        )
 
 
 def test_falha_ao_criar_novo_ciclo_reverte_encerramento_e_ativacao(monkeypatch):
@@ -430,7 +470,7 @@ def test_falha_ao_criar_novo_ciclo_reverte_encerramento_e_ativacao(monkeypatch):
     def falhar(*args, **kwargs):
         raise RuntimeError("falha ao criar ciclo")
 
-    monkeypatch.setattr(Assinaturas, "criar_enterprise", falhar)
+    monkeypatch.setattr("apps.assinaturas.proposals._criar_assinatura_enterprise_de_proposta", falhar)
     with pytest.raises(RuntimeError, match="falha ao criar ciclo"):
         Propostas.ativar_contratual(
             proposta,

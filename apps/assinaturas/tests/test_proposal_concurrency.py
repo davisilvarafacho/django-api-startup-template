@@ -6,6 +6,7 @@ from threading import Barrier
 
 from django.db import close_old_connections, connections
 
+import pyotp
 import pytest
 
 from apps.assinaturas.features import CATALOGO_RECURSOS, ValoresRecursos
@@ -27,7 +28,7 @@ from apps.assinaturas.subscriptions import (
     OrigemVersaoPlano,
     TermosAssinatura,
 )
-from apps.assinaturas.tests.test_proposals import _contrato_atual, _criar_rascunho, _enviar
+from apps.assinaturas.tests.test_proposals import _contrato_atual, _criar_rascunho, _enviar, _operador_com_totp
 from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
 from tests.support.usuarios import criar_usuario
@@ -150,6 +151,7 @@ def test_criacao_enterprise_concorrente_com_mudanca_do_contrato_converge_para_no
     anterior = _contrato_atual(organizacao)
     proposta = _enviar(_criar_rascunho(organizacao, modo=ModoAtivacaoProposta.CONTRATUAL))
     proposta = Propostas.aceitar(proposta, ator=proprietario, revisao_esperada=2).proposta
+    operador, segredo = _operador_com_totp("operador-ativacao-mudanca@example.com")
     termos_aumentados = TermosAssinatura(
         periodicidade=anterior.periodicidade,
         moeda=anterior.moeda,
@@ -174,7 +176,13 @@ def test_criacao_enterprise_concorrente_com_mudanca_do_contrato_converge_para_no
 
     def ativar():
         barreira.wait(timeout=5)
-        return Assinaturas.criar_enterprise(proposta_comercial=proposta).pk
+        return Propostas.ativar_contratual(
+            proposta,
+            operador=operador,
+            revisao_esperada=3,
+            codigo_mfa=pyotp.TOTP(segredo).now(),
+            justificativa="Ativação concorrente válida",
+        ).pk
 
     def alterar():
         barreira.wait(timeout=5)

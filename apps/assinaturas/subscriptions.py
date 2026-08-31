@@ -455,100 +455,6 @@ class Assinaturas:
                 using=using,
             )
 
-    @classmethod
-    def criar_enterprise(
-        cls,
-        *,
-        proposta_comercial: PropostaComercial,
-        agora: datetime | None = None,
-    ) -> AssinaturaOrganizacao:
-        """Ativa uma proposta contratual por uma fronteira interna e fechada."""
-        from apps.organizacoes.context import organizacao_atual_privilegiada
-        from apps.organizacoes.models import Organizacao
-
-        if not isinstance(proposta_comercial, PropostaComercial) or proposta_comercial.pk is None:
-            raise ValueError("Criação enterprise exige uma proposta persistida.")
-        agora = agora or timezone.now()
-        using = proposta_comercial._state.db or "default"
-        chave = f"assinatura:proposta:{proposta_comercial.pk}"
-
-        with transaction.atomic(using=using):
-            organizacao = Organizacao.all_objects.using(using).select_for_update().get(pk=proposta_comercial.organizacao_id)
-            cls._validar_organizacao_contratavel(organizacao)
-            with organizacao_atual_privilegiada(organizacao.pk):
-                corrente = cls.obter_corrente(organizacao, bloquear=True)
-                proposta = PropostaComercial.all_objects.using(using).select_for_update().get(pk=proposta_comercial.pk)
-                if proposta.organizacao_id != organizacao.pk:
-                    raise ConflitoRevisaoAssinatura("A proposta pertence a outra organização.")
-                if proposta.modo_ativacao != ModoAtivacaoProposta.CONTRATUAL:
-                    raise ConflitoRevisaoAssinatura("A criação enterprise exige proposta contratual.")
-                if proposta.valida_ate <= agora:
-                    raise ConflitoRevisaoAssinatura("A proposta enterprise expirou.")
-                if proposta.status not in (StatusPropostaComercial.ACEITA, StatusPropostaComercial.ATIVADA):
-                    raise ConflitoRevisaoAssinatura("A proposta precisa estar aceita para criar o ciclo enterprise.")
-
-                existente = (
-                    AssinaturaOrganizacao.all_objects.using(using)
-                    .select_for_update()
-                    .filter(organizacao=organizacao, chave_idempotencia=chave)
-                    .first()
-                )
-                if existente is not None:
-                    if (
-                        existente.versao_plano_id is not None
-                        or existente.proposta_comercial_id != proposta.pk
-                        or existente.status != StatusAssinatura.ATIVA
-                        or existente.status_financeiro != StatusFinanceiro.ISENTO
-                    ):
-                        raise ConflitoIdempotenciaAssinatura("O ciclo enterprise existente diverge da proposta contratual.")
-                    return existente
-                if proposta.status != StatusPropostaComercial.ACEITA:
-                    raise ConflitoIdempotenciaAssinatura("Proposta ativada não possui ciclo enterprise compatível.")
-
-                if corrente is not None:
-                    cls._cancelar_alteracoes_pendentes_por_encerramento(corrente, agora=agora, using=using)
-                    corrente.status = StatusAssinatura.ENCERRADA
-                    corrente.revisao += 1
-                    corrente.cancelamento_agendado_para = None
-                    corrente.encerrada_em = agora
-                    corrente.motivo_encerramento = "proposal_replaced"
-                    corrente.save(
-                        update_fields=[
-                            "status",
-                            "revisao",
-                            "cancelamento_agendado_para",
-                            "encerrada_em",
-                            "motivo_encerramento",
-                            "last_modified_at",
-                        ]
-                    )
-
-                termos = TermosAssinatura(
-                    periodicidade=Periodicidade(proposta.periodicidade),
-                    moeda=proposta.moeda,
-                    valor_base_centavos=proposta.valor_base_centavos,
-                    valor_seat_centavos=proposta.valor_seat_centavos,
-                    seats_inclusos=proposta.seats_inclusos,
-                    seats_contratados=proposta.seats_contratados,
-                    expansao_automatica_seats=proposta.expansao_automatica_seats,
-                    recursos=ValoresRecursos(CATALOGO_RECURSOS, proposta.recursos),
-                    carencia_pagamento_dias=proposta.carencia_pagamento_dias,
-                    carencia_excesso_seats_dias=proposta.carencia_excesso_seats_dias,
-                )
-                return cls._persistir_assinatura(
-                    organizacao=organizacao,
-                    versao_plano=None,
-                    proposta_comercial=proposta,
-                    termos=termos,
-                    status=StatusAssinatura.ATIVA,
-                    status_financeiro=StatusFinanceiro.ISENTO,
-                    politica_trial=None,
-                    trial_termina_em=None,
-                    chave_idempotencia=chave,
-                    agora=agora,
-                    using=using,
-                )
-
     @staticmethod
     def _persistir_assinatura(
         *,
@@ -1262,3 +1168,92 @@ class Assinaturas:
             "carencia_excesso_seats_dias": termos.carencia_excesso_seats_dias,
         }
         return all(getattr(assinatura, campo) == valor for campo, valor in esperado.items())
+
+
+def _criar_assinatura_enterprise_de_proposta(
+    *,
+    proposta_comercial: PropostaComercial,
+    agora: datetime,
+) -> AssinaturaOrganizacao:
+    """Cria o ciclo enterprise exclusivamente para a ativação nominal."""
+    from apps.organizacoes.context import organizacao_atual_privilegiada
+    from apps.organizacoes.models import Organizacao
+
+    if not isinstance(proposta_comercial, PropostaComercial) or proposta_comercial.pk is None:
+        raise ValueError("Criação enterprise exige uma proposta persistida.")
+    using = proposta_comercial._state.db or "default"
+    chave = f"assinatura:proposta:{proposta_comercial.pk}"
+
+    with transaction.atomic(using=using):
+        organizacao = Organizacao.all_objects.using(using).select_for_update().get(pk=proposta_comercial.organizacao_id)
+        Assinaturas._validar_organizacao_contratavel(organizacao)
+        with organizacao_atual_privilegiada(organizacao.pk):
+            corrente = Assinaturas.obter_corrente(organizacao, bloquear=True)
+            proposta = PropostaComercial.all_objects.using(using).select_for_update().get(pk=proposta_comercial.pk)
+            if proposta.organizacao_id != organizacao.pk:
+                raise ConflitoRevisaoAssinatura("A proposta pertence a outra organização.")
+            if proposta.modo_ativacao != ModoAtivacaoProposta.CONTRATUAL:
+                raise ConflitoRevisaoAssinatura("A criação enterprise exige proposta contratual.")
+            if proposta.valida_ate <= agora:
+                raise ConflitoRevisaoAssinatura("A proposta enterprise expirou.")
+            if proposta.status not in (StatusPropostaComercial.ACEITA, StatusPropostaComercial.ATIVADA):
+                raise ConflitoRevisaoAssinatura("A proposta precisa estar aceita para criar o ciclo enterprise.")
+
+            existente = (
+                AssinaturaOrganizacao.all_objects.using(using).select_for_update().filter(organizacao=organizacao, chave_idempotencia=chave).first()
+            )
+            if existente is not None:
+                if (
+                    existente.versao_plano_id is not None
+                    or existente.proposta_comercial_id != proposta.pk
+                    or existente.status != StatusAssinatura.ATIVA
+                    or existente.status_financeiro != StatusFinanceiro.ISENTO
+                ):
+                    raise ConflitoIdempotenciaAssinatura("O ciclo enterprise existente diverge da proposta contratual.")
+                return existente
+            if proposta.status != StatusPropostaComercial.ACEITA:
+                raise ConflitoIdempotenciaAssinatura("Proposta ativada não possui ciclo enterprise compatível.")
+
+            if corrente is not None:
+                Assinaturas._cancelar_alteracoes_pendentes_por_encerramento(corrente, agora=agora, using=using)
+                corrente.status = StatusAssinatura.ENCERRADA
+                corrente.revisao += 1
+                corrente.cancelamento_agendado_para = None
+                corrente.encerrada_em = agora
+                corrente.motivo_encerramento = "proposal_replaced"
+                corrente.save(
+                    update_fields=[
+                        "status",
+                        "revisao",
+                        "cancelamento_agendado_para",
+                        "encerrada_em",
+                        "motivo_encerramento",
+                        "last_modified_at",
+                    ]
+                )
+
+            termos = TermosAssinatura(
+                periodicidade=Periodicidade(proposta.periodicidade),
+                moeda=proposta.moeda,
+                valor_base_centavos=proposta.valor_base_centavos,
+                valor_seat_centavos=proposta.valor_seat_centavos,
+                seats_inclusos=proposta.seats_inclusos,
+                seats_contratados=proposta.seats_contratados,
+                expansao_automatica_seats=proposta.expansao_automatica_seats,
+                recursos=ValoresRecursos(CATALOGO_RECURSOS, proposta.recursos),
+                carencia_pagamento_dias=proposta.carencia_pagamento_dias,
+                carencia_excesso_seats_dias=proposta.carencia_excesso_seats_dias,
+            )
+            return Assinaturas._persistir_assinatura(
+                organizacao=organizacao,
+                versao_plano=None,
+                proposta_comercial=proposta,
+                termos=termos,
+                status=StatusAssinatura.ATIVA,
+                status_financeiro=StatusFinanceiro.ISENTO,
+                politica_trial=None,
+                trial_termina_em=None,
+                chave_idempotencia=chave,
+                agora=agora,
+                using=using,
+            )

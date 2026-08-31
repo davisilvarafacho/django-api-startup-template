@@ -24,7 +24,12 @@ from apps.assinaturas.models import (
     StatusPropostaComercial,
     VersaoPlano,
 )
-from apps.assinaturas.subscriptions import STATUS_CORRENTES, Assinaturas, TermosAssinatura
+from apps.assinaturas.subscriptions import (
+    STATUS_CORRENTES,
+    Assinaturas,
+    TermosAssinatura,
+    _criar_assinatura_enterprise_de_proposta,
+)
 
 if TYPE_CHECKING:
     from apps.organizacoes.models import Organizacao
@@ -351,12 +356,12 @@ class Propostas:
         if proposta.status == StatusPropostaComercial.ATIVADA:
             if revisao_esperada not in (proposta.revisao, proposta.revisao - 1):
                 raise ConflitoPropostaComercial("A revisão da proposta mudou.")
-            return Assinaturas.criar_enterprise(proposta_comercial=proposta, agora=agora)
+            return _criar_assinatura_enterprise_de_proposta(proposta_comercial=proposta, agora=agora)
         cls._validar_revisao(proposta, revisao_esperada)
         if proposta.status != StatusPropostaComercial.ACEITA:
             raise ConflitoPropostaComercial("Somente proposta aceita pode ser ativada.")
 
-        assinatura = Assinaturas.criar_enterprise(
+        assinatura = _criar_assinatura_enterprise_de_proposta(
             proposta_comercial=proposta,
             agora=agora,
         )

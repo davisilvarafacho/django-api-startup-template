@@ -309,9 +309,40 @@ CAMPOS_TERMOS_PROPOSTA = frozenset(
     }
 )
 
+CAMPOS_TERMINAIS_PROPOSTA = (
+    "enviada_em",
+    "aceita_em",
+    "aceita_por_id",
+    "ativada_em",
+    "ativada_por_id",
+    "recusada_em",
+    "recusada_por_id",
+    "expirada_em",
+    "cancelada_em",
+    "cancelada_por_id",
+)
+
+
+def _validar_estado_inicial_proposta(proposta) -> None:
+    estado_invalido = (
+        proposta.status != StatusPropostaComercial.RASCUNHO
+        or proposta.revisao != 1
+        or proposta.justificativa_ativacao != ""
+        or any(getattr(proposta, campo) is not None for campo in CAMPOS_TERMINAIS_PROPOSTA)
+    )
+    if estado_invalido:
+        raise ValueError("O estado inicial da proposta deve ser rascunho na revisão 1, sem atores ou datas terminais.")
+
 
 class PropostasComerciaisQuerySet(BaseQuerySet):
     """Mantem snapshots de recursos completos em todas as escritas ORM."""
+
+    def create(self, **kwargs):
+        proposta = self.model(**kwargs)
+        _validar_estado_inicial_proposta(proposta)
+        self._for_write = True
+        proposta.save(force_insert=True, using=self.db)
+        return proposta
 
     def update(self, **kwargs):
         if set(kwargs) & CAMPOS_IDENTIDADE_PROPOSTA:
@@ -335,6 +366,7 @@ class PropostasComerciaisQuerySet(BaseQuerySet):
     ):
         objetos = tuple(objs)
         for objeto in objetos:
+            _validar_estado_inicial_proposta(objeto)
             objeto.recursos = _materializar_recursos(objeto.recursos)
         return super().bulk_create(
             objetos,
@@ -793,6 +825,8 @@ class PropostaComercial(Base):
 
     def save(self, *args, **kwargs):
         campos_atualizados = set(kwargs["update_fields"]) if kwargs.get("update_fields") is not None else None
+        if self._state.adding:
+            _validar_estado_inicial_proposta(self)
         if self._state.adding or campos_atualizados is None or "recursos" in campos_atualizados:
             self.recursos = _materializar_recursos(self.recursos)
         if self.pk is not None:
