@@ -45,6 +45,21 @@ class PoliticaTrial(models.IntegerChoices):
     COM_FORMA_PAGAMENTO = 20, _("Com forma de pagamento")
 
 
+class StatusPropostaComercial(models.IntegerChoices):
+    RASCUNHO = 10, _("Rascunho")
+    ENVIADA = 20, _("Enviada")
+    ACEITA = 30, _("Aceita")
+    ATIVADA = 40, _("Ativada")
+    RECUSADA = 50, _("Recusada")
+    EXPIRADA = 60, _("Expirada")
+    CANCELADA = 70, _("Cancelada")
+
+
+class ModoAtivacaoProposta(models.IntegerChoices):
+    PAGAMENTO = 10, _("Pagamento")
+    CONTRATUAL = 20, _("Contratual")
+
+
 class TipoAlteracaoAssinatura(models.IntegerChoices):
     UPGRADE_PLANO = 10, _("Upgrade de plano")
     AUMENTO_SEATS = 20, _("Aumento de seats")
@@ -254,6 +269,94 @@ class AssinaturasOrganizacaoQuerySet(BaseQuerySet):
         return super().bulk_update(objetos, fields, batch_size=batch_size)
 
 
+STATUS_PROPOSTA_EDITAVEL = StatusPropostaComercial.RASCUNHO
+CAMPOS_IDENTIDADE_PROPOSTA = frozenset({"organizacao", "created_at", "created_by"})
+CAMPOS_PROCESSAMENTO_PROPOSTA = frozenset(
+    {
+        "status",
+        "revisao",
+        "enviada_em",
+        "aceita_em",
+        "aceita_por",
+        "ativada_em",
+        "ativada_por",
+        "justificativa_ativacao",
+        "recusada_em",
+        "recusada_por",
+        "expirada_em",
+        "cancelada_em",
+        "cancelada_por",
+        "is_active",
+        "last_modified_at",
+    }
+)
+CAMPOS_TERMOS_PROPOSTA = frozenset(
+    {
+        "versao_plano_referencia",
+        "modo_ativacao",
+        "periodicidade",
+        "moeda",
+        "valor_base_centavos",
+        "valor_seat_centavos",
+        "seats_inclusos",
+        "seats_contratados",
+        "expansao_automatica_seats",
+        "recursos",
+        "carencia_pagamento_dias",
+        "carencia_excesso_seats_dias",
+        "valida_ate",
+        "is_deleted",
+    }
+)
+
+
+class PropostasComerciaisQuerySet(BaseQuerySet):
+    """Mantem snapshots de recursos completos em todas as escritas ORM."""
+
+    def update(self, **kwargs):
+        if set(kwargs) & CAMPOS_IDENTIDADE_PROPOSTA:
+            raise ValueError("Identidade da proposta é imutável.")
+        if set(kwargs) & CAMPOS_TERMOS_PROPOSTA and self.exclude(status=STATUS_PROPOSTA_EDITAVEL).exists():
+            raise ValueError("Os termos de uma proposta enviada são imutáveis.")
+        if "recursos" in kwargs:
+            kwargs["recursos"] = _materializar_recursos(kwargs["recursos"])
+        return super().update(**kwargs)
+
+    def bulk_create(
+        self,
+        objs,
+        batch_size=None,
+        ignore_conflicts=False,
+        update_conflicts=False,
+        update_fields=None,
+        unique_fields=None,
+    ):
+        objetos = tuple(objs)
+        for objeto in objetos:
+            objeto.recursos = _materializar_recursos(objeto.recursos)
+        return super().bulk_create(
+            objetos,
+            batch_size=batch_size,
+            ignore_conflicts=ignore_conflicts,
+            update_conflicts=update_conflicts,
+            update_fields=update_fields,
+            unique_fields=unique_fields,
+        )
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        objetos = tuple(objs)
+        if set(fields) & CAMPOS_IDENTIDADE_PROPOSTA:
+            raise ValueError("Identidade da proposta é imutável.")
+        if set(fields) & CAMPOS_TERMOS_PROPOSTA:
+            ids = [obj.pk for obj in objetos if obj.pk is not None]
+            if self.model._base_manager.filter(pk__in=ids).exclude(status=STATUS_PROPOSTA_EDITAVEL).exists():
+                raise ValueError("Os termos de uma proposta enviada são imutáveis.")
+        if "recursos" in fields:
+            for objeto in objetos:
+                objeto.recursos = _materializar_recursos(objeto.recursos)
+        return super().bulk_update(objetos, fields, batch_size=batch_size)
+
+
 CAMPOS_PROCESSAMENTO_ALTERACAO = frozenset(
     {
         "status",
@@ -289,6 +392,7 @@ class AlteracoesAssinaturaQuerySet(BaseQuerySet):
 
 
 AssinaturasOrganizacaoQuerySetManager = models.Manager.from_queryset(AssinaturasOrganizacaoQuerySet)
+PropostasComerciaisQuerySetManager = models.Manager.from_queryset(PropostasComerciaisQuerySet)
 AlteracoesAssinaturaQuerySetManager = models.Manager.from_queryset(AlteracoesAssinaturaQuerySet)
 
 
@@ -305,6 +409,23 @@ class AssinaturasOrganizacaoAtivasManager(
     ExcludeDeletedManagerMixin,
     DeferredFieldsManagerMixin,
     AssinaturasOrganizacaoQuerySetManager,
+):
+    pass
+
+
+class PropostasComerciaisManager(ExcludeDeletedManagerMixin, DeferredFieldsManagerMixin, PropostasComerciaisQuerySetManager):
+    pass
+
+
+class TodasPropostasComerciaisManager(DeferredFieldsManagerMixin, PropostasComerciaisQuerySetManager):
+    pass
+
+
+class PropostasComerciaisAtivasManager(
+    ActiveManagerMixin,
+    ExcludeDeletedManagerMixin,
+    DeferredFieldsManagerMixin,
+    PropostasComerciaisQuerySetManager,
 ):
     pass
 
@@ -464,12 +585,256 @@ class PrecoPlano(BaseTenantless):
         ]
 
 
+class PropostaComercial(Base):
+    """Snapshot negociado especificamente para uma organizacao."""
+
+    versao_plano_referencia = models.ForeignKey(
+        VersaoPlano,
+        verbose_name=_("versao do plano de referencia"),
+        on_delete=models.PROTECT,
+        related_name="propostas_comerciais",
+        null=True,
+        blank=True,
+    )
+    status = models.PositiveSmallIntegerField(
+        _("status"),
+        choices=StatusPropostaComercial.choices,
+        default=StatusPropostaComercial.RASCUNHO,
+    )
+    modo_ativacao = models.PositiveSmallIntegerField(_("modo de ativacao"), choices=ModoAtivacaoProposta.choices)
+    revisao = models.PositiveSmallIntegerField(_("revisao"), default=1)
+    periodicidade = models.PositiveSmallIntegerField(_("periodicidade"), choices=Periodicidade.choices)
+    moeda = models.CharField(
+        _("moeda"),
+        max_length=3,
+        validators=[RegexValidator(regex=r"^[A-Z]{3}$", message=_("Informe tres letras maiusculas."))],
+    )
+    valor_base_centavos = models.PositiveBigIntegerField(_("valor base em centavos"))
+    valor_seat_centavos = models.PositiveBigIntegerField(_("valor por seat em centavos"))
+    seats_inclusos = models.PositiveSmallIntegerField(_("seats inclusos"), default=0)
+    seats_contratados = models.PositiveSmallIntegerField(_("seats contratados"), default=0)
+    expansao_automatica_seats = models.BooleanField(_("expansao automatica de seats"), default=False)
+    recursos = models.JSONField(_("recursos"), default=dict)
+    carencia_pagamento_dias = models.PositiveSmallIntegerField(_("carencia de pagamento em dias"), default=0)
+    carencia_excesso_seats_dias = models.PositiveSmallIntegerField(_("carencia de excesso de seats em dias"), default=0)
+    valida_ate = models.DateTimeField(_("valida ate"))
+    enviada_em = models.DateTimeField(_("enviada em"), null=True, blank=True)
+    aceita_em = models.DateTimeField(_("aceita em"), null=True, blank=True)
+    aceita_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name=_("aceita por"),
+        on_delete=models.PROTECT,
+        related_name="propostas_comerciais_aceitas",
+        null=True,
+        blank=True,
+    )
+    ativada_em = models.DateTimeField(_("ativada em"), null=True, blank=True)
+    ativada_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name=_("ativada por"),
+        on_delete=models.PROTECT,
+        related_name="propostas_comerciais_ativadas",
+        null=True,
+        blank=True,
+    )
+    justificativa_ativacao = models.TextField(_("justificativa da ativacao"), blank=True, default="")
+    recusada_em = models.DateTimeField(_("recusada em"), null=True, blank=True)
+    recusada_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name=_("recusada por"),
+        on_delete=models.PROTECT,
+        related_name="propostas_comerciais_recusadas",
+        null=True,
+        blank=True,
+    )
+    expirada_em = models.DateTimeField(_("expirada em"), null=True, blank=True)
+    cancelada_em = models.DateTimeField(_("cancelada em"), null=True, blank=True)
+    cancelada_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name=_("cancelada por"),
+        on_delete=models.PROTECT,
+        related_name="propostas_comerciais_canceladas",
+        null=True,
+        blank=True,
+    )
+
+    objects = PropostasComerciaisManager()  # type: ignore[misc, assignment]
+    all_objects = TodasPropostasComerciaisManager()  # type: ignore[misc, assignment]
+    ativos = PropostasComerciaisAtivasManager()  # type: ignore[misc, assignment]
+
+    def save(self, *args, **kwargs):
+        campos_atualizados = set(kwargs["update_fields"]) if kwargs.get("update_fields") is not None else None
+        if self._state.adding or campos_atualizados is None or "recursos" in campos_atualizados:
+            self.recursos = _materializar_recursos(self.recursos)
+        if self.pk is not None:
+            anterior = dict(type(self)._base_manager.using(self._state.db).filter(pk=self.pk).values().first() or {})
+            if anterior:
+                for campo in CAMPOS_IDENTIDADE_PROPOSTA:
+                    field = cast(models.Field, self._meta.get_field(campo))
+                    if anterior[field.attname] != getattr(self, field.attname):
+                        raise ValueError("Identidade da proposta é imutável.")
+                if anterior["status"] != STATUS_PROPOSTA_EDITAVEL:
+                    for campo in CAMPOS_TERMOS_PROPOSTA:
+                        field = cast(models.Field, self._meta.get_field(campo))
+                        if anterior[field.attname] != getattr(self, field.attname):
+                            raise ValueError("Os termos de uma proposta enviada são imutáveis.")
+        return super().save(*args, **kwargs)
+
+    def clean(self):
+        super().clean()
+        self.recursos = _materializar_recursos(self.recursos)
+
+    def __str__(self):
+        return f"Proposta #{self.pk or 'nova'} @ {self.organizacao_id}"
+
+    class Meta:
+        base_manager_name = "all_objects"
+        db_table = "proposta_comercial"
+        ordering = ("-created_at", "-pk")
+        verbose_name = _("Proposta comercial")
+        verbose_name_plural = _("Propostas comerciais")
+        permissions = (("activate_contractual_propostacomercial", _("Pode ativar proposta comercial contratual")),)
+        indexes = [models.Index(fields=("organizacao", "status", "valida_ate"), name="proposta_org_status_val_idx")]
+        constraints = [
+            models.CheckConstraint(condition=models.Q(status__in=StatusPropostaComercial.values), name="proposta_status_dominio"),
+            models.CheckConstraint(condition=models.Q(modo_ativacao__in=ModoAtivacaoProposta.values), name="proposta_modo_dominio"),
+            models.CheckConstraint(condition=models.Q(periodicidade__in=Periodicidade.values), name="proposta_periodicidade_dominio"),
+            models.CheckConstraint(condition=models.Q(revisao__gte=1), name="proposta_revisao_positiva"),
+            models.CheckConstraint(condition=models.Q(moeda__regex=r"^[A-Z]{3}$"), name="proposta_moeda_iso_maiuscula"),
+            models.CheckConstraint(condition=models.Q(valor_base_centavos__gte=0), name="proposta_valor_base_nao_negativo"),
+            models.CheckConstraint(condition=models.Q(valor_seat_centavos__gte=0), name="proposta_valor_seat_nao_negativo"),
+            models.CheckConstraint(condition=models.Q(seats_inclusos__gte=0), name="proposta_seats_inclusos_nao_negativo"),
+            models.CheckConstraint(condition=models.Q(seats_contratados__gte=0), name="proposta_seats_contratados_nao_negativo"),
+            models.CheckConstraint(condition=models.Q(carencia_pagamento_dias__gte=0), name="proposta_carencia_pagamento_nao_negativa"),
+            models.CheckConstraint(condition=models.Q(carencia_excesso_seats_dias__gte=0), name="proposta_carencia_seats_nao_negativa"),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        status=StatusPropostaComercial.RASCUNHO,
+                        enviada_em__isnull=True,
+                        aceita_em__isnull=True,
+                        aceita_por__isnull=True,
+                        ativada_em__isnull=True,
+                        ativada_por__isnull=True,
+                        justificativa_ativacao="",
+                        recusada_em__isnull=True,
+                        recusada_por__isnull=True,
+                        expirada_em__isnull=True,
+                        cancelada_em__isnull=True,
+                        cancelada_por__isnull=True,
+                    )
+                    | models.Q(
+                        status=StatusPropostaComercial.ENVIADA,
+                        enviada_em__isnull=False,
+                        aceita_em__isnull=True,
+                        aceita_por__isnull=True,
+                        ativada_em__isnull=True,
+                        ativada_por__isnull=True,
+                        justificativa_ativacao="",
+                        recusada_em__isnull=True,
+                        recusada_por__isnull=True,
+                        expirada_em__isnull=True,
+                        cancelada_em__isnull=True,
+                        cancelada_por__isnull=True,
+                    )
+                    | models.Q(
+                        status=StatusPropostaComercial.ACEITA,
+                        enviada_em__isnull=False,
+                        aceita_em__isnull=False,
+                        aceita_por__isnull=False,
+                        ativada_em__isnull=True,
+                        ativada_por__isnull=True,
+                        justificativa_ativacao="",
+                        recusada_em__isnull=True,
+                        recusada_por__isnull=True,
+                        expirada_em__isnull=True,
+                        cancelada_em__isnull=True,
+                        cancelada_por__isnull=True,
+                    )
+                    | (
+                        models.Q(
+                            status=StatusPropostaComercial.ATIVADA,
+                            enviada_em__isnull=False,
+                            aceita_em__isnull=False,
+                            aceita_por__isnull=False,
+                            ativada_em__isnull=False,
+                            recusada_em__isnull=True,
+                            recusada_por__isnull=True,
+                            expirada_em__isnull=True,
+                            cancelada_em__isnull=True,
+                            cancelada_por__isnull=True,
+                        )
+                        & (
+                            models.Q(modo_ativacao=ModoAtivacaoProposta.PAGAMENTO, ativada_por__isnull=True, justificativa_ativacao="")
+                            | (
+                                models.Q(modo_ativacao=ModoAtivacaoProposta.CONTRATUAL, ativada_por__isnull=False)
+                                & ~models.Q(justificativa_ativacao="")
+                            )
+                        )
+                    )
+                    | models.Q(
+                        status=StatusPropostaComercial.RECUSADA,
+                        enviada_em__isnull=False,
+                        aceita_em__isnull=True,
+                        aceita_por__isnull=True,
+                        ativada_em__isnull=True,
+                        ativada_por__isnull=True,
+                        justificativa_ativacao="",
+                        recusada_em__isnull=False,
+                        recusada_por__isnull=False,
+                        expirada_em__isnull=True,
+                        cancelada_em__isnull=True,
+                        cancelada_por__isnull=True,
+                    )
+                    | (
+                        models.Q(
+                            status=StatusPropostaComercial.EXPIRADA,
+                            enviada_em__isnull=False,
+                            ativada_em__isnull=True,
+                            ativada_por__isnull=True,
+                            justificativa_ativacao="",
+                            recusada_em__isnull=True,
+                            recusada_por__isnull=True,
+                            expirada_em__isnull=False,
+                            cancelada_em__isnull=True,
+                            cancelada_por__isnull=True,
+                        )
+                        & (models.Q(aceita_em__isnull=True, aceita_por__isnull=True) | models.Q(aceita_em__isnull=False, aceita_por__isnull=False))
+                    )
+                    | (
+                        models.Q(
+                            status=StatusPropostaComercial.CANCELADA,
+                            ativada_em__isnull=True,
+                            ativada_por__isnull=True,
+                            justificativa_ativacao="",
+                            recusada_em__isnull=True,
+                            recusada_por__isnull=True,
+                            expirada_em__isnull=True,
+                            cancelada_em__isnull=False,
+                            cancelada_por__isnull=False,
+                        )
+                        & (models.Q(aceita_em__isnull=True, aceita_por__isnull=True) | models.Q(aceita_em__isnull=False, aceita_por__isnull=False))
+                    )
+                ),
+                name="proposta_estado_datas_coerente",
+            ),
+        ]
+
+
 class AssinaturaOrganizacao(Base):
     """Snapshot corrente dos termos contratuais de uma organização."""
 
     versao_plano = models.ForeignKey(
         VersaoPlano,
         verbose_name=_("versão do plano"),
+        on_delete=models.PROTECT,
+        related_name="assinaturas_organizacoes",
+        null=True,
+        blank=True,
+    )
+    proposta_comercial = models.ForeignKey(
+        PropostaComercial,
+        verbose_name=_("proposta comercial"),
         on_delete=models.PROTECT,
         related_name="assinaturas_organizacoes",
         null=True,
@@ -540,8 +905,11 @@ class AssinaturaOrganizacao(Base):
         indexes = [models.Index(fields=("organizacao", "status"), name="assinatura_org_status_idx")]
         constraints = [
             models.CheckConstraint(
-                condition=models.Q(versao_plano__isnull=False),
-                name="assinatura_origem_catalogo_exige_versao",
+                condition=(
+                    models.Q(versao_plano__isnull=False, proposta_comercial__isnull=True)
+                    | models.Q(versao_plano__isnull=True, proposta_comercial__isnull=False)
+                ),
+                name="assinatura_origem_xor",
             ),
             models.UniqueConstraint(
                 fields=("organizacao", "chave_idempotencia"),
@@ -848,5 +1216,6 @@ class AlteracaoAssinatura(Base):
 register(Plano)
 register(VersaoPlano)
 register(PrecoPlano)
+register(PropostaComercial)
 register(AssinaturaOrganizacao)
 register(AlteracaoAssinatura)

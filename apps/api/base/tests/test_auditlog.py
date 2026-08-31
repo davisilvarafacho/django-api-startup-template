@@ -12,7 +12,7 @@ import apps.api.base.models as base_models
 from apps.api.autenticacao.models import IdentidadeExterna, MFAChallenge, MFAFactor, MFARecoveryCode, MFAResetAudit, TokenMetaData, TrustedDevice
 from apps.api.base.models import Base, BaseTenantless
 from apps.api.core.context import usuario_atual
-from apps.assinaturas.models import AlteracaoAssinatura, AssinaturaOrganizacao, Plano, PrecoPlano, VersaoPlano
+from apps.assinaturas.models import AlteracaoAssinatura, AssinaturaOrganizacao, Plano, PrecoPlano, PropostaComercial, VersaoPlano
 from apps.logs.models import LogAlteracao
 from apps.organizacoes.models import Convite, Organizacao, Time, Vinculo
 from apps.usuarios.accounts import Contas
@@ -39,6 +39,7 @@ def test_registra_todos_os_modelos_concretos_dos_apps():
         Plano,
         VersaoPlano,
         PrecoPlano,
+        PropostaComercial,
         AssinaturaOrganizacao,
         AlteracaoAssinatura,
     }

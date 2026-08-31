@@ -23,9 +23,11 @@ from apps.assinaturas.models import (
     Periodicidade,
     PoliticaTrial,
     PrecoPlano,
+    PropostaComercial,
     StatusAlteracaoAssinatura,
     StatusAssinatura,
     StatusFinanceiro,
+    StatusPropostaComercial,
     TipoAlteracaoAssinatura,
     VersaoPlano,
 )
@@ -63,7 +65,16 @@ class OrigemVersaoPlano:
             raise ValueError("Origem de catálogo exige uma VersaoPlano.")
 
 
-type OrigemAssinatura = OrigemVersaoPlano
+@dataclass(frozen=True)
+class OrigemPropostaComercial:
+    proposta_comercial: PropostaComercial
+
+    def __post_init__(self):
+        if not isinstance(self.proposta_comercial, PropostaComercial):
+            raise ValueError("Origem enterprise exige uma PropostaComercial.")
+
+
+type OrigemAssinatura = OrigemVersaoPlano | OrigemPropostaComercial
 
 
 @dataclass(frozen=True)
@@ -115,8 +126,10 @@ class CriacaoAssinatura:
     def __post_init__(self):
         if getattr(self.organizacao, "pk", None) is None:
             raise ValueError("Organização da assinatura precisa estar persistida.")
-        if not isinstance(self.origem, OrigemVersaoPlano):
-            raise ValueError("Origem da assinatura precisa ser uma origem de catálogo.")
+        if not isinstance(self.origem, (OrigemVersaoPlano, OrigemPropostaComercial)):
+            raise ValueError("Origem da assinatura precisa ser catálogo ou proposta comercial.")
+        if isinstance(self.origem, OrigemPropostaComercial) and self.origem.proposta_comercial.organizacao_id != self.organizacao.pk:
+            raise ValueError("A proposta precisa pertencer à organização da assinatura.")
         if not isinstance(self.termos, TermosAssinatura):
             raise ValueError("Termos da assinatura precisam ser TermosAssinatura.")
         if not isinstance(self.status, StatusAssinatura):
@@ -144,7 +157,7 @@ class CriacaoAssinatura:
 class CriacaoAlteracaoAssinatura:
     assinatura: AssinaturaOrganizacao
     tipo: TipoAlteracaoAssinatura
-    origem_pretendida: OrigemAssinatura
+    origem_pretendida: OrigemVersaoPlano
     termos_pretendidos: TermosAssinatura
     revisao_esperada: int
     chave_idempotencia: str
@@ -430,9 +443,12 @@ class Assinaturas:
                 raise ConflitoRevisaoAssinatura("A organização já possui um contrato corrente.")
 
             termos = comando.termos
+            versao_plano = comando.origem.versao_plano if isinstance(comando.origem, OrigemVersaoPlano) else None
+            proposta_comercial = comando.origem.proposta_comercial if isinstance(comando.origem, OrigemPropostaComercial) else None
             return AssinaturaOrganizacao.objects.using(using).create(
                 organizacao=organizacao_bloqueada,
-                versao_plano=comando.origem.versao_plano,
+                versao_plano=versao_plano,
+                proposta_comercial=proposta_comercial,
                 status=comando.status,
                 status_financeiro=comando.status_financeiro,
                 revisao=1,
@@ -451,6 +467,90 @@ class Assinaturas:
                 carencia_excesso_seats_dias=termos.carencia_excesso_seats_dias,
                 chave_idempotencia=comando.chave_idempotencia,
             )
+
+    @classmethod
+    def criar_enterprise(
+        cls,
+        *,
+        proposta_comercial: PropostaComercial,
+        status_financeiro: StatusFinanceiro,
+        agora: datetime | None = None,
+    ) -> AssinaturaOrganizacao:
+        """Substitui o ciclo corrente por um snapshot originado da proposta."""
+        from apps.organizacoes.context import organizacao_atual_privilegiada
+        from apps.organizacoes.models import Organizacao
+
+        if not isinstance(proposta_comercial, PropostaComercial) or proposta_comercial.pk is None:
+            raise ValueError("Criação enterprise exige uma proposta persistida.")
+        if status_financeiro not in (StatusFinanceiro.ISENTO, StatusFinanceiro.REGULAR):
+            raise ValueError("Criação enterprise exige estado financeiro confirmado.")
+        agora = agora or timezone.now()
+        using = proposta_comercial._state.db or "default"
+        chave = f"assinatura:proposta:{proposta_comercial.pk}"
+
+        with transaction.atomic(using=using):
+            organizacao = Organizacao.all_objects.using(using).select_for_update().get(pk=proposta_comercial.organizacao_id)
+            cls._validar_organizacao_contratavel(organizacao)
+            with organizacao_atual_privilegiada(organizacao.pk):
+                existente = (
+                    AssinaturaOrganizacao.all_objects.using(using)
+                    .select_for_update()
+                    .filter(organizacao=organizacao, proposta_comercial_id=proposta_comercial.pk)
+                    .first()
+                )
+                if existente is not None:
+                    return existente
+
+                corrente = cls.obter_corrente(organizacao, bloquear=True)
+                proposta = PropostaComercial.all_objects.using(using).select_for_update().get(pk=proposta_comercial.pk)
+                if proposta.organizacao_id != organizacao.pk:
+                    raise ConflitoRevisaoAssinatura("A proposta pertence a outra organização.")
+                if proposta.status != StatusPropostaComercial.ACEITA:
+                    raise ConflitoRevisaoAssinatura("A proposta precisa estar aceita para criar o ciclo enterprise.")
+
+                if corrente is not None:
+                    cls._cancelar_alteracoes_pendentes_por_encerramento(corrente, agora=agora, using=using)
+                    corrente.status = StatusAssinatura.ENCERRADA
+                    corrente.revisao += 1
+                    corrente.cancelamento_agendado_para = None
+                    corrente.encerrada_em = agora
+                    corrente.motivo_encerramento = "proposal_replaced"
+                    corrente.save(
+                        update_fields=[
+                            "status",
+                            "revisao",
+                            "cancelamento_agendado_para",
+                            "encerrada_em",
+                            "motivo_encerramento",
+                            "last_modified_at",
+                        ]
+                    )
+
+                termos = TermosAssinatura(
+                    periodicidade=Periodicidade(proposta.periodicidade),
+                    moeda=proposta.moeda,
+                    valor_base_centavos=proposta.valor_base_centavos,
+                    valor_seat_centavos=proposta.valor_seat_centavos,
+                    seats_inclusos=proposta.seats_inclusos,
+                    seats_contratados=proposta.seats_contratados,
+                    expansao_automatica_seats=proposta.expansao_automatica_seats,
+                    recursos=ValoresRecursos(CATALOGO_RECURSOS, proposta.recursos),
+                    carencia_pagamento_dias=proposta.carencia_pagamento_dias,
+                    carencia_excesso_seats_dias=proposta.carencia_excesso_seats_dias,
+                )
+                return cls.criar(
+                    CriacaoAssinatura(
+                        organizacao=organizacao,
+                        origem=OrigemPropostaComercial(proposta),
+                        termos=termos,
+                        status=StatusAssinatura.ATIVA,
+                        status_financeiro=status_financeiro,
+                        politica_trial=None,
+                        trial_termina_em=None,
+                        chave_idempotencia=chave,
+                    ),
+                    agora=agora,
+                )
 
     @classmethod
     def criar_gratuita(
@@ -963,6 +1063,7 @@ class Assinaturas:
     def _snapshot_assinatura(cls, assinatura: AssinaturaOrganizacao) -> dict[str, Any]:
         return {
             "versao_plano_id": assinatura.versao_plano_id,
+            "proposta_comercial_id": assinatura.proposta_comercial_id,
             "status": int(assinatura.status),
             "status_financeiro": int(assinatura.status_financeiro),
             "revisao": assinatura.revisao,
@@ -1001,6 +1102,7 @@ class Assinaturas:
         snapshot.update(
             {
                 "versao_plano_id": comando.origem_pretendida.versao_plano.pk,
+                "proposta_comercial_id": None,
                 "revisao": comando.revisao_esperada + 1,
                 "periodicidade": int(termos.periodicidade),
                 "moeda": termos.moeda,
@@ -1106,8 +1208,11 @@ class Assinaturas:
     @staticmethod
     def _equivale_ao_comando(assinatura: AssinaturaOrganizacao, comando: CriacaoAssinatura) -> bool:
         termos = comando.termos
+        versao_plano_id = comando.origem.versao_plano.pk if isinstance(comando.origem, OrigemVersaoPlano) else None
+        proposta_comercial_id = comando.origem.proposta_comercial.pk if isinstance(comando.origem, OrigemPropostaComercial) else None
         esperado = {
-            "versao_plano_id": comando.origem.versao_plano.pk,
+            "versao_plano_id": versao_plano_id,
+            "proposta_comercial_id": proposta_comercial_id,
             "status": comando.status,
             "status_financeiro": comando.status_financeiro,
             "periodicidade": termos.periodicidade,

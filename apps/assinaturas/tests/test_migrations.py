@@ -148,3 +148,38 @@ def test_migration_0006_promove_rls_para_bigint_e_reverse_restaura_0005():
     finally:
         executor = MigrationExecutor(connection)
         executor.migrate(alvos_finais)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_migration_0007_fecha_xor_rls_e_reverse_restaura_origem_catalogo():
+    executor = MigrationExecutor(connection)
+    alvos_finais = executor.loader.graph.leaf_nodes()
+
+    def constraints_assinatura():
+        with connection.cursor() as cursor:
+            return connection.introspection.get_constraints(cursor, "assinatura_organizacao")
+
+    try:
+        executor.migrate([("assinaturas", "0006_reforcar_invariantes_assinaturas")])
+        assert "proposta_comercial" not in connection.introspection.table_names()
+        assert "assinatura_origem_catalogo_exige_versao" in constraints_assinatura()
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([("assinaturas", "0007_propostas_comerciais_enterprise")])
+        assert "proposta_comercial" in connection.introspection.table_names()
+        assert "assinatura_origem_xor" in constraints_assinatura()
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT qual FROM pg_policies WHERE tablename = 'proposta_comercial' AND policyname = 'isolamento_organizacao'")
+            assert "::bigint" in cursor.fetchone()[0]
+            cursor.execute(
+                "SELECT 1 FROM pg_constraint WHERE conrelid = 'proposta_comercial'::regclass AND conname = 'proposta_recursos_objeto_json'"
+            )
+            assert cursor.fetchone() == (1,)
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([("assinaturas", "0006_reforcar_invariantes_assinaturas")])
+        assert "proposta_comercial" not in connection.introspection.table_names()
+        assert "assinatura_origem_catalogo_exige_versao" in constraints_assinatura()
+    finally:
+        executor = MigrationExecutor(connection)
+        executor.migrate(alvos_finais)

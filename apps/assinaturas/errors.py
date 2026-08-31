@@ -11,6 +11,10 @@ class BillingErrorCode(models.TextChoices):
         "billing.subscription_conflict",
         _("A assinatura mudou. Atualize os dados e tente novamente."),
     )
+    PROPOSAL_INVALID = (
+        "billing.proposal_invalid",
+        _("A proposta não está disponível para aceite."),
+    )
     SEAT_LIMIT_REACHED = (
         "billing.seat_limit_reached",
         _("Não há seats disponíveis. Aumente a quantidade contratada ou libere um seat."),
