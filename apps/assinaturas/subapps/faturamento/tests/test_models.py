@@ -310,6 +310,73 @@ def test_check_deploy_rejeita_nomes_e_modo_arbitrarios():
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    ("aplicar", "restaurar"),
+    [
+        (
+            "GRANT SELECT ON assinatura_gateway TO billing_ingress_runtime",
+            "REVOKE SELECT ON assinatura_gateway FROM billing_ingress_runtime",
+        ),
+        (
+            "GRANT USAGE ON SEQUENCE evento_cobranca_id_seq TO billing_ingress_runtime",
+            "REVOKE USAGE ON SEQUENCE evento_cobranca_id_seq FROM billing_ingress_runtime",
+        ),
+        (
+            "GRANT SELECT(id) ON evento_cobranca TO billing_ingress_runtime",
+            "REVOKE SELECT(id) ON evento_cobranca FROM billing_ingress_runtime",
+        ),
+        (
+            "GRANT CREATE ON SCHEMA public TO billing_ingress_runtime",
+            "REVOKE CREATE ON SCHEMA public FROM billing_ingress_runtime",
+        ),
+        (
+            "GRANT DELETE ON evento_cobranca TO billing_functions_owner",
+            "REVOKE DELETE ON evento_cobranca FROM billing_functions_owner",
+        ),
+        (
+            "CREATE POLICY evento_ingresso_permissiva ON evento_cobranca FOR SELECT TO billing_ingress_runtime USING (true)",
+            "DROP POLICY evento_ingresso_permissiva ON evento_cobranca",
+        ),
+        (
+            "ALTER FUNCTION faturamento_rotear_evento(text,text) RESET search_path",
+            "ALTER FUNCTION faturamento_rotear_evento(text,text) SET search_path=pg_catalog,pg_temp",
+        ),
+        (
+            "REVOKE EXECUTE ON FUNCTION faturamento_rotear_evento(text,text) FROM billing_ingress_runtime",
+            "GRANT EXECUTE ON FUNCTION faturamento_rotear_evento(text,text) TO billing_ingress_runtime",
+        ),
+        (
+            "GRANT EXECUTE ON FUNCTION faturamento_rotear_evento(text,text) TO PUBLIC",
+            "REVOKE EXECUTE ON FUNCTION faturamento_rotear_evento(text,text) FROM PUBLIC",
+        ),
+        (
+            "ALTER POLICY evento_interface_definidor_select ON evento_cobranca USING (false)",
+            "ALTER POLICY evento_interface_definidor_select ON evento_cobranca USING (true)",
+        ),
+        (
+            "DROP POLICY evento_interface_definidor_select ON evento_cobranca; "
+            "CREATE POLICY evento_interface_definidor_select ON evento_cobranca FOR SELECT TO billing_functions_owner",
+            "DROP POLICY evento_interface_definidor_select ON evento_cobranca; "
+            "CREATE POLICY evento_interface_definidor_select ON evento_cobranca FOR SELECT TO billing_functions_owner USING (true)",
+        ),
+        (
+            "CREATE FUNCTION faturamento_rotear_evento(text) RETURNS boolean LANGUAGE sql AS 'SELECT false'",
+            "DROP FUNCTION faturamento_rotear_evento(text)",
+        ),
+    ],
+)
+def test_check_deploy_detecta_drift_real_de_privilegios(aplicar, restaurar):
+    with connection.cursor() as cursor:
+        cursor.execute(aplicar)
+    try:
+        with override_settings(BILLING_DATABASE_MODE="migration"):
+            assert [erro.id for erro in role_ingresso_check(None)] == ["faturamento.E006"]
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute(restaurar)
+
+
+@pytest.mark.django_db(transaction=True)
 def test_roles_reais_separam_web_ingresso_e_migration(papel_ingresso):
     database = settings.DATABASES["default"]
 

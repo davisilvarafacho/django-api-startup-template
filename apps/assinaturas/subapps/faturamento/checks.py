@@ -64,25 +64,71 @@ def role_ingresso_check(app_configs, **kwargs):
             """WITH esperadas(oid) AS (VALUES
                  (to_regprocedure('public.faturamento_receber_evento(text,text,text,text,text,text,boolean,jsonb,text,timestamptz)')),
                  (to_regprocedure('public.faturamento_rotear_evento(text,text)'))
+               ), roles_faturamento AS (
+                 SELECT oid,rolname FROM pg_roles WHERE rolname IN (%s,%s)
+               ), acl_relacoes AS (
+                 SELECT c.relname,c.relkind,r.rolname,a.privilege_type,a.is_grantable
+                 FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+                 JOIN roles_faturamento r ON r.oid=a.grantee
+                 WHERE c.relnamespace='public'::regnamespace
+               ), acl_schema AS (
+                 SELECT r.rolname,a.privilege_type,a.is_grantable
+                 FROM pg_namespace n CROSS JOIN LATERAL aclexplode(n.nspacl) a
+                 JOIN roles_faturamento r ON r.oid=a.grantee WHERE n.nspname='public'
+               ), acl_colunas AS (
+                 SELECT 1
+                 FROM pg_attribute att JOIN pg_class c ON c.oid=att.attrelid
+                 CROSS JOIN LATERAL aclexplode(att.attacl) a
+                 JOIN roles_faturamento r ON r.oid=a.grantee
+                 WHERE c.relnamespace='public'::regnamespace
                ) SELECT
                  (SELECT count(*) FROM esperadas JOIN pg_proc p ON p.oid=esperadas.oid) = 2
+                 AND (SELECT count(*) FROM pg_proc
+                      WHERE pronamespace='public'::regnamespace
+                        AND proname IN ('faturamento_receber_evento','faturamento_rotear_evento')) = 2
                  AND NOT EXISTS (
                    SELECT 1 FROM esperadas e
                    LEFT JOIN pg_proc p ON p.oid=e.oid LEFT JOIN pg_roles r ON r.oid=p.proowner
                    WHERE p.oid IS NULL OR NOT p.prosecdef OR r.rolname<>%s
                      OR has_function_privilege('public', p.oid, 'EXECUTE')
-                 ),
+                     OR NOT has_function_privilege(%s, p.oid, 'EXECUTE')
+                     OR COALESCE(cardinality(p.proconfig),0)<>1
+                     OR replace(p.proconfig[1],' ','')<>'search_path=pg_catalog,pg_temp'
+                 )
+                 AND
+                 NOT EXISTS (SELECT 1 FROM acl_relacoes WHERE rolname=%s)
+                 AND (SELECT count(*) FROM acl_relacoes WHERE rolname=%s) = 6
+                 AND NOT EXISTS (
+                   SELECT 1 FROM acl_relacoes WHERE rolname=%s AND NOT (
+                     (relname='evento_cobranca' AND relkind='r' AND privilege_type IN ('SELECT','INSERT','UPDATE'))
+                     OR (relname='assinatura_gateway' AND relkind='r' AND privilege_type='SELECT')
+                     OR (relname='evento_cobranca_id_seq' AND relkind='S' AND privilege_type IN ('SELECT','USAGE'))
+                   ) OR is_grantable
+                 )
+                 AND (SELECT count(*) FROM acl_schema) = 2
+                 AND NOT EXISTS (SELECT 1 FROM acl_schema WHERE privilege_type<>'USAGE' OR is_grantable)
+                 AND NOT EXISTS (SELECT 1 FROM acl_colunas),
                  (SELECT count(*) FROM pg_policy
                    WHERE polrelid=to_regclass('public.evento_cobranca')
                      AND polname LIKE 'evento_interface_definidor_%%') = 3
                  AND NOT EXISTS (
                    SELECT 1 FROM pg_policy p
                    WHERE p.polrelid=to_regclass('public.evento_cobranca')
-                     AND p.polname LIKE 'evento_interface_definidor_%%'
-                     AND p.polroles <> ARRAY[(SELECT oid FROM pg_roles WHERE rolname=%s)]
+                     AND ((p.polname='evento_interface_definidor_select'
+                           AND (NOT p.polpermissive OR p.polcmd<>'r' OR p.polroles<>ARRAY[(SELECT oid FROM pg_roles WHERE rolname=%s)]
+                                OR pg_get_expr(p.polqual,p.polrelid) IS DISTINCT FROM 'true' OR p.polwithcheck IS NOT NULL))
+                       OR (p.polname='evento_interface_definidor_insert'
+                           AND (NOT p.polpermissive OR p.polcmd<>'a' OR p.polroles<>ARRAY[(SELECT oid FROM pg_roles WHERE rolname=%s)]
+                                OR p.polqual IS NOT NULL OR pg_get_expr(p.polwithcheck,p.polrelid) IS DISTINCT FROM 'true'))
+                       OR (p.polname='evento_interface_definidor_update'
+                           AND (NOT p.polpermissive OR p.polcmd<>'w' OR p.polroles<>ARRAY[(SELECT oid FROM pg_roles WHERE rolname=%s)]
+                                OR pg_get_expr(p.polqual,p.polrelid) IS DISTINCT FROM 'true'
+                                OR pg_get_expr(p.polwithcheck,p.polrelid) IS DISTINCT FROM 'true'))
+                       OR p.polname NOT IN ('evento_tenant','evento_interface_definidor_select',
+                                            'evento_interface_definidor_insert','evento_interface_definidor_update'))
                  ),
                  (SELECT count(*) FROM esperadas JOIN pg_proc p ON p.oid=esperadas.oid)""",
-            [owner, owner],
+            [owner, runtime, owner, runtime, runtime, owner, owner, owner, owner, owner],
         )
         catalogo = cursor.fetchone()
 
