@@ -61,15 +61,16 @@ def role_ingresso_check(app_configs, **kwargs):
         )
         rows = cursor.fetchall()
         cursor.execute(
-            """SELECT
-                 (SELECT count(*) FROM pg_proc
-                   WHERE pronamespace='public'::regnamespace
-                     AND proname IN ('faturamento_receber_evento','faturamento_rotear_evento')) = 2
+            """WITH esperadas(oid) AS (VALUES
+                 (to_regprocedure('public.faturamento_receber_evento(text,text,text,text,text,text,boolean,jsonb,text,timestamptz)')),
+                 (to_regprocedure('public.faturamento_rotear_evento(text,text)'))
+               ) SELECT
+                 (SELECT count(*) FROM esperadas JOIN pg_proc p ON p.oid=esperadas.oid) = 2
                  AND NOT EXISTS (
-                   SELECT 1 FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner
-                   WHERE p.pronamespace='public'::regnamespace
-                     AND p.proname IN ('faturamento_receber_evento','faturamento_rotear_evento')
-                     AND (NOT p.prosecdef OR r.rolname<>%s)
+                   SELECT 1 FROM esperadas e
+                   LEFT JOIN pg_proc p ON p.oid=e.oid LEFT JOIN pg_roles r ON r.oid=p.proowner
+                   WHERE p.oid IS NULL OR NOT p.prosecdef OR r.rolname<>%s
+                     OR has_function_privilege('public', p.oid, 'EXECUTE')
                  ),
                  (SELECT count(*) FROM pg_policy
                    WHERE polrelid=to_regclass('public.evento_cobranca')
@@ -80,9 +81,7 @@ def role_ingresso_check(app_configs, **kwargs):
                      AND p.polname LIKE 'evento_interface_definidor_%%'
                      AND p.polroles <> ARRAY[(SELECT oid FROM pg_roles WHERE rolname=%s)]
                  ),
-                 (SELECT count(*) FROM pg_proc
-                   WHERE pronamespace='public'::regnamespace
-                     AND proname IN ('faturamento_receber_evento','faturamento_rotear_evento')) > 0""",
+                 (SELECT count(*) FROM esperadas JOIN pg_proc p ON p.oid=esperadas.oid)""",
             [owner, owner],
         )
         catalogo = cursor.fetchone()
@@ -98,14 +97,18 @@ def role_ingresso_check(app_configs, **kwargs):
         )
     membership = {row[0]: row[8] for row in rows}
     usuario = rows[0][10]
-    esperado = {"web": (False, False), "ingress": (False, True), "migration": (True, False)}[modo]
-    if usuario in {owner, runtime} or (membership[owner], membership[runtime]) != esperado:
+    membership_valida = {
+        "web": not membership[owner] and not membership[runtime],
+        "ingress": not membership[owner] and membership[runtime],
+        "migration": membership[owner],
+    }[modo]
+    if usuario in {owner, runtime} or not membership_valida:
         return _erro(
             f"A credencial do modo {modo} não respeita as memberships de faturamento.",
             "faturamento.E004",
-            "Web não recebe roles; ingress recebe somente runtime; migration recebe somente owner com SET OPTION.",
+            "Web não recebe roles; ingress recebe runtime sem owner; migration inclui owner com SET OPTION.",
         )
-    if catalogo[2] and catalogo[:2] != (True, True):
+    if (catalogo[2] == 0 and modo != "migration") or (catalogo[2] != 0 and catalogo[:2] != (True, True)):
         return _erro(
             "Owner ou policies das funções de faturamento divergem do contrato.",
             "faturamento.E006",

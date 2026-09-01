@@ -110,7 +110,6 @@ def test_configuracao_separa_roles_e_credencial_de_migration():
     assert settings.BILLING_DATABASE_OWNER_ROLE == "billing_functions_owner"
     assert settings.BILLING_INGRESS_DATABASE_ROLE == "billing_ingress_runtime"
     assert settings.BILLING_DATABASE_OWNER_ROLE != settings.DATABASES["default"]["USER"]
-    assert settings.DATABASES["billing_migration"]["USER"] != settings.DATABASES["default"]["USER"]
 
 
 @pytest.mark.parametrize(
@@ -249,7 +248,7 @@ def test_check_de_configuracao_malformada_retorna_error(config):
     assert isinstance(resultado[0], Error)
 
 
-def _mock_role_check(modo, owner_set, runtime_set, *, owner_outbound=False, runtime_replication=False, catalogo=(True, True, True)):
+def _mock_role_check(modo, owner_set, runtime_set, *, owner_outbound=False, runtime_replication=False, catalogo=(True, True, 2)):
     cursor_patch = patch("apps.assinaturas.subapps.faturamento.checks.connection.cursor")
     cursor_factory = cursor_patch.start()
     cursor = cursor_factory.return_value.__enter__.return_value
@@ -281,13 +280,23 @@ def test_check_deploy_prova_memberships_por_modo(modo, memberships):
         ({"modo": "migration", "owner_set": False, "runtime_set": False}, "faturamento.E004"),
         ({"modo": "web", "owner_set": False, "runtime_set": False, "owner_outbound": True}, "faturamento.E003"),
         ({"modo": "web", "owner_set": False, "runtime_set": False, "runtime_replication": True}, "faturamento.E003"),
-        ({"modo": "web", "owner_set": False, "runtime_set": False, "catalogo": (False, True, True)}, "faturamento.E006"),
+        ({"modo": "web", "owner_set": False, "runtime_set": False, "catalogo": (False, True, 1)}, "faturamento.E006"),
+        ({"modo": "web", "owner_set": False, "runtime_set": False, "catalogo": (True, True, 0)}, "faturamento.E006"),
     ],
 )
 def test_check_deploy_rejeita_grafo_ou_catalogo_inseguro(kwargs, error_id):
     cursor_patch, settings_patch = _mock_role_check(**kwargs)
     try:
         assert [erro.id for erro in role_ingresso_check(None)] == [error_id]
+    finally:
+        settings_patch.disable()
+        cursor_patch.stop()
+
+
+def test_check_migration_permite_catalogo_zero_no_preflight():
+    cursor_patch, settings_patch = _mock_role_check("migration", True, False, catalogo=(True, True, 0))
+    try:
+        assert role_ingresso_check(None) == []
     finally:
         settings_patch.disable()
         cursor_patch.stop()
@@ -310,7 +319,7 @@ def test_roles_reais_separam_web_ingresso_e_migration(papel_ingresso):
     for usuario, senha, permitida, negada in (
         (PAPEL_WEB, SENHA_PAPEIS, None, "billing_ingress_runtime"),
         (PAPEL_INGRESSO, SENHA_INGRESSO, "billing_ingress_runtime", "billing_functions_owner"),
-        (PAPEL_MIGRATION, SENHA_PAPEIS, "billing_functions_owner", "billing_ingress_runtime"),
+        (PAPEL_MIGRATION, SENHA_PAPEIS, "billing_functions_owner", None),
     ):
         conexao = conectar(usuario, senha)
         try:
@@ -318,9 +327,10 @@ def test_roles_reais_separam_web_ingresso_e_migration(papel_ingresso):
                 if permitida:
                     cursor.execute(f"SET ROLE {permitida}")
                     cursor.execute("RESET ROLE")
-                with pytest.raises(psycopg2.errors.InsufficientPrivilege):
-                    cursor.execute(f"SET ROLE {negada}")
-                conexao.rollback()
+                if negada:
+                    with pytest.raises(psycopg2.errors.InsufficientPrivilege):
+                        cursor.execute(f"SET ROLE {negada}")
+                    conexao.rollback()
                 if usuario == PAPEL_WEB:
                     with pytest.raises(psycopg2.errors.InsufficientPrivilege):
                         cursor.execute("SET ROLE billing_functions_owner")
@@ -1039,20 +1049,20 @@ def test_rls_checkout_e_fatura_bloqueia_insert_e_update_cross_tenant(papel_ingre
 
 
 @pytest.mark.django_db(transaction=True)
-def test_migration_0003_restaura_0002_e_reaplica(papel_ingresso):
-    def catalogo_0002():
+def test_migration_initial_zero_aplica_reverte_reaplica_atomicamente(papel_ingresso):
+    def catalogo():
         with connection.cursor() as cursor:
             cursor.execute(
-                """SELECT p.proname, pg_get_function_identity_arguments(p.oid), p.prosecdef,
-                          pg_get_functiondef(p.oid), owner.rolname
+                """SELECT p.proname, p.prosecdef, owner.rolname,
+                          has_function_privilege('public',p.oid,'EXECUTE')
                    FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
                    JOIN pg_roles owner ON owner.oid=p.proowner
-                   WHERE n.nspname='public' AND p.proname IN ('evento_payload_valido','faturamento_rotear_evento')
-                   ORDER BY 1,2"""
+                   WHERE n.nspname='public' AND p.proname LIKE 'faturamento_%'
+                   ORDER BY 1"""
             )
             funcoes = cursor.fetchall()
             cursor.execute(
-                """SELECT polname, polcmd, polpermissive, polroles, pg_get_expr(polqual, polrelid), pg_get_expr(polwithcheck, polrelid)
+                """SELECT polname, polcmd, polroles
                    FROM pg_policy WHERE polrelid='public.evento_cobranca'::regclass ORDER BY polname"""
             )
             policies = cursor.fetchall()
@@ -1070,47 +1080,41 @@ def test_migration_0003_restaura_0002_e_reaplica(papel_ingresso):
                    ORDER BY table_name, column_name, privilege_type"""
             )
             grants_colunas = cursor.fetchall()
-            cursor.execute(
-                """SELECT pg_get_constraintdef(oid)
-                   FROM pg_constraint WHERE conname='evento_payload_schema_seguro'"""
-            )
-            constraint = cursor.fetchone()
-        return funcoes, policies, grants, grants_colunas, constraint
+        return funcoes, policies, grants, grants_colunas
 
     executor = MigrationExecutor(connection)
     folhas = executor.loader.graph.leaf_nodes()
     try:
+        executor.migrate([("faturamento", None)])
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT to_regclass('public.evento_cobranca')")
+            assert cursor.fetchone() == (None,)
+        executor = MigrationExecutor(connection)
         executor.migrate([("faturamento", "0001_initial")])
+        estado = catalogo()
+        assert [(nome, definer, owner, publico) for nome, definer, owner, publico in estado[0] if definer] == [
+            ("faturamento_receber_evento", True, settings.BILLING_DATABASE_OWNER_ROLE, False),
+            ("faturamento_rotear_evento", True, settings.BILLING_DATABASE_OWNER_ROLE, False),
+        ]
+        assert estado[2:] == ([], [])
         executor = MigrationExecutor(connection)
-        executor.migrate([("faturamento", "0002_alter_eventocobranca_payload_normalizado")])
-        estado_0002 = catalogo_0002()
+        executor.migrate([("faturamento", None)])
         with connection.cursor() as cursor:
-            cursor.execute("SELECT to_regprocedure('public.faturamento_rotear_evento(bigint,bigint)')")
-            assert cursor.fetchone()[0] is not None
-            cursor.execute("SELECT to_regprocedure('public.faturamento_rotear_evento(bigint)')")
-            assert cursor.fetchone() == (None,)
-            cursor.execute("SELECT 0 = ANY(polroles) FROM pg_policy WHERE polname='evento_ingresso_update'")
-            assert cursor.fetchone() == (True,)
+            cursor.execute("ALTER ROLE billing_functions_owner REPLICATION")
+        try:
+            with pytest.raises(RuntimeError):
+                MigrationExecutor(connection).migrate([("faturamento", "0001_initial")])
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT to_regclass('public.evento_cobranca'),to_regprocedure("
+                    "'public.faturamento_receber_evento(text,text,text,text,text,text,boolean,jsonb,text,timestamptz)')"
+                )
+                assert cursor.fetchone() == (None, None)
+        finally:
+            with connection.cursor() as cursor:
+                cursor.execute("ALTER ROLE billing_functions_owner NOREPLICATION")
         executor = MigrationExecutor(connection)
-        executor.migrate([("faturamento", "0003_endurecer_role_e_payload")])
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT to_regprocedure('public.faturamento_rotear_evento(text,text)')")
-            assert cursor.fetchone()[0] is not None
-            cursor.execute(
-                """SELECT to_regprocedure(
-                    'public.faturamento_receber_evento(text,text,text,text,text,text,boolean,jsonb,text,timestamp with time zone)'
-                )"""
-            )
-            assert cursor.fetchone()[0] is not None
-            cursor.execute("SELECT to_regprocedure('public.faturamento_rotear_evento(bigint,bigint)')")
-            assert cursor.fetchone() == (None,)
-        executor = MigrationExecutor(connection)
-        executor.migrate([("faturamento", "0002_alter_eventocobranca_payload_normalizado")])
-        assert catalogo_0002() == estado_0002
-        executor = MigrationExecutor(connection)
-        executor.migrate([("faturamento", "0003_endurecer_role_e_payload")])
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT to_regprocedure('public.faturamento_rotear_evento(text,text)')")
-            assert cursor.fetchone()[0] is not None
+        executor.migrate([("faturamento", "0001_initial")])
+        assert catalogo() == estado
     finally:
         MigrationExecutor(connection).migrate(folhas)

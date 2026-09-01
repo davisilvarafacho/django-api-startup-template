@@ -48,6 +48,23 @@ def test_rls_connection_context_reset_is_disabled_during_tests():
     assert settings.DJANGO_RLS["RESET_CONTEXT_ON_CONNECT"] is False
 
 
+def test_alias_migration_exige_credenciais_completas():
+    base = {**os.environ, "DJANGO_SETTINGS_MODULE": "api.settings", "DJANGO_SECRET_KEY": "test"}
+    for key in ("BILLING_MIGRATION_DATABASE_USER", "BILLING_MIGRATION_DATABASE_PASSWORD"):
+        base.pop(key, None)
+    assert _read_setting("'billing_migration' in settings.DATABASES", base) == "False"
+    assert _read_setting("'billing_migration' in settings.DATABASES", {**base, "BILLING_MIGRATION_DATABASE_USER": "migrator"}) == "False"
+    completa = {**base, "BILLING_MIGRATION_DATABASE_USER": "migrator", "BILLING_MIGRATION_DATABASE_PASSWORD": "secret"}
+    assert _read_setting("settings.DATABASES['billing_migration']['USER']", completa) == "migrator"
+
+
+def test_make_billing_migrate_falha_antes_de_executar_sem_credenciais():
+    recipe = (settings.BASE_DIR / "Makefile").read_text()
+    alvo = recipe.split("billing-migrate:", 1)[1].split("\n\n", 1)[0]
+    assert 'test -n "$$BILLING_MIGRATION_DATABASE_USER" -a -n "$$BILLING_MIGRATION_DATABASE_PASSWORD"' in alvo
+    assert alvo.index("test -n") < alvo.index("manage.py migrate")
+
+
 def test_swapped_third_party_schemas_are_owned_by_local_models():
     loader = MigrationLoader(None, ignore_no_migrations=True)
 

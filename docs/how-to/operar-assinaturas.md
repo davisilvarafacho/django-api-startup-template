@@ -28,11 +28,14 @@ GRANT billing_ingress_runtime TO app_billing_worker WITH SET TRUE;
 ```
 
 `app_migrator` continua precisando das permissões DDL usuais para o schema da
-aplicação; a membership acima acrescenta apenas a capacidade limitada de
-transferir ownership para a role NOLOGIN.
+aplicação. Ela é um principal administrativo confiável: já pode alterar o
+schema e substituir funções, portanto não há isolamento útil contra DML a ser
+obtido com grants adicionais. Mantenha sua credencial fora dos processos da
+aplicação, injete-a somente durante a janela de migration e revogue ou rotacione
+o segredo ao final.
 
 Não conceda `billing_functions_owner` a web ou worker, nem
-`billing_ingress_runtime` a web ou migrator. A role owner recebe apenas os
+`billing_ingress_runtime` ao web. A role owner recebe apenas os
 privilégios internos necessários às duas funções e às policies dedicadas. A
 role runtime recebe `USAGE` no schema e `EXECUTE` nas interfaces estreitas
 `faturamento_receber_evento` e `faturamento_rotear_evento`, sem grants em
@@ -41,8 +44,9 @@ billing_ingress_runtime`; a função executa como `billing_functions_owner`.
 
 Configure `BILLING_DATABASE_MODE=web`, `ingress` ou `migration` em cada
 processo. O check de deploy prova atributos, memberships transitivas, owner das
-funções e roles das policies: web não pode assumir nenhuma role, ingress pode
-assumir somente runtime, e migration pode assumir somente owner. Use o alias
+funções e roles das policies: web não pode assumir nenhuma role e ingress pode
+assumir runtime, mas nunca owner. No modo migration o check exige acesso ao
+owner e trata a credencial como a trust boundary administrativa. Use o alias
 explícito e nunca substitua automaticamente `DATABASE_USER`:
 
 ```bash
