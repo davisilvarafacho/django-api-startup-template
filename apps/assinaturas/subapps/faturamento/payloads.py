@@ -20,6 +20,7 @@ CHAVES_PAYLOAD_EVENTO = frozenset(
 _STATUS = re.compile(r"^[a-z][a-z0-9_.-]{0,49}$")
 _CODIGO = re.compile(r"^[A-Za-z0-9_.:-]{1,100}$")
 _REFERENCIA = re.compile(r"^[A-Za-z0-9_.:~-]{1,512}$")
+_TIMESTAMP = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?(Z|[+-](0[0-9]|1[0-4]):[0-5][0-9])$")
 _MAX_BIGINT = 9_223_372_036_854_775_807
 
 
@@ -45,7 +46,7 @@ def _normalizar_valor(chave: str, valor: object) -> str | int:
             raise ValidationError({chave: "Informe uma referência opaca válida."})
         return valor
     if chave in {"period_start", "period_end"}:
-        if not isinstance(valor, str) or len(valor) > 40:
+        if not isinstance(valor, str) or not _TIMESTAMP.fullmatch(valor):
             raise ValidationError({chave: "Informe um timestamp ISO-8601 com timezone."})
         try:
             instante = datetime.fromisoformat(valor)

@@ -2,14 +2,6 @@ from django.db import migrations
 
 
 SQL = r"""
-DO $$ BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'billing_router_owner') THEN
-        CREATE ROLE billing_router_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'billing_ingress_runtime') THEN
-        CREATE ROLE billing_ingress_runtime NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
-    END IF;
-END $$;
 DROP FUNCTION IF EXISTS public.faturamento_rotear_evento(bigint, bigint);
 
 GRANT USAGE ON SCHEMA public TO billing_ingress_runtime;
@@ -81,10 +73,17 @@ EXCEPTION WHEN OTHERS THEN
     RAISE;
 END;
 $$;
-ALTER FUNCTION public.faturamento_rotear_evento(bigint) OWNER TO billing_router_owner;
 REVOKE ALL ON FUNCTION public.faturamento_rotear_evento(bigint) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.faturamento_rotear_evento(bigint) TO billing_ingress_runtime;
 
+CREATE OR REPLACE FUNCTION public.texto_timestamp_valido(text) RETURNS boolean
+LANGUAGE plpgsql IMMUTABLE STRICT SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+ PERFORM $1::timestamptz;
+ RETURN $1 ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?(Z|[+-](0[0-9]|1[0-4]):[0-5][0-9])$';
+EXCEPTION WHEN OTHERS THEN RETURN false;
+END;
+$$;
 CREATE OR REPLACE FUNCTION public.evento_payload_valido(jsonb) RETURNS boolean
 LANGUAGE sql IMMUTABLE STRICT SET search_path = pg_catalog, pg_temp AS $$
 SELECT jsonb_typeof($1) = 'object'
@@ -101,8 +100,8 @@ AND NOT EXISTS (
   WHEN 'invoice_status' THEN jsonb_typeof(item.value) <> 'string' OR (item.value #>> '{}') !~ '^[a-z][a-z0-9_.-]{0,49}$'
   WHEN 'payment_status' THEN jsonb_typeof(item.value) <> 'string' OR (item.value #>> '{}') !~ '^[a-z][a-z0-9_.-]{0,49}$'
   WHEN 'subscription_status' THEN jsonb_typeof(item.value) <> 'string' OR (item.value #>> '{}') !~ '^[a-z][a-z0-9_.-]{0,49}$'
-  WHEN 'period_start' THEN jsonb_typeof(item.value) <> 'string' OR length(item.value #>> '{}') > 40 OR (item.value #>> '{}') !~ '(Z|[+-][0-9]{2}:[0-9]{2})$'
-  WHEN 'period_end' THEN jsonb_typeof(item.value) <> 'string' OR length(item.value #>> '{}') > 40 OR (item.value #>> '{}') !~ '(Z|[+-][0-9]{2}:[0-9]{2})$'
+  WHEN 'period_start' THEN jsonb_typeof(item.value) <> 'string' OR NOT public.texto_timestamp_valido(item.value #>> '{}')
+  WHEN 'period_end' THEN jsonb_typeof(item.value) <> 'string' OR NOT public.texto_timestamp_valido(item.value #>> '{}')
   ELSE true
  END
 );
@@ -118,6 +117,47 @@ DROP POLICY IF EXISTS evento_ingresso_select ON public.evento_cobranca;
 REVOKE ALL ON public.evento_cobranca FROM billing_ingress_runtime;
 REVOKE ALL ON public.assinatura_gateway FROM billing_ingress_runtime;
 REVOKE ALL ON SEQUENCE public.evento_cobranca_id_seq FROM billing_ingress_runtime;
+REVOKE USAGE ON SCHEMA public FROM billing_ingress_runtime;
+DROP FUNCTION IF EXISTS public.texto_timestamp_valido(text);
+CREATE OR REPLACE FUNCTION public.evento_payload_valido(jsonb) RETURNS boolean
+LANGUAGE sql IMMUTABLE STRICT AS $$
+    SELECT jsonb_typeof($1) = 'object'
+    AND ARRAY(SELECT jsonb_object_keys($1)) <@ ARRAY[
+        'amount', 'currency', 'customer_reference', 'failure_code',
+        'invoice_status', 'payment_status', 'period_end', 'period_start',
+        'subscription_status'
+    ]::text[]
+    AND NOT EXISTS (
+        SELECT 1 FROM jsonb_each($1) item
+        WHERE jsonb_typeof(item.value) NOT IN ('string', 'number', 'boolean', 'null')
+    );
+$$;
+CREATE POLICY evento_ingresso_select ON public.evento_cobranca FOR SELECT USING (
+ organizacao_id IS NULL AND NULLIF(current_setting('rls.tenant_id', true), '')::integer = 0
+ AND NULLIF(current_setting('rls.billing_ingress', true), '') = '1');
+CREATE POLICY evento_ingresso_insert ON public.evento_cobranca FOR INSERT WITH CHECK (
+ organizacao_id IS NULL AND NULLIF(current_setting('rls.tenant_id', true), '')::integer = 0
+ AND NULLIF(current_setting('rls.billing_ingress', true), '') = '1');
+CREATE POLICY evento_ingresso_update ON public.evento_cobranca FOR UPDATE USING (
+ organizacao_id IS NULL AND NULLIF(current_setting('rls.tenant_id', true), '')::integer = 0
+ AND NULLIF(current_setting('rls.billing_ingress', true), '') = '1') WITH CHECK (
+ organizacao_id IS NOT NULL AND NULLIF(current_setting('rls.tenant_id', true), '')::integer = 0
+ AND NULLIF(current_setting('rls.billing_ingress', true), '') = '1');
+CREATE FUNCTION public.faturamento_rotear_evento(bigint, bigint) RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE alteradas integer;
+BEGIN
+    IF NULLIF(current_setting('rls.tenant_id', true), '')::integer IS DISTINCT FROM 0
+       OR NULLIF(current_setting('rls.billing_ingress', true), '') IS DISTINCT FROM '1' THEN
+        RAISE EXCEPTION 'contexto de ingresso obrigatorio' USING ERRCODE = '42501';
+    END IF;
+    UPDATE evento_cobranca SET organizacao_id = $2, status = 20, last_modified_at = NOW()
+    WHERE id = $1 AND organizacao_id IS NULL;
+    GET DIAGNOSTICS alteradas = ROW_COUNT;
+    RETURN alteradas = 1;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.faturamento_rotear_evento(bigint,bigint) FROM PUBLIC;
 """
 
 

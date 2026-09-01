@@ -389,6 +389,7 @@ CHECKOUT_VARIANTS = {
         },
     )
 }
+BILLING_INGRESS_DATABASE_ROLE = get_env_var("BILLING_INGRESS_DATABASE_ROLE", "billing_ingress_runtime")
 
 
 LOGIN_REDIRECT_URL = "/admin/"

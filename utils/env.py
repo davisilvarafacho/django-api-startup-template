@@ -70,6 +70,7 @@ EnviromentVar = Literal[
     "STRIPE_API_KEY",
     "STRIPE_WEBHOOK_SECRET",
     "STRIPE_SANDBOX",
+    "BILLING_INGRESS_DATABASE_ROLE",
     # sentry
     "SENTRY_DSN",
     "SENSITIVE_FIELD_KEYS",

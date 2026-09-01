@@ -3,6 +3,7 @@ from django.contrib import admin
 from django.core.checks import Error
 from django.core.exceptions import ValidationError
 from django.db import DatabaseError, IntegrityError, connection, connections, models, transaction
+from django.db.migrations.executor import MigrationExecutor
 from django.test import override_settings
 
 import psycopg2
@@ -13,10 +14,12 @@ from apps.assinaturas.models import (
     AlteracaoAssinatura,
     MomentoAplicacaoAlteracaoAssinatura,
     PrecoPlano,
+    StatusAssinatura,
+    StatusFinanceiro,
     TipoAlteracaoAssinatura,
 )
 from apps.assinaturas.proposals import Propostas
-from apps.assinaturas.subapps.faturamento.checks import configuracao_faturamento_check
+from apps.assinaturas.subapps.faturamento.checks import configuracao_faturamento_check, role_ingresso_check
 from apps.assinaturas.subapps.faturamento.models import (
     AssinaturaGateway,
     CheckoutCobranca,
@@ -49,7 +52,8 @@ def papel_ingresso(django_db_setup, django_db_blocker):
         cursor.execute(f"CREATE ROLE {PAPEL_INGRESSO} LOGIN PASSWORD %s NOSUPERUSER NOBYPASSRLS NOINHERIT", [SENHA_INGRESSO])
         cursor.execute(f"GRANT billing_ingress_runtime TO {PAPEL_INGRESSO}")
         cursor.execute(f"GRANT USAGE ON SCHEMA public TO {PAPEL_INGRESSO}")
-        cursor.execute(f"GRANT SELECT ON checkout_cobranca, fatura_assinatura TO {PAPEL_INGRESSO}")
+        cursor.execute(f"GRANT SELECT, INSERT, UPDATE ON checkout_cobranca, fatura_assinatura TO {PAPEL_INGRESSO}")
+        cursor.execute(f"GRANT USAGE, SELECT ON SEQUENCE checkout_cobranca_id_seq, fatura_assinatura_id_seq TO {PAPEL_INGRESSO}")
     yield
     with django_db_blocker.unblock(), connection.cursor() as cursor:
         cursor.execute(f"DROP OWNED BY {PAPEL_INGRESSO}")
@@ -156,12 +160,40 @@ def test_schema_tipado_normaliza_moeda_e_aceita_fatos_validos():
     }
 
 
+@pytest.mark.parametrize(
+    "valor",
+    [
+        "pii@example.testZ",
+        "not-a-date+00:00",
+        "2026-02-30T00:00:00Z",
+        "2026-01-01T00:00:00",
+        "2026-01-01+00:00",
+        "2026-01-01 00:00:00Z",
+        "2026-01-01T00:00:00+15:00",
+        "2026-01-01T00:00:00.1234567Z",
+    ],
+)
+def test_validator_postgresql_rejeita_timestamp_semantico_invalido(valor):
+    with pytest.raises(ValidationError):
+        normalizar_payload_evento({"period_start": valor})
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT evento_payload_valido(jsonb_build_object('period_start', %s))", [valor])
+        assert cursor.fetchone() == (False,)
+
+
 @pytest.mark.parametrize("config", [None, (), ("path",), ("path", []), ("path", {"api_key": "x"}), "stripe"])
 def test_check_de_configuracao_malformada_retorna_error(config):
     with override_settings(CHECKOUT_VARIANTS={"stripe": config}):
         resultado = configuracao_faturamento_check(None)
     assert len(resultado) == 1
     assert isinstance(resultado[0], Error)
+
+
+def test_check_deploy_exige_role_operacional_pre_provisionada_e_membership():
+    assert role_ingresso_check(None) == []
+    with override_settings(BILLING_INGRESS_DATABASE_ROLE="role-arbitraria"):
+        resultado = role_ingresso_check(None)
+    assert [erro.id for erro in resultado] == ["faturamento.E002"]
 
 
 def test_admin_oculta_payload_urls_e_e_somente_leitura():
@@ -189,13 +221,10 @@ def test_rls_real_ingresso_roteia_uma_vez_e_tenant_isola(papel_ingresso):
         cursor.execute(
             """SELECT rolname, rolsuper, rolcanlogin, rolcreaterole, rolcreatedb, rolbypassrls
                FROM pg_roles
-               WHERE rolname IN ('billing_router_owner', 'billing_ingress_runtime')
+               WHERE rolname = 'billing_ingress_runtime'
                ORDER BY rolname"""
         )
-        assert cursor.fetchall() == [
-            ("billing_ingress_runtime", False, False, False, False, False),
-            ("billing_router_owner", False, False, False, False, False),
-        ]
+        assert cursor.fetchall() == [("billing_ingress_runtime", False, False, False, False, False)]
         cursor.execute(
             """SELECT p.prosecdef, owner.rolname,
                       has_function_privilege('public', p.oid, 'EXECUTE'),
@@ -203,7 +232,10 @@ def test_rls_real_ingresso_roteia_uma_vez_e_tenant_isola(papel_ingresso):
                FROM pg_proc p JOIN pg_roles owner ON owner.oid = p.proowner
                WHERE p.oid = 'public.faturamento_rotear_evento(bigint)'::regprocedure"""
         )
-        assert cursor.fetchone() == (False, "billing_router_owner", False, True)
+        seguranca_definidor = cursor.fetchone()
+        assert seguranca_definidor[0] is False
+        assert seguranca_definidor[1] == database["USER"]
+        assert seguranca_definidor[2:] == (False, True)
     conexao = psycopg2.connect(
         dbname=database["NAME"],
         user=PAPEL_INGRESSO,
@@ -334,6 +366,33 @@ def test_constraint_do_banco_recusa_payload_fora_do_schema():
                 tentativas_roteamento,tentativas_processamento,payload_normalizado,hash_payload,erro,
                 identificador_assinatura,identificador_checkout,identificador_fatura)
                VALUES (NOW(),NOW(),true,false,'stripe','evt-processado-sem-tenant','invoice.paid',40,true,0,0,'{}',repeat('e',64),'','','','')"""
+        )
+
+
+@pytest.mark.parametrize("chave", ["period_start", "period_end"])
+def test_timestamp_invalido_nao_persiste_por_save_bulk_ou_sql_raw(chave):
+    organizacao = Organizacao.objects.create(nome=f"Timestamp {chave}", slug=f"timestamp-{chave}")
+    dados = {
+        "organizacao": organizacao,
+        "variante": "stripe",
+        "tipo": "invoice.paid",
+        "exige_tenant": False,
+        "payload_normalizado": {chave: "2026-02-30T00:00:00Z"},
+        "hash_payload": "f" * 64,
+    }
+    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(ValidationError):
+        EventoCobranca.objects.create(identificador_evento=f"evt-save-{chave}", **dados)
+    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(DatabaseError), transaction.atomic():
+        EventoCobranca.objects.bulk_create([EventoCobranca(identificador_evento=f"evt-bulk-{chave}", **dados)])
+    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(DatabaseError), transaction.atomic(), connection.cursor() as cursor:
+        cursor.execute(
+            """INSERT INTO evento_cobranca
+               (created_at,last_modified_at,is_active,is_deleted,variante,identificador_evento,tipo,organizacao_id,status,exige_tenant,
+                tentativas_roteamento,tentativas_processamento,payload_normalizado,hash_payload,erro,
+                identificador_assinatura,identificador_checkout,identificador_fatura)
+               VALUES (NOW(),NOW(),true,false,'stripe',%s,'invoice.paid',%s,10,false,0,0,
+                       jsonb_build_object(%s,'2026-02-30T00:00:00Z'),repeat('f',64),'','','','')""",
+            [f"evt-raw-{chave}", organizacao.pk, chave],
         )
 
 
@@ -492,3 +551,295 @@ def test_matriz_unicidades_coerencia_e_rls_tenant_no_postgresql(papel_ingresso):
             assert cursor.fetchone() == (1,)
     finally:
         conexao.close()
+
+
+def test_unicidades_e_moedas_sao_impostas_isoladamente_pelo_postgresql():
+    org_a = Organizacao.objects.create(nome="Isolada A", slug="isolada-a")
+    org_b = Organizacao.objects.create(nome="Isolada B", slug="isolada-b")
+    versao = _criar_versao(codigo="isolada")
+    assinatura_a = _criar_assinatura(org_a, versao)
+    assinatura_b = _criar_assinatura(org_b, versao)
+    AssinaturaGateway.objects.create(organizacao=org_a, assinatura=assinatura_a, variante="stripe", identificador_externo="sub-a")
+    preco = PrecoPlano.objects.get(versao_plano=versao)
+    ReferenciaPrecoGateway.objects.create(preco_plano=preco, variante="stripe", componente=ComponentePreco.BASE, identificador_externo="price-global")
+
+    with pytest.raises(IntegrityError), transaction.atomic():
+        AssinaturaGateway.objects.create(organizacao=org_a, assinatura=assinatura_a, variante="outro", identificador_externo="sub-outro")
+    with pytest.raises(IntegrityError), transaction.atomic():
+        ReferenciaPrecoGateway.objects.create(
+            preco_plano=preco, variante="stripe", componente=ComponentePreco.SEAT, identificador_externo="price-global"
+        )
+
+    with organizacao_atual_privilegiada(org_a.pk):
+        CheckoutCobranca.objects.create(
+            organizacao=org_a,
+            assinatura=assinatura_a,
+            finalidade=FinalidadeCheckout.FORMA_PAGAMENTO,
+            chave_idempotencia="checkout-idem",
+            variante="stripe",
+            valor_esperado_centavos=0,
+            moeda_esperada="BRL",
+        )
+        FaturaAssinatura.objects.create(
+            organizacao=org_a,
+            assinatura=assinatura_a,
+            variante="stripe",
+            identificador_externo="invoice-org",
+            status=StatusFatura.ABERTA,
+            moeda="BRL",
+        )
+        with pytest.raises(IntegrityError), transaction.atomic():
+            CheckoutCobranca.objects.create(
+                organizacao=org_a,
+                assinatura=assinatura_a,
+                finalidade=FinalidadeCheckout.FORMA_PAGAMENTO,
+                chave_idempotencia="checkout-idem",
+                variante="stripe",
+                valor_esperado_centavos=0,
+                moeda_esperada="BRL",
+            )
+        with pytest.raises(IntegrityError), transaction.atomic():
+            FaturaAssinatura.objects.create(
+                organizacao=org_a,
+                assinatura=assinatura_a,
+                variante="stripe",
+                identificador_externo="invoice-org",
+                status=StatusFatura.ABERTA,
+                moeda="BRL",
+            )
+        for modelo, dados in (
+            (
+                CheckoutCobranca,
+                {
+                    "assinatura": assinatura_a,
+                    "finalidade": FinalidadeCheckout.FORMA_PAGAMENTO,
+                    "chave_idempotencia": "moeda-invalida",
+                    "variante": "stripe",
+                    "valor_esperado_centavos": 0,
+                    "moeda_esperada": "brl",
+                },
+            ),
+            (
+                FaturaAssinatura,
+                {
+                    "assinatura": assinatura_a,
+                    "variante": "stripe",
+                    "identificador_externo": "invoice-moeda-invalida",
+                    "status": StatusFatura.ABERTA,
+                    "moeda": "EU1",
+                },
+            ),
+        ):
+            with pytest.raises(IntegrityError), transaction.atomic():
+                modelo.objects.create(organizacao=org_a, **dados)
+
+    with organizacao_atual_privilegiada(org_b.pk):
+        assert CheckoutCobranca.objects.create(
+            organizacao=org_b,
+            assinatura=assinatura_b,
+            finalidade=FinalidadeCheckout.FORMA_PAGAMENTO,
+            chave_idempotencia="checkout-idem",
+            variante="stripe",
+            identificador_externo=None,
+            valor_esperado_centavos=0,
+            moeda_esperada="USD",
+        ).pk
+
+
+def test_finalidades_validas_e_relacoes_invalidas_sao_impostas_pelo_postgresql():
+    org_a = Organizacao.objects.create(nome="Finalidade A", slug="finalidade-a")
+    org_b = Organizacao.objects.create(nome="Finalidade B", slug="finalidade-b")
+    versao = _criar_versao(codigo="finalidade")
+    assinatura_pendente = _criar_assinatura(
+        org_a,
+        versao,
+        status=StatusAssinatura.PENDENTE,
+        status_financeiro=StatusFinanceiro.PENDENTE,
+    )
+    assinatura_b = _criar_assinatura(org_b, versao)
+    with organizacao_atual_privilegiada(org_a.pk):
+        assert CheckoutCobranca.objects.create(
+            organizacao=org_a,
+            assinatura=assinatura_pendente,
+            finalidade=FinalidadeCheckout.CONTRATACAO,
+            chave_idempotencia="contratacao-valida",
+            variante="stripe",
+            valor_esperado_centavos=100,
+            moeda_esperada="BRL",
+        ).pk
+        proposta_rascunho = _criar_proposta(org_a)
+    with organizacao_atual_privilegiada(org_a.pk):
+        with pytest.raises(IntegrityError), transaction.atomic():
+            CheckoutCobranca.objects.create(
+                organizacao=org_a,
+                assinatura=assinatura_pendente,
+                proposta=proposta_rascunho,
+                finalidade=FinalidadeCheckout.PROPOSTA,
+                chave_idempotencia="proposta-nao-aceita",
+                variante="stripe",
+                valor_esperado_centavos=100,
+                moeda_esperada="BRL",
+            )
+    with organizacao_atual_privilegiada(org_a.pk):
+        alteracao_a = AlteracaoAssinatura.objects.create(
+            organizacao=org_a,
+            assinatura=assinatura_pendente,
+            tipo=TipoAlteracaoAssinatura.AUMENTO_SEATS,
+            momento_aplicacao=MomentoAplicacaoAlteracaoAssinatura.IMEDIATA,
+            revisao_esperada=assinatura_pendente.revisao,
+            chave_idempotencia="alteracao-cross-org",
+            pedido={},
+            snapshot_anterior={},
+            snapshot_pretendido={},
+        )
+    with organizacao_atual_privilegiada(org_b.pk):
+        with pytest.raises(IntegrityError), transaction.atomic():
+            CheckoutCobranca.objects.create(
+                organizacao=org_b,
+                assinatura=assinatura_b,
+                proposta=proposta_rascunho,
+                finalidade=FinalidadeCheckout.PROPOSTA,
+                chave_idempotencia="proposta-cross-org",
+                variante="stripe",
+                valor_esperado_centavos=100,
+                moeda_esperada="BRL",
+            )
+        with pytest.raises(IntegrityError), transaction.atomic():
+            CheckoutCobranca.objects.create(
+                organizacao=org_b,
+                assinatura=assinatura_b,
+                alteracao=alteracao_a,
+                finalidade=FinalidadeCheckout.ALTERACAO,
+                chave_idempotencia="alteracao-cross-org-checkout",
+                variante="stripe",
+                valor_esperado_centavos=100,
+                moeda_esperada="BRL",
+            )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_rls_checkout_e_fatura_bloqueia_insert_e_update_cross_tenant(papel_ingresso):
+    org_a = Organizacao.objects.create(nome="Mutacao RLS A", slug="mutacao-rls-a")
+    org_b = Organizacao.objects.create(nome="Mutacao RLS B", slug="mutacao-rls-b")
+    versao = _criar_versao(codigo="mutacao-rls")
+    assinatura_a = _criar_assinatura(org_a, versao)
+    assinatura_b = _criar_assinatura(org_b, versao)
+    with organizacao_atual_privilegiada(org_b.pk):
+        checkout_b = CheckoutCobranca.objects.create(
+            organizacao=org_b,
+            assinatura=assinatura_b,
+            finalidade=FinalidadeCheckout.FORMA_PAGAMENTO,
+            chave_idempotencia="rls-b",
+            variante="stripe",
+            valor_esperado_centavos=0,
+            moeda_esperada="BRL",
+        )
+        fatura_b = FaturaAssinatura.objects.create(
+            organizacao=org_b,
+            assinatura=assinatura_b,
+            variante="stripe",
+            identificador_externo="invoice-rls-b",
+            status=StatusFatura.ABERTA,
+            moeda="BRL",
+        )
+    database = settings.DATABASES["default"]
+    conexao = psycopg2.connect(dbname=database["NAME"], user=PAPEL_INGRESSO, password=SENHA_INGRESSO, host=database["HOST"], port=database["PORT"])
+    try:
+        with conexao, conexao.cursor() as cursor:
+            cursor.execute("SELECT set_config('rls.tenant_id', %s, true)", [str(org_a.pk)])
+            cursor.execute("UPDATE checkout_cobranca SET status=20 WHERE id=%s", [checkout_b.pk])
+            assert cursor.rowcount == 0
+            cursor.execute("UPDATE fatura_assinatura SET status=20 WHERE id=%s", [fatura_b.pk])
+            assert cursor.rowcount == 0
+        for tabela, valores in (
+            (
+                "checkout_cobranca",
+                [org_b.pk, assinatura_a.pk, "rls-insert-checkout"],
+            ),
+            (
+                "fatura_assinatura",
+                [org_b.pk, assinatura_a.pk, "rls-insert-fatura"],
+            ),
+        ):
+            if tabela == "checkout_cobranca":
+                sql = """INSERT INTO checkout_cobranca
+                    (created_at,last_modified_at,is_active,is_deleted,organizacao_id,assinatura_id,finalidade,status,
+                     chave_idempotencia,variante,identificador_externo,url,valor_esperado_centavos,moeda_esperada)
+                    VALUES (NOW(),NOW(),true,false,%s,%s,40,10,%s,'stripe',NULL,'',0,'BRL')"""
+            else:
+                sql = """INSERT INTO fatura_assinatura
+                    (created_at,last_modified_at,is_active,is_deleted,organizacao_id,assinatura_id,variante,identificador_externo,
+                     status,motivo,subtotal_centavos,desconto_centavos,imposto_centavos,total_centavos,moeda,tentativas,url_hospedada)
+                    VALUES (NOW(),NOW(),true,false,%s,%s,'stripe',%s,10,'',0,0,0,0,'BRL',0,'')"""
+            with conexao.cursor() as cursor:
+                cursor.execute("SELECT set_config('rls.tenant_id', %s, false)", [str(org_a.pk)])
+                with pytest.raises(psycopg2.errors.InsufficientPrivilege):
+                    cursor.execute(sql, valores)
+            conexao.rollback()
+    finally:
+        conexao.close()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_migration_0003_restaura_0002_e_reaplica(papel_ingresso):
+    def catalogo_0002():
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """SELECT p.proname, pg_get_function_identity_arguments(p.oid), p.prosecdef,
+                          pg_get_functiondef(p.oid), owner.rolname
+                   FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+                   JOIN pg_roles owner ON owner.oid=p.proowner
+                   WHERE n.nspname='public' AND p.proname IN ('evento_payload_valido','faturamento_rotear_evento')
+                   ORDER BY 1,2"""
+            )
+            funcoes = cursor.fetchall()
+            cursor.execute(
+                """SELECT polname, polcmd, polpermissive, polroles, pg_get_expr(polqual, polrelid), pg_get_expr(polwithcheck, polrelid)
+                   FROM pg_policy WHERE polrelid='public.evento_cobranca'::regclass ORDER BY polname"""
+            )
+            policies = cursor.fetchall()
+            cursor.execute(
+                """SELECT grantee, table_name, privilege_type
+                   FROM information_schema.role_table_grants
+                   WHERE table_schema='public' AND grantee='billing_ingress_runtime'
+                   ORDER BY table_name, privilege_type"""
+            )
+            grants = cursor.fetchall()
+            cursor.execute(
+                """SELECT pg_get_constraintdef(oid)
+                   FROM pg_constraint WHERE conname='evento_payload_schema_seguro'"""
+            )
+            constraint = cursor.fetchone()
+        return funcoes, policies, grants, constraint
+
+    executor = MigrationExecutor(connection)
+    folhas = executor.loader.graph.leaf_nodes()
+    try:
+        executor.migrate([("faturamento", "0001_initial")])
+        executor = MigrationExecutor(connection)
+        executor.migrate([("faturamento", "0002_alter_eventocobranca_payload_normalizado")])
+        estado_0002 = catalogo_0002()
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT to_regprocedure('public.faturamento_rotear_evento(bigint,bigint)')")
+            assert cursor.fetchone()[0] is not None
+            cursor.execute("SELECT to_regprocedure('public.faturamento_rotear_evento(bigint)')")
+            assert cursor.fetchone() == (None,)
+            cursor.execute("SELECT 0 = ANY(polroles) FROM pg_policy WHERE polname='evento_ingresso_update'")
+            assert cursor.fetchone() == (True,)
+        executor = MigrationExecutor(connection)
+        executor.migrate([("faturamento", "0003_endurecer_role_e_payload")])
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT to_regprocedure('public.faturamento_rotear_evento(bigint)')")
+            assert cursor.fetchone()[0] is not None
+            cursor.execute("SELECT to_regprocedure('public.faturamento_rotear_evento(bigint,bigint)')")
+            assert cursor.fetchone() == (None,)
+        executor = MigrationExecutor(connection)
+        executor.migrate([("faturamento", "0002_alter_eventocobranca_payload_normalizado")])
+        assert catalogo_0002() == estado_0002
+        executor = MigrationExecutor(connection)
+        executor.migrate([("faturamento", "0003_endurecer_role_e_payload")])
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT to_regprocedure('public.faturamento_rotear_evento(bigint)')")
+            assert cursor.fetchone()[0] is not None
+    finally:
+        MigrationExecutor(connection).migrate(folhas)
