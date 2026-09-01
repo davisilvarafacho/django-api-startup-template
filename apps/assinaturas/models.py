@@ -233,10 +233,47 @@ class PrecosPlanoAtivosManager(
     pass
 
 
+CAMPOS_TRANSICAO_ASSINATURA = frozenset(
+    {
+        "versao_plano",
+        "versao_plano_id",
+        "proposta_comercial",
+        "proposta_comercial_id",
+        "status",
+        "status_financeiro",
+        "revisao",
+        "periodicidade",
+        "moeda",
+        "valor_base_centavos",
+        "valor_seat_centavos",
+        "seats_inclusos",
+        "seats_contratados",
+        "expansao_automatica_seats",
+        "recursos",
+        "politica_trial",
+        "trial_iniciado_em",
+        "trial_termina_em",
+        "periodo_atual_iniciado_em",
+        "periodo_atual_termina_em",
+        "carencia_pagamento_dias",
+        "carencia_pagamento_iniciada_em",
+        "carencia_pagamento_termina_em",
+        "carencia_excesso_seats_dias",
+        "carencia_excesso_seats_iniciada_em",
+        "carencia_excesso_seats_termina_em",
+        "cancelamento_agendado_para",
+        "encerrada_em",
+        "motivo_encerramento",
+    }
+)
+
+
 class AssinaturasOrganizacaoQuerySet(BaseQuerySet):
     """Mantém snapshots de recursos completos também em escritas em lote."""
 
     def update(self, **kwargs):
+        if set(kwargs) & CAMPOS_TRANSICAO_ASSINATURA:
+            raise ValueError("Termos da assinatura só podem mudar por uma transição nominal.")
         if "recursos" in kwargs:
             kwargs["recursos"] = _materializar_recursos(kwargs["recursos"])
         return super().update(**kwargs)
@@ -264,6 +301,8 @@ class AssinaturasOrganizacaoQuerySet(BaseQuerySet):
 
     def bulk_update(self, objs, fields, batch_size=None):
         objetos = tuple(objs)
+        if set(fields) & CAMPOS_TRANSICAO_ASSINATURA:
+            raise ValueError("Termos da assinatura só podem mudar por uma transição nominal.")
         if "recursos" in fields:
             for objeto in objetos:
                 objeto.recursos = _materializar_recursos(objeto.recursos)
@@ -965,9 +1004,28 @@ class AssinaturaOrganizacao(Base):
 
     def save(self, *args, **kwargs):
         campos_atualizados = set(kwargs["update_fields"]) if kwargs.get("update_fields") is not None else None
+        if not self._state.adding and not getattr(self, "_transicao_nominal_em_curso", False):
+            if campos_atualizados is None:
+                campos_persistidos = {campo.attname for campo in self._meta.concrete_fields if campo.name in CAMPOS_TRANSICAO_ASSINATURA}
+                anterior = type(self)._base_manager.filter(pk=self.pk).values(*campos_persistidos).first()
+                mudou_transicao = anterior is not None and any(anterior[campo] != getattr(self, campo) for campo in campos_persistidos)
+            else:
+                mudou_transicao = bool(campos_atualizados & CAMPOS_TRANSICAO_ASSINATURA)
+            if mudou_transicao:
+                raise ValueError("Termos da assinatura só podem mudar por uma transição nominal.")
         if self._state.adding or campos_atualizados is None or "recursos" in campos_atualizados:
             self.recursos = _materializar_recursos(self.recursos)
         return super().save(*args, **kwargs)
+
+    def _salvar_transicao(self, *args, **kwargs):
+        """Persiste uma transição validada por um caso de uso nominal."""
+        if self._state.adding:
+            raise ValueError("A criação de assinatura usa o caminho nominal próprio.")
+        self._transicao_nominal_em_curso = True
+        try:
+            return self.save(*args, **kwargs)
+        finally:
+            del self._transicao_nominal_em_curso
 
     def clean(self):
         super().clean()

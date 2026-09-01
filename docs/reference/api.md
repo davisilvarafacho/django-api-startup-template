@@ -129,11 +129,11 @@ reautenticação recente e MFA quando o usuário o tiver habilitado.
 
 | Rota | Contrato |
 | --- | --- |
-| `GET /assinatura/` | Proprietário ou administrador; devolve o snapshot corrente e sua revisão. |
+| `GET /assinatura/` | Proprietário ou administrador; devolve o snapshot corrente, revisão e situação de acesso com motivos e menor prazo de regularização. |
 | `GET /assinatura/recursos/` | Qualquer vínculo ativo; devolve todos os recursos efetivos em tipos JSON. |
 | `GET /assinatura/utilizacao-seats/` | Proprietário ou administrador; devolve contratados, consumo, reservas, disponibilidade e excessos. |
 | `POST /assinatura/alteracoes/` | Proprietário; solicita plano, periodicidade ou quantidade absoluta de seats com revisão e chave de idempotência. |
-| `POST /assinatura/cancelamento/` | Proprietário; agenda o cancelamento com revisão otimista. |
+| `POST /assinatura/cancelamento/` | Proprietário; encerra imediatamente contratos gratuitos, trials ou pendentes (`200`), ou agenda contratos pagos para o fim do período (`202`), sempre com revisão otimista. |
 | `DELETE /assinatura/cancelamento/` | Proprietário; remove o agendamento antes da efetivação, também com revisão. |
 | `POST /assinatura/propostas/{id}/aceitar/` | Proprietário; aceita uma proposta do próprio tenant sem enumerar propostas alheias. |
 

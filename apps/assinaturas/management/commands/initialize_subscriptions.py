@@ -2,10 +2,10 @@
 
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.management.base import BaseCommand, CommandError
-from django.db import connection
 
 from apps.assinaturas.catalogs import CatalogoPlanos, ErroCatalogoPlanos
-from apps.assinaturas.models import Periodicidade, StatusAssinatura
+from apps.assinaturas.models import Periodicidade
+from apps.assinaturas.operational import FinalidadeOperacionalAssinatura, selecionar_organizacoes_operacionais
 from apps.assinaturas.subscriptions import Assinaturas
 from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.models import Organizacao
@@ -70,29 +70,8 @@ class Command(BaseCommand):
 
     @staticmethod
     def _proximo_lote(*, cursor_id: int, batch_size: int) -> list[int]:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT organizacao.id
-                FROM organizacao
-                WHERE organizacao.id > %s
-                  AND organizacao.is_active = TRUE
-                  AND organizacao.is_deleted = FALSE
-                  AND NOT EXISTS (
-                      SELECT 1
-                      FROM assinatura_organizacao
-                      WHERE assinatura_organizacao.organizacao_id = organizacao.id
-                        AND assinatura_organizacao.status IN (%s, %s, %s)
-                  )
-                ORDER BY organizacao.id
-                LIMIT %s
-                """,
-                [
-                    cursor_id,
-                    StatusAssinatura.PENDENTE,
-                    StatusAssinatura.EM_TRIAL,
-                    StatusAssinatura.ATIVA,
-                    batch_size,
-                ],
-            )
-            return [row[0] for row in cursor.fetchall()]
+        return selecionar_organizacoes_operacionais(
+            FinalidadeOperacionalAssinatura.ROLLOUT,
+            apos_id=cursor_id,
+            limite=batch_size,
+        )

@@ -132,7 +132,6 @@ def test_middleware_restringe_rota_comum_apos_carencia_de_seats():
     with organizacao_atual_privilegiada(organizacao.pk):
         Assinaturas.reconciliar_carencia_seats(
             assinatura,
-            OcupacaoSeats(consumidos=2, reservados=0),
             agora=inicio,
         )
 
@@ -166,7 +165,6 @@ def test_rota_marcada_regulariza_sem_ampliar_papel(papel, status_esperado):
     with organizacao_atual_privilegiada(organizacao.pk):
         Assinaturas.reconciliar_carencia_seats(
             assinatura,
-            OcupacaoSeats(consumidos=2, reservados=0),
             agora=timezone.now() - timedelta(days=8),
         )
     observado = {}

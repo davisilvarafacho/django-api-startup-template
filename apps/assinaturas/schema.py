@@ -39,10 +39,12 @@ document_proposal_accept = extend_schema(
             OrganizationErrorCode.MEMBERSHIP_INACTIVE,
             OrganizationErrorCode.ORGANIZATION_INACTIVE,
             OrganizationErrorCode.ROLE_INSUFFICIENT,
+            BillingErrorCode.ORGANIZATION_RESTRICTED,
         ),
         404: document_error_codes(CoreErrorCode.NOT_FOUND),
         409: document_error_codes(BillingErrorCode.PROPOSAL_INVALID, OrganizationErrorCode.TENANT_MISMATCH),
         422: document_error_codes(OrganizationErrorCode.HEADER_REQUIRED),
+        503: document_error_codes(BillingErrorCode.SUBSCRIPTION_REQUIRED),
     },
 )
 
@@ -108,7 +110,11 @@ document_subscription_change = extend_schema(
 )
 document_subscription_cancel = extend_schema(
     request=CancelamentoAssinaturaRequestSerializer,
-    responses={202: CancelamentoAssinaturaResponseSerializer, **MUTATION_ERRORS},
+    responses={
+        200: CancelamentoAssinaturaResponseSerializer,
+        202: CancelamentoAssinaturaResponseSerializer,
+        **MUTATION_ERRORS,
+    },
 )
 document_subscription_cancel_delete = extend_schema(
     request=CancelamentoAssinaturaRequestSerializer,

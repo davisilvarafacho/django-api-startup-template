@@ -45,6 +45,19 @@ class SituacaoAcesso:
 class PoliticaAcessoAssinatura:
     """Avalia acesso sem consultar banco ou alterar o contrato."""
 
+    CAMPOS_SNAPSHOT = frozenset(
+        {
+            "status",
+            "status_financeiro",
+            "seats_contratados",
+            "trial_termina_em",
+            "carencia_pagamento_iniciada_em",
+            "carencia_pagamento_termina_em",
+            "carencia_excesso_seats_iniciada_em",
+            "carencia_excesso_seats_termina_em",
+        }
+    )
+
     @classmethod
     def avaliar(
         cls,
@@ -54,7 +67,11 @@ class PoliticaAcessoAssinatura:
     ) -> SituacaoAcesso:
         if not isinstance(assinatura, AssinaturaOrganizacao):
             raise ValueError("Politica de acesso exige uma AssinaturaOrganizacao.")
+        if assinatura.get_deferred_fields() & cls.CAMPOS_SNAPSHOT:
+            raise ValueError("Politica de acesso não aceita assinatura com campos deferred.")
         cls._validar_utilizacao(utilizacao)
+        if utilizacao.contratados != assinatura.seats_contratados:
+            raise ValueError("UtilizacaoSeats pertence a outro snapshot contratual.")
         if not isinstance(agora, datetime) or not timezone.is_aware(agora):
             raise ValueError("A avaliacao de acesso exige um datetime consciente de fuso.")
 

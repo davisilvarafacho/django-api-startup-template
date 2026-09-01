@@ -1,9 +1,8 @@
 """Django system checks do catálogo comercial."""
 
 from django.core.checks import Error, Tags, register
-from django.db import connection
 
-from apps.assinaturas.models import StatusAssinatura
+from apps.assinaturas.operational import FinalidadeOperacionalAssinatura, selecionar_organizacoes_operacionais
 
 
 @register()
@@ -23,25 +22,12 @@ def catalogo_planos_check(app_configs, **kwargs):
 @register(Tags.database, deploy=True)
 def organizacoes_ativas_sem_assinatura_check(app_configs, **kwargs):
     """Falha o deploy quando o middleware bloquearia uma organização ativa."""
-    with connection.cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT EXISTS (
-                SELECT 1
-                FROM organizacao
-                WHERE organizacao.is_active = TRUE
-                  AND organizacao.is_deleted = FALSE
-                  AND NOT EXISTS (
-                      SELECT 1
-                      FROM assinatura_organizacao
-                      WHERE assinatura_organizacao.organizacao_id = organizacao.id
-                        AND assinatura_organizacao.status IN (%s, %s, %s)
-                  )
-            )
-            """,
-            [StatusAssinatura.PENDENTE, StatusAssinatura.EM_TRIAL, StatusAssinatura.ATIVA],
+    existe_lacuna = bool(
+        selecionar_organizacoes_operacionais(
+            FinalidadeOperacionalAssinatura.ROLLOUT,
+            limite=1,
         )
-        existe_lacuna = cursor.fetchone()[0]
+    )
     if not existe_lacuna:
         return []
     return [

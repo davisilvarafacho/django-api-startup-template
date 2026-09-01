@@ -60,18 +60,47 @@ def _sincronizar_catalogo():
     sincronizar_planos(PLANOS_BOOTSTRAP, aplicar=True)
 
 
-def _organizacao_com_contrato(*, seats=2, slug="seats"):
+def _organizacao_com_contrato(
+    *,
+    seats=2,
+    slug="seats",
+    expansao_automatica=False,
+    status=StatusAssinatura.PENDENTE,
+    periodo_atual=None,
+):
     _sincronizar_catalogo()
     versao, preco = CatalogoPlanos.obter_versao_inicial(codigo="profissional", periodicidade=Periodicidade.MENSAL)
     organizacao = Organizacao.objects.create(nome="Seats", slug=slug)
     with organizacao_atual_privilegiada(organizacao.pk):
-        assinatura = Assinaturas.criar_paga(
-            organizacao=organizacao,
-            versao_plano=versao,
-            preco_plano=preco,
-            seats_contratados=seats,
-            chave_idempotencia=f"contrato-{slug}",
-        )
+        if expansao_automatica or status != StatusAssinatura.PENDENTE or periodo_atual is not None:
+            periodo_iniciado_em, periodo_termina_em = periodo_atual or (None, None)
+            assinatura = AssinaturaOrganizacao.objects.create(
+                organizacao=organizacao,
+                versao_plano=versao,
+                status=status,
+                status_financeiro=StatusFinanceiro.REGULAR if status == StatusAssinatura.ATIVA else StatusFinanceiro.PENDENTE,
+                periodicidade=preco.periodicidade,
+                moeda=preco.moeda,
+                valor_base_centavos=preco.valor_base_centavos,
+                valor_seat_centavos=preco.valor_seat_centavos,
+                seats_inclusos=versao.seats_inclusos,
+                seats_contratados=seats,
+                expansao_automatica_seats=True,
+                recursos=versao.recursos,
+                periodo_atual_iniciado_em=periodo_iniciado_em,
+                periodo_atual_termina_em=periodo_termina_em,
+                carencia_pagamento_dias=versao.carencia_pagamento_dias,
+                carencia_excesso_seats_dias=versao.carencia_excesso_seats_dias,
+                chave_idempotencia=f"contrato-{slug}",
+            )
+        else:
+            assinatura = Assinaturas.criar_paga(
+                organizacao=organizacao,
+                versao_plano=versao,
+                preco_plano=preco,
+                seats_contratados=seats,
+                chave_idempotencia=f"contrato-{slug}",
+            )
     return organizacao, assinatura
 
 
@@ -380,11 +409,9 @@ def test_duas_criacoes_concorrentes_conquistam_o_ultimo_seat_uma_unica_vez():
 
 
 def test_expansao_automatica_cria_alteracao_idempotente_e_so_libera_convite_depois_da_confirmacao():
-    organizacao, assinatura = _organizacao_com_contrato(seats=1, slug="expansao-automatica")
+    organizacao, assinatura = _organizacao_com_contrato(seats=1, slug="expansao-automatica", expansao_automatica=True)
     proprietario = criar_usuario(email="owner-expansao@example.com")
     Vinculo.objects.create(organizacao=organizacao, usuario=proprietario, papel=Papel.PROPRIETARIO)
-    assinatura.expansao_automatica_seats = True
-    assinatura.save(update_fields=["expansao_automatica_seats"])
 
     for _ in range(2):
         with pytest.raises(APIError) as excinfo:
@@ -421,11 +448,13 @@ def test_expansao_automatica_cria_alteracao_idempotente_e_so_libera_convite_depo
 
 
 def test_expansao_automatica_usa_snapshot_historico_e_preserva_erro_nominal_e_idempotencia():
-    organizacao, assinatura = _organizacao_com_contrato(seats=1, slug="expansao-catalogo-historico")
+    organizacao, assinatura = _organizacao_com_contrato(
+        seats=1,
+        slug="expansao-catalogo-historico",
+        expansao_automatica=True,
+    )
     proprietario = criar_usuario(email="owner-expansao-catalogo-historico@example.com")
     Vinculo.objects.create(organizacao=organizacao, usuario=proprietario, papel=Papel.PROPRIETARIO)
-    assinatura.expansao_automatica_seats = True
-    assinatura.save(update_fields=["expansao_automatica_seats"])
     versao_historica = assinatura.versao_plano
     versao_historica.is_active = False
     versao_historica.save(update_fields=["is_active"])
@@ -449,11 +478,9 @@ def test_expansao_automatica_usa_snapshot_historico_e_preserva_erro_nominal_e_id
 
 @pytest.mark.django_db(transaction=True)
 def test_expansoes_automaticas_concorrentes_convergem_para_uma_alteracao_local():
-    organizacao, assinatura = _organizacao_com_contrato(seats=1, slug="expansao-concorrente")
+    organizacao, assinatura = _organizacao_com_contrato(seats=1, slug="expansao-concorrente", expansao_automatica=True)
     proprietario = criar_usuario(email="owner-expansao-concorrente@example.com")
     Vinculo.objects.create(organizacao=organizacao, usuario=proprietario, papel=Papel.PROPRIETARIO)
-    assinatura.expansao_automatica_seats = True
-    assinatura.save(update_fields=["expansao_automatica_seats"])
     barreira = Barrier(2)
 
     def convidar(numero):
@@ -487,7 +514,7 @@ def test_expansoes_automaticas_concorrentes_convergem_para_uma_alteracao_local()
 
 
 def test_aceite_em_excesso_solicita_expansao_e_mantem_convite_pendente_ate_confirmacao():
-    organizacao, assinatura = _organizacao_com_contrato(seats=1, slug="expansao-aceite")
+    organizacao, assinatura = _organizacao_com_contrato(seats=1, slug="expansao-aceite", expansao_automatica=True)
     proprietario = criar_usuario(email="owner-expansao-aceite@example.com")
     convidado = criar_usuario(email="convidado-expansao-aceite@example.com")
     Vinculo.objects.create(organizacao=organizacao, usuario=proprietario, papel=Papel.PROPRIETARIO)
@@ -497,8 +524,6 @@ def test_aceite_em_excesso_solicita_expansao_e_mantem_convite_pendente_ate_confi
         papel=Papel.MEMBRO,
         expira_em=timezone.now() + timedelta(days=1),
     )
-    assinatura.expansao_automatica_seats = True
-    assinatura.save(update_fields=["expansao_automatica_seats"])
 
     with pytest.raises(APIError) as excinfo:
         Vinculos.aceitar_convite(convite, convidado)
@@ -539,11 +564,12 @@ def test_encerramento_real_gratuito_fecha_o_contrato_no_mesmo_atomic():
 
 
 def test_encerramento_de_contrato_pendente_nao_agenda_mesmo_se_houver_periodo():
-    organizacao, assinatura = _organizacao_com_contrato(seats=5, slug="encerramento-pendente")
     agora = timezone.now()
-    assinatura.periodo_atual_iniciado_em = agora - timedelta(days=1)
-    assinatura.periodo_atual_termina_em = agora + timedelta(days=30)
-    assinatura.save(update_fields=["periodo_atual_iniciado_em", "periodo_atual_termina_em"])
+    organizacao, assinatura = _organizacao_com_contrato(
+        seats=5,
+        slug="encerramento-pendente",
+        periodo_atual=(agora - timedelta(days=1), agora + timedelta(days=30)),
+    )
 
     resultado = Organizacoes.solicitar_encerramento(organizacao, assinaturas=Assinaturas, agora=agora)
 
@@ -555,15 +581,15 @@ def test_encerramento_de_contrato_pendente_nao_agenda_mesmo_se_houver_periodo():
 
 
 def test_encerramento_pago_decide_e_persiste_contrato_cancelando_alteracoes_no_mesmo_atomic():
-    organizacao, assinatura = _organizacao_com_contrato(seats=5, slug="encerramento-pago-atomico")
     agora = timezone.now()
     fim_periodo = agora + timedelta(days=30)
-    assinatura.status = StatusAssinatura.ATIVA
-    assinatura.status_financeiro = StatusFinanceiro.REGULAR
-    assinatura.periodo_atual_iniciado_em = agora - timedelta(days=1)
-    assinatura.periodo_atual_termina_em = fim_periodo
-    assinatura.expansao_automatica_seats = True
-    assinatura.save()
+    organizacao, assinatura = _organizacao_com_contrato(
+        seats=5,
+        slug="encerramento-pago-atomico",
+        expansao_automatica=True,
+        status=StatusAssinatura.ATIVA,
+        periodo_atual=(agora - timedelta(days=1), fim_periodo),
+    )
     with organizacao_atual_privilegiada(organizacao.pk):
         alteracao = Assinaturas.solicitar_expansao_automatica(assinatura, seats_necessarios=6)
 
@@ -589,14 +615,14 @@ def test_encerramento_pago_decide_e_persiste_contrato_cancelando_alteracoes_no_m
 
 
 def test_cancelar_encerramento_pago_limpa_organizacao_e_assinatura_com_nova_revisao():
-    organizacao, assinatura = _organizacao_com_contrato(seats=5, slug="cancelar-encerramento-pago")
     agora = timezone.now()
     fim_periodo = agora + timedelta(days=30)
-    assinatura.status = StatusAssinatura.ATIVA
-    assinatura.status_financeiro = StatusFinanceiro.REGULAR
-    assinatura.periodo_atual_iniciado_em = agora - timedelta(days=1)
-    assinatura.periodo_atual_termina_em = fim_periodo
-    assinatura.save()
+    organizacao, assinatura = _organizacao_com_contrato(
+        seats=5,
+        slug="cancelar-encerramento-pago",
+        status=StatusAssinatura.ATIVA,
+        periodo_atual=(agora - timedelta(days=1), fim_periodo),
+    )
     Organizacoes.solicitar_encerramento(organizacao, assinaturas=Assinaturas, agora=agora)
 
     cancelado = Organizacoes.cancelar_encerramento(organizacao, assinaturas=Assinaturas)
@@ -613,15 +639,15 @@ def test_cancelar_encerramento_pago_limpa_organizacao_e_assinatura_com_nova_revi
 
 @pytest.mark.django_db(transaction=True)
 def test_encerramento_concorrente_com_confirmacao_serializa_sem_upgrade_apos_cancelamento():
-    organizacao, assinatura = _organizacao_com_contrato(seats=5, slug="encerramento-confirmacao-concorrente")
     agora = timezone.now()
     fim_periodo = agora + timedelta(days=30)
-    assinatura.status = StatusAssinatura.ATIVA
-    assinatura.status_financeiro = StatusFinanceiro.REGULAR
-    assinatura.periodo_atual_iniciado_em = agora - timedelta(days=1)
-    assinatura.periodo_atual_termina_em = fim_periodo
-    assinatura.expansao_automatica_seats = True
-    assinatura.save()
+    organizacao, assinatura = _organizacao_com_contrato(
+        seats=5,
+        slug="encerramento-confirmacao-concorrente",
+        expansao_automatica=True,
+        status=StatusAssinatura.ATIVA,
+        periodo_atual=(agora - timedelta(days=1), fim_periodo),
+    )
     with organizacao_atual_privilegiada(organizacao.pk):
         alteracao = Assinaturas.solicitar_expansao_automatica(assinatura, seats_necessarios=6)
     barreira = Barrier(2)

@@ -2,9 +2,11 @@
 
 Este procedimento inicializa contratos para organizações criadas antes da
 política comercial e verifica o estado necessário para ativar o middleware.
-Execute os comandos com uma credencial operacional autorizada a atravessar
-tenants; o comando entra no contexto RLS de cada organização antes de criar o
-contrato.
+Execute os comandos com a credencial normal da aplicação. A leitura global usa
+um selector `SECURITY INVOKER`, com `search_path` fixo e privilégios mínimos;
+ele consulta cada tenant sob sua própria policy `FORCE RLS` e restaura o
+contexto anterior. O comando entra no contexto RLS de cada organização antes
+de criar o contrato.
 
 ## Fazer o rollout
 
@@ -39,15 +41,16 @@ O Celery Beat agenda dois jobs locais:
 - `assinaturas.reconciliar_carencias_seats`, a cada 15 minutos.
 
 `SUBSCRIPTION_TASK_BATCH_SIZE` define o lote de leitura, com padrão `100`.
-Ambos entram em RLS por organização, usam locks na ordem
-organização → assinatura e registram somente duração e contagem. É seguro
-reexecutá-los: um trial já convertido e uma carência já coerente não ganham
-outra revisão.
+O selector devolve no máximo esse número de candidatos elegíveis por execução;
+os jobs então entram em RLS por organização, usam locks na ordem organização →
+assinatura, revalidam o estado sob lock e só depois calculam a ocupação. Eles
+registram somente duração e contagem. É seguro reexecutá-los: um trial já
+convertido e uma carência já coerente não ganham outra revisão.
 
 Depois do rollout, valide com uma sessão de administrador:
 
 ```text
-GET /assinatura/
+GET /assinatura/                 # inclui situacao_acesso, motivos e regularizar_ate
 GET /assinatura/utilizacao-seats/
 ```
 
@@ -68,8 +71,10 @@ mantendo as migrations aplicadas. O schema e os contratos gratuitos são
 compatíveis como dados históricos. Pause os dois schedules comerciais se o
 código anterior não registrar essas tasks.
 
-Só reverta as migrations `0011` e `0010` em uma manutenção separada, depois de
+Só reverta as migrations `0012`, `0011` e `0010`, nessa ordem, em uma
+manutenção separada, depois de
 confirmar que não existem alterações `FALLBACK_TRIAL` nem transições que
-dependam das novas proteções. A reversão de `0011` remove os triggers novos e
-restaura o trigger contratual anterior; fazê-la enquanto workers ou tráfego
-continuam ativos reabre uma janela de bypass e não é um rollback seguro.
+dependam das novas proteções. A reversão de `0012` remove o selector e restaura
+a guarda da `0011`; a reversão de `0011` remove os triggers novos e restaura o
+trigger contratual anterior. Fazê-las enquanto workers ou tráfego continuam
+ativos reabre uma janela de bypass e não é um rollback seguro.

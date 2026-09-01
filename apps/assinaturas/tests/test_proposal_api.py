@@ -241,3 +241,5 @@ def test_erros_reais_de_auth_e_tenant_estao_documentados_no_status_runtime(monke
     assert observados == esperados
     for status_code, codigo in observados:
         assert codigo in documentadas[status_code]["description"]
+    assert "billing.organization_restricted" in documentadas["403"]["description"]
+    assert "billing.subscription_required" in documentadas["503"]["description"]

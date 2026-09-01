@@ -15,9 +15,12 @@ from apps.assinaturas.catalogs import PLANOS_BOOTSTRAP, CatalogoPlanos, sincroni
 from apps.assinaturas.features import CATALOGO_RECURSOS, ValoresRecursos
 from apps.assinaturas.models import (
     AlteracaoAssinatura,
+    AssinaturaOrganizacao,
     MomentoAplicacaoAlteracaoAssinatura,
     Periodicidade,
     StatusAlteracaoAssinatura,
+    StatusAssinatura,
+    StatusFinanceiro,
     TipoAlteracaoAssinatura,
 )
 from apps.assinaturas.subscriptions import (
@@ -61,18 +64,29 @@ def _termos(versao, preco, *, seats_contratados=None, periodicidade=None):
 def _assinatura_profissional(*, seats=6, periodo=False):
     (_, _), (versao, preco) = _catalogos()
     organizacao = Organizacao.objects.create(nome="Alterações", slug=f"alteracoes-{Organizacao.objects.count()}")
+    termos = _termos(versao, preco, seats_contratados=seats)
+    agora = timezone.now()
     with organizacao_atual_privilegiada(organizacao.pk):
-        assinatura = Assinaturas.criar_trial(
+        assinatura = AssinaturaOrganizacao.objects.create(
             organizacao=organizacao,
             versao_plano=versao,
-            preco_plano=preco,
+            proposta_comercial=None,
+            status=StatusAssinatura.ATIVA,
+            status_financeiro=StatusFinanceiro.REGULAR,
+            periodicidade=termos.periodicidade,
+            moeda=termos.moeda,
+            valor_base_centavos=termos.valor_base_centavos,
+            valor_seat_centavos=termos.valor_seat_centavos,
+            seats_inclusos=termos.seats_inclusos,
+            seats_contratados=termos.seats_contratados,
+            expansao_automatica_seats=termos.expansao_automatica_seats,
+            recursos=termos.recursos.materializar(),
+            periodo_atual_iniciado_em=agora - timedelta(days=10) if periodo else None,
+            periodo_atual_termina_em=agora + timedelta(days=20) if periodo else None,
+            carencia_pagamento_dias=termos.carencia_pagamento_dias,
+            carencia_excesso_seats_dias=termos.carencia_excesso_seats_dias,
             chave_idempotencia=f"inicial-{organizacao.pk}",
         )
-        assinatura.seats_contratados = seats
-        if periodo:
-            assinatura.periodo_atual_iniciado_em = timezone.now() - timedelta(days=10)
-            assinatura.periodo_atual_termina_em = timezone.now() + timedelta(days=20)
-        assinatura.save()
     return organizacao, assinatura, versao, preco
 
 

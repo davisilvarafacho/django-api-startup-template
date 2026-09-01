@@ -3,6 +3,7 @@ from threading import Event
 
 from django.db import DatabaseError, close_old_connections, connection, connections, transaction
 from django.db.migrations.executor import MigrationExecutor
+from django.db.migrations.recorder import MigrationRecorder
 from django.utils import timezone
 
 import pytest
@@ -117,9 +118,44 @@ def test_migration_0004_torna_lock_de_preco_compativel_e_reverse_restaura_0003()
         executor.migrate(alvos_finais)
 
 
-@pytest.mark.django_db(databases={"default", "logging"})
-def test_migration_de_triggers_e_compativel_com_alias_sqlite():
-    assert connections["logging"].vendor == "sqlite"
+@pytest.mark.django_db(transaction=True, databases={"default", "logging"})
+def test_migrations_0010_0011_e_0012_executam_forward_e_reverse_no_sqlite():
+    conexao = connections["logging"]
+    executor = MigrationExecutor(conexao)
+    alvos_finais = executor.loader.graph.leaf_nodes()
+
+    def aplicadas():
+        return MigrationRecorder(conexao).applied_migrations()
+
+    try:
+        executor.migrate([("assinaturas", "0009_proteger_estado_inicial_proposta")])
+
+        executor = MigrationExecutor(conexao)
+        executor.migrate([("assinaturas", "0010_adicionar_fallback_trial")])
+        assert ("assinaturas", "0010_adicionar_fallback_trial") in aplicadas()
+
+        executor = MigrationExecutor(conexao)
+        executor.migrate([("assinaturas", "0011_proteger_transicoes_acesso")])
+        assert ("assinaturas", "0011_proteger_transicoes_acesso") in aplicadas()
+
+        executor = MigrationExecutor(conexao)
+        executor.migrate([("assinaturas", "0012_endurecer_rollout_e_transicoes")])
+        assert ("assinaturas", "0012_endurecer_rollout_e_transicoes") in aplicadas()
+
+        executor = MigrationExecutor(conexao)
+        executor.migrate([("assinaturas", "0011_proteger_transicoes_acesso")])
+        assert ("assinaturas", "0012_endurecer_rollout_e_transicoes") not in aplicadas()
+
+        executor = MigrationExecutor(conexao)
+        executor.migrate([("assinaturas", "0010_adicionar_fallback_trial")])
+        assert ("assinaturas", "0011_proteger_transicoes_acesso") not in aplicadas()
+
+        executor = MigrationExecutor(conexao)
+        executor.migrate([("assinaturas", "0009_proteger_estado_inicial_proposta")])
+        assert ("assinaturas", "0010_adicionar_fallback_trial") not in aplicadas()
+    finally:
+        executor = MigrationExecutor(conexao)
+        executor.migrate(alvos_finais)
 
 
 @pytest.mark.django_db(transaction=True)
@@ -287,7 +323,7 @@ def test_migration_0009_protege_insert_e_reverse_preserva_guarda_0008():
 
 
 @pytest.mark.django_db(transaction=True)
-def test_migration_0011_instala_guardas_de_acesso_e_reverse_restaura_0010():
+def test_migrations_0010_0011_e_0012_sao_reversiveis_no_postgresql():
     executor = MigrationExecutor(connection)
     alvos_finais = executor.loader.graph.leaf_nodes()
 
@@ -308,8 +344,21 @@ def test_migration_0011_instala_guardas_de_acesso_e_reverse_restaura_0010():
             cursor.execute("SELECT pg_get_functiondef('validar_transicao_status_assinatura()'::regprocedure)")
             return cursor.fetchone()[0]
 
+    def definicao_constraint_tipo():
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT pg_get_constraintdef(oid)
+                FROM pg_constraint
+                WHERE conrelid = 'alteracao_assinatura'::regclass
+                  AND conname = 'alteracao_tipo_dominio'
+                """
+            )
+            return cursor.fetchone()[0]
+
     try:
         executor.migrate([("assinaturas", "0010_adicionar_fallback_trial")])
+        assert "60" in definicao_constraint_tipo()
         assert "assinatura_organizacao_transicao_status" in triggers()
         assert "alteracao_assinatura_validar_fallback_trial" not in triggers()
         assert "carencia_pagamento_iniciada_em" not in definicao_guarda_assinatura()
@@ -333,10 +382,38 @@ def test_migration_0011_instala_guardas_de_acesso_e_reverse_restaura_0010():
             assert cursor.fetchone() == (1,)
 
         executor = MigrationExecutor(connection)
+        executor.migrate([("assinaturas", "0012_endurecer_rollout_e_transicoes")])
+        assert "Alteracao contratual exige incremento unitario" in definicao_guarda_assinatura()
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT prosecdef, proconfig
+                FROM pg_proc
+                WHERE oid = 'public.selecionar_organizacoes_operacionais_assinatura(
+                    text,bigint,integer,timestamp with time zone
+                )'::regprocedure
+                """
+            )
+            assert cursor.fetchone() == (False, ["search_path=pg_catalog"])
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([("assinaturas", "0011_proteger_transicoes_acesso")])
+        assert "Alteracao contratual exige incremento unitario" not in definicao_guarda_assinatura()
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT to_regprocedure('public.selecionar_organizacoes_operacionais_assinatura(text,bigint,integer,timestamp with time zone)')"
+            )
+            assert cursor.fetchone() == (None,)
+
+        executor = MigrationExecutor(connection)
         executor.migrate([("assinaturas", "0010_adicionar_fallback_trial")])
         assert "assinatura_organizacao_transicao_status" in triggers()
         assert "alteracao_assinatura_validar_fallback_trial" not in triggers()
         assert "carencia_pagamento_iniciada_em" not in definicao_guarda_assinatura()
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([("assinaturas", "0009_proteger_estado_inicial_proposta")])
+        assert "60" not in definicao_constraint_tipo()
     finally:
         executor = MigrationExecutor(connection)
         executor.migrate(alvos_finais)

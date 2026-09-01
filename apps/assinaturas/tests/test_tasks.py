@@ -1,7 +1,5 @@
 """Processamento periodico das transicoes comerciais locais."""
 
-from datetime import timedelta
-
 from django.conf import settings
 from django.utils import timezone
 
@@ -22,10 +20,7 @@ pytestmark = pytest.mark.django_db
 
 def test_task_encerra_somente_trials_vencidos_e_e_idempotente(settings):
     organizacao, assinatura = _trial(slug="task-trial-vencido")
-    _, vigente = _trial(slug="task-trial-vigente")
-    vigente.trial_termina_em = timezone.now() + timedelta(days=2)
-    with organizacao_atual_privilegiada(vigente.organizacao_id):
-        vigente.save(update_fields=["trial_termina_em", "last_modified_at"])
+    _trial(slug="task-trial-vigente", agora=timezone.now())
     settings.SUBSCRIPTION_TASK_BATCH_SIZE = 1
 
     primeira = tasks.encerrar_trials_vencidos.run()
@@ -37,6 +32,21 @@ def test_task_encerra_somente_trials_vencidos_e_e_idempotente(settings):
     assert repetida == 0
     assert assinatura.status == StatusAssinatura.ATIVA
     assert assinatura.versao_plano.plano.codigo == "gratuito"
+
+
+def test_task_encerra_no_maximo_o_numero_de_trials_elegiveis_do_lote(settings):
+    organizacoes_e_assinaturas = [_trial(slug=f"task-trial-limite-{indice}") for indice in range(2)]
+    settings.SUBSCRIPTION_TASK_BATCH_SIZE = 1
+
+    assert tasks.encerrar_trials_vencidos.run() == 1
+
+    estados = []
+    for organizacao, assinatura in organizacoes_e_assinaturas:
+        with organizacao_atual_privilegiada(organizacao.pk):
+            assinatura.refresh_from_db()
+        estados.append(assinatura.status)
+    assert estados.count(StatusAssinatura.ATIVA) == 1
+    assert estados.count(StatusAssinatura.EM_TRIAL) == 1
 
 
 def test_task_reconcilia_abertura_e_limpeza_da_carencia_sem_reiniciar_prazo(settings):
@@ -64,6 +74,29 @@ def test_task_reconcilia_abertura_e_limpeza_da_carencia_sem_reiniciar_prazo(sett
     assert assinatura.carencia_excesso_seats_iniciada_em is None
     assert assinatura.carencia_excesso_seats_termina_em is None
     assert assinatura.revisao == 3
+
+
+def test_task_reconcilia_no_maximo_o_numero_de_candidatos_do_lote(settings):
+    organizacoes_e_assinaturas = []
+    for indice in range(2):
+        organizacao, assinatura = _assinatura_ativa(slug=f"task-seats-limite-{indice}", seats=1)
+        for membro in range(2):
+            Vinculo.objects.create(
+                organizacao=organizacao,
+                usuario=criar_usuario(email=f"task-seats-limite-{indice}-{membro}@example.com"),
+                papel=Papel.MEMBRO,
+            )
+        organizacoes_e_assinaturas.append((organizacao, assinatura))
+    settings.SUBSCRIPTION_TASK_BATCH_SIZE = 1
+
+    assert tasks.reconciliar_carencias_seats.run() == 1
+
+    carencias_abertas = 0
+    for organizacao, assinatura in organizacoes_e_assinaturas:
+        with organizacao_atual_privilegiada(organizacao.pk):
+            assinatura.refresh_from_db()
+        carencias_abertas += int(assinatura.carencia_excesso_seats_iniciada_em is not None)
+    assert carencias_abertas == 1
 
 
 def test_task_ignora_trial_que_evento_concorrente_ja_encerrou(settings, monkeypatch):

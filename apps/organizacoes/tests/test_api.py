@@ -1,6 +1,7 @@
 """Testes da camada HTTP de organizacoes."""
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import timedelta
 from threading import Barrier
 
@@ -15,6 +16,7 @@ from knox.models import get_token_model
 
 from apps.api.autenticacao.models import TokenMetaData, TokenType
 from apps.assinaturas.catalogs import PLANOS_BOOTSTRAP, CatalogoPlanos, sincronizar_planos
+from apps.assinaturas.features import CATALOGO_RECURSOS, ValoresRecursos
 from apps.assinaturas.models import Periodicidade, StatusAssinatura, StatusFinanceiro
 from apps.assinaturas.subscriptions import Assinaturas, CriacaoAssinatura, OrigemVersaoPlano
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
@@ -90,12 +92,17 @@ def vincular(usuario, organizacao, papel=Papel.MEMBRO, times=()):
 def contratar(organizacao, *, seats, papeis_isentos=()):
     sincronizar_planos(PLANOS_BOOTSTRAP, aplicar=True)
     versao, preco = CatalogoPlanos.obter_versao_inicial(codigo="profissional", periodicidade=Periodicidade.MENSAL)
+    termos = Assinaturas._termos_catalogo(versao, preco, seats_contratados=seats)
+    if papeis_isentos:
+        recursos = termos.recursos.materializar()
+        recursos["papeis_isentos_seat"] = [int(papel) for papel in papeis_isentos]
+        termos = replace(termos, recursos=ValoresRecursos(CATALOGO_RECURSOS, recursos))
     with organizacao_atual_privilegiada(organizacao.pk):
-        assinatura = Assinaturas.criar(
+        return Assinaturas.criar(
             CriacaoAssinatura(
                 organizacao=organizacao,
                 origem=OrigemVersaoPlano(versao),
-                termos=Assinaturas._termos_catalogo(versao, preco, seats_contratados=seats),
+                termos=termos,
                 status=StatusAssinatura.ATIVA,
                 status_financeiro=StatusFinanceiro.REGULAR,
                 politica_trial=None,
@@ -103,13 +110,6 @@ def contratar(organizacao, *, seats, papeis_isentos=()):
                 chave_idempotencia=f"contrato-http-{organizacao.pk}",
             )
         )
-    if papeis_isentos:
-        assinatura.recursos = {
-            **assinatura.recursos,
-            "papeis_isentos_seat": [int(papel) for papel in papeis_isentos],
-        }
-        assinatura.save(update_fields=["recursos"])
-    return assinatura
 
 
 def test_lista_apenas_organizacoes_do_usuario_sem_exigir_header():

@@ -1,7 +1,16 @@
 from rest_framework import serializers
 
+from drf_spectacular.utils import extend_schema_field
+
+from apps.assinaturas.access_policies import MotivoRestricao, StatusAcesso
 from apps.assinaturas.models import Periodicidade, TipoAlteracaoAssinatura
 from apps.organizacoes.models import Papel
+
+
+class SituacaoAcessoResponseSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=StatusAcesso.choices)
+    motivos = serializers.ListField(child=serializers.ChoiceField(choices=MotivoRestricao.choices))
+    regularizar_ate = serializers.DateTimeField(allow_null=True)
 
 
 class AssinaturaResponseSerializer(serializers.Serializer):
@@ -18,6 +27,11 @@ class AssinaturaResponseSerializer(serializers.Serializer):
     trial_termina_em = serializers.DateTimeField(allow_null=True)
     periodo_atual_termina_em = serializers.DateTimeField(allow_null=True)
     cancelamento_agendado_para = serializers.DateTimeField(allow_null=True)
+    situacao_acesso = serializers.SerializerMethodField()
+
+    @extend_schema_field(SituacaoAcessoResponseSerializer)
+    def get_situacao_acesso(self, _assinatura):
+        return SituacaoAcessoResponseSerializer(self.context["situacao_acesso"]).data
 
 
 class RecursosAssinaturaResponseSerializer(serializers.Serializer):
@@ -81,8 +95,11 @@ class CancelamentoAssinaturaRequestSerializer(serializers.Serializer):
 
 
 class CancelamentoAssinaturaResponseSerializer(serializers.Serializer):
+    status = serializers.IntegerField()
     revisao = serializers.IntegerField()
     cancelamento_agendado_para = serializers.DateTimeField(allow_null=True)
+    encerrada_em = serializers.DateTimeField(allow_null=True)
+    motivo_encerramento = serializers.CharField(allow_null=True)
 
 
 class AceitarPropostaRequestSerializer(serializers.Serializer):

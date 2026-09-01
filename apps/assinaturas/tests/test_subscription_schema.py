@@ -68,8 +68,11 @@ def test_mutacoes_documentam_body_revisao_recencia_e_conflitos():
     assert cancelamento["post"]["responses"]["202"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/CancelamentoAssinaturaResponse"
     }
+    assert cancelamento["post"]["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/CancelamentoAssinaturaResponse"
+    }
     assert cancelamento["delete"]["responses"]["204"]["description"]
-    assert set(cancelamento["post"]["responses"]) == {"202", "400", "401", "403", "409", "422", "503"}
+    assert set(cancelamento["post"]["responses"]) == {"200", "202", "400", "401", "403", "409", "422", "503"}
     assert set(cancelamento["delete"]["responses"]) == {"204", "400", "401", "403", "409", "422", "503"}
 
 

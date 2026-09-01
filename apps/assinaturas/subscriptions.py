@@ -275,6 +275,8 @@ class Assinaturas:
             raise ValueError("Utilização exige uma assinatura.")
         if not isinstance(ocupacao, OcupacaoSeats):
             raise ValueError("Utilização exige uma OcupacaoSeats.")
+        if "seats_contratados" in assinatura.get_deferred_fields():
+            raise ValueError("Utilização não aceita assinatura com campos deferred.")
         consumidos = ocupacao.consumidos
         reservados = ocupacao.reservados
         if type(consumidos) is not int or consumidos < 0 or type(reservados) is not int or reservados < 0:
@@ -339,7 +341,7 @@ class Assinaturas:
             bloqueada.carencia_pagamento_iniciada_em = agora
             bloqueada.carencia_pagamento_termina_em = agora + timedelta(days=bloqueada.carencia_pagamento_dias)
             bloqueada.revisao += 1
-            bloqueada.save(
+            bloqueada._salvar_transicao(
                 using=using,
                 update_fields=[
                     "status_financeiro",
@@ -383,7 +385,7 @@ class Assinaturas:
             bloqueada.carencia_pagamento_iniciada_em = None
             bloqueada.carencia_pagamento_termina_em = None
             bloqueada.revisao += 1
-            bloqueada.save(
+            bloqueada._salvar_transicao(
                 using=using,
                 update_fields=[
                     "status_financeiro",
@@ -399,7 +401,6 @@ class Assinaturas:
     def reconciliar_carencia_seats(
         cls,
         assinatura: AssinaturaOrganizacao,
-        ocupacao: OcupacaoSeats,
         *,
         agora: datetime,
     ) -> AssinaturaOrganizacao:
@@ -407,8 +408,13 @@ class Assinaturas:
         cls._validar_transicao_temporal(assinatura, agora)
         using = assinatura._state.db or "default"
         with transaction.atomic(using=using):
-            cls._bloquear_organizacao(assinatura.organizacao_id, using=using)
+            organizacao_bloqueada = cls._bloquear_organizacao(assinatura.organizacao_id, using=using)
             bloqueada = AssinaturaOrganizacao.all_objects.using(using).select_for_update().get(pk=assinatura.pk)
+            if bloqueada.status != StatusAssinatura.ATIVA:
+                return bloqueada
+            from apps.organizacoes.memberships import Vinculos
+
+            ocupacao = Vinculos.calcular_ocupacao(organizacao_bloqueada, cls.papeis_isentos_seat(bloqueada))
             utilizacao = cls.calcular_utilizacao(bloqueada, ocupacao)
             if utilizacao.excesso_real > 0:
                 if bloqueada.carencia_excesso_seats_iniciada_em is not None:
@@ -421,7 +427,7 @@ class Assinaturas:
                 bloqueada.carencia_excesso_seats_iniciada_em = None
                 bloqueada.carencia_excesso_seats_termina_em = None
             bloqueada.revisao += 1
-            bloqueada.save(
+            bloqueada._salvar_transicao(
                 using=using,
                 update_fields=[
                     "carencia_excesso_seats_iniciada_em",
@@ -438,7 +444,6 @@ class Assinaturas:
         assinatura: AssinaturaOrganizacao,
         *,
         resultado: ResultadoProcessamentoTrial,
-        ocupacao: OcupacaoSeats,
         agora: datetime,
     ) -> ResultadoEncerramentoTrial:
         """Converte ou aplica fallback no mesmo contrato, sob uma unica revisao."""
@@ -464,9 +469,11 @@ class Assinaturas:
 
         using = assinatura._state.db or "default"
         with transaction.atomic(using=using):
-            cls._bloquear_organizacao(assinatura.organizacao_id, using=using)
+            organizacao_bloqueada = cls._bloquear_organizacao(assinatura.organizacao_id, using=using)
             bloqueada = AssinaturaOrganizacao.all_objects.using(using).select_for_update().get(pk=assinatura.pk)
-            cls.calcular_utilizacao(bloqueada, ocupacao)
+            from apps.organizacoes.memberships import Vinculos
+
+            ocupacao = Vinculos.calcular_ocupacao(organizacao_bloqueada, cls.papeis_isentos_seat(bloqueada))
             if isinstance(resultado, FallbackTrialGratuito):
                 assert versao_gratuita is not None
                 assert termos_gratuitos is not None
@@ -580,12 +587,28 @@ class Assinaturas:
                 raise ConflitoRevisaoAssinatura("A revisão esperada não corresponde ao contrato corrente.")
             cls._cancelar_alteracoes_pendentes_por_encerramento(assinatura, agora=agora, using=using)
             if assinatura.status != StatusAssinatura.ATIVA or assinatura.total_centavos <= 0 or assinatura.periodo_atual_termina_em is None:
+                assinatura.status = StatusAssinatura.ENCERRADA
+                assinatura.revisao += 1
+                assinatura.cancelamento_agendado_para = None
+                assinatura.encerrada_em = agora
+                assinatura.motivo_encerramento = "subscription_cancelled"
+                assinatura._salvar_transicao(
+                    using=using,
+                    update_fields=[
+                        "status",
+                        "revisao",
+                        "cancelamento_agendado_para",
+                        "encerrada_em",
+                        "motivo_encerramento",
+                        "last_modified_at",
+                    ],
+                )
                 return TermoEncerramentoImediato()
             if assinatura.cancelamento_agendado_para is not None:
                 return TermoEncerramentoAgendado(agendado_para=assinatura.cancelamento_agendado_para)
             assinatura.cancelamento_agendado_para = assinatura.periodo_atual_termina_em
             assinatura.revisao += 1
-            assinatura.save(
+            assinatura._salvar_transicao(
                 using=using,
                 update_fields=["cancelamento_agendado_para", "revisao", "last_modified_at"],
             )
@@ -606,7 +629,7 @@ class Assinaturas:
                 return
             assinatura.cancelamento_agendado_para = None
             assinatura.revisao += 1
-            assinatura.save(
+            assinatura._salvar_transicao(
                 using=using,
                 update_fields=["cancelamento_agendado_para", "revisao", "last_modified_at"],
             )
@@ -626,6 +649,14 @@ class Assinaturas:
                     .first()
                 )
                 if encerrada is not None:
+                    if encerrada.motivo_encerramento != "organization_closed" or encerrada.encerrada_em != encerrada_em:
+                        encerrada.revisao += 1
+                        encerrada.encerrada_em = encerrada_em
+                        encerrada.motivo_encerramento = "organization_closed"
+                        encerrada._salvar_transicao(
+                            using=using,
+                            update_fields=["revisao", "encerrada_em", "motivo_encerramento", "last_modified_at"],
+                        )
                     return
                 raise APIError(BillingErrorCode.SUBSCRIPTION_REQUIRED, status_code=503)
             cls._cancelar_alteracoes_pendentes_por_encerramento(assinatura, agora=encerrada_em, using=using)
@@ -634,7 +665,7 @@ class Assinaturas:
             assinatura.cancelamento_agendado_para = None
             assinatura.encerrada_em = encerrada_em
             assinatura.motivo_encerramento = "organization_closed"
-            assinatura.save(
+            assinatura._salvar_transicao(
                 using=using,
                 update_fields=[
                     "status",
@@ -1140,7 +1171,7 @@ class Assinaturas:
         assinatura.carencia_excesso_seats_iniciada_em = None
         assinatura.carencia_excesso_seats_termina_em = None
         assinatura.revisao += 1
-        assinatura.save(
+        assinatura._salvar_transicao(
             using=using,
             update_fields=[
                 "status",
@@ -1237,7 +1268,7 @@ class Assinaturas:
         assinatura.carencia_excesso_seats_iniciada_em = carencia_seats_iniciada_em
         assinatura.carencia_excesso_seats_termina_em = carencia_seats_termina_em
         assinatura.revisao = revisao_anterior + 1
-        assinatura.save(
+        assinatura._salvar_transicao(
             using=using,
             update_fields=[
                 "versao_plano",
@@ -1594,7 +1625,7 @@ class Assinaturas:
         for campo in campos:
             setattr(assinatura, campo, pretendido[campo])
         assinatura.revisao = alteracao.revisao_esperada + 1
-        assinatura.save(update_fields=[*campos, "revisao", "last_modified_at"])
+        assinatura._salvar_transicao(update_fields=[*campos, "revisao", "last_modified_at"])
         alteracao.aplicada_em = agora
         alteracao.revisao_aplicada = assinatura.revisao
 
@@ -1727,7 +1758,7 @@ def _criar_assinatura_enterprise_de_proposta(
                 corrente.cancelamento_agendado_para = None
                 corrente.encerrada_em = agora
                 corrente.motivo_encerramento = "proposal_replaced"
-                corrente.save(
+                corrente._salvar_transicao(
                     update_fields=[
                         "status",
                         "revisao",

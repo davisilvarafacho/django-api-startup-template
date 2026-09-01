@@ -10,9 +10,9 @@ from django.utils import timezone
 from celery import shared_task
 
 from apps.assinaturas.models import PoliticaTrial, StatusAssinatura
+from apps.assinaturas.operational import FinalidadeOperacionalAssinatura, selecionar_organizacoes_operacionais
 from apps.assinaturas.subscriptions import Assinaturas, ConflitoRevisaoAssinatura, FallbackTrialGratuito, MotivoFallbackTrial
 from apps.organizacoes.context import organizacao_atual_privilegiada
-from apps.organizacoes.memberships import Vinculos
 from apps.organizacoes.models import Organizacao
 
 logger = logging.getLogger(__name__)
@@ -38,10 +38,16 @@ def encerrar_trials_vencidos():
     agora = timezone.now()
     processadas = 0
 
-    organizacoes = Organizacao.objects.order_by("pk").only("pk").iterator(chunk_size=batch_size)
-    for organizacao in organizacoes:
-        if processadas >= batch_size:
-            break
+    organizacao_ids = selecionar_organizacoes_operacionais(
+        FinalidadeOperacionalAssinatura.TRIAL_EXPIRADO,
+        limite=batch_size,
+        referencia=agora,
+    )
+    organizacoes = Organizacao.objects.in_bulk(organizacao_ids)
+    for organizacao_id in organizacao_ids:
+        organizacao = organizacoes.get(organizacao_id)
+        if organizacao is None:
+            continue
         with organizacao_atual_privilegiada(organizacao.pk):
             assinatura = Assinaturas.obter_corrente(organizacao)
             if (
@@ -52,13 +58,11 @@ def encerrar_trials_vencidos():
                 or assinatura.trial_termina_em > agora
             ):
                 continue
-            ocupacao = Vinculos.calcular_ocupacao(organizacao, Assinaturas.papeis_isentos_seat(assinatura))
             revisao_anterior = assinatura.revisao
             try:
                 resultado = Assinaturas.encerrar_trial(
                     assinatura,
                     resultado=FallbackTrialGratuito(MotivoFallbackTrial.TRIAL_LOCAL_ENCERRADO),
-                    ocupacao=ocupacao,
                     agora=agora,
                 )
             except ConflitoRevisaoAssinatura:
@@ -92,15 +96,22 @@ def reconciliar_carencias_seats():
     agora = timezone.now()
     processadas = 0
 
-    organizacoes = Organizacao.objects.order_by("pk").only("pk").iterator(chunk_size=batch_size)
-    for organizacao in organizacoes:
+    organizacao_ids = selecionar_organizacoes_operacionais(
+        FinalidadeOperacionalAssinatura.CARENCIA_SEATS_DIVERGENTE,
+        limite=batch_size,
+        referencia=agora,
+    )
+    organizacoes = Organizacao.objects.in_bulk(organizacao_ids)
+    for organizacao_id in organizacao_ids:
+        organizacao = organizacoes.get(organizacao_id)
+        if organizacao is None:
+            continue
         with organizacao_atual_privilegiada(organizacao.pk):
             assinatura = Assinaturas.obter_corrente(organizacao)
             if assinatura is None or assinatura.status != StatusAssinatura.ATIVA:
                 continue
-            ocupacao = Vinculos.calcular_ocupacao(organizacao, Assinaturas.papeis_isentos_seat(assinatura))
             revisao_anterior = assinatura.revisao
-            reconciliada = Assinaturas.reconciliar_carencia_seats(assinatura, ocupacao, agora=agora)
+            reconciliada = Assinaturas.reconciliar_carencia_seats(assinatura, agora=agora)
             processadas += int(reconciliada.revisao != revisao_anterior)
 
     logger.info(

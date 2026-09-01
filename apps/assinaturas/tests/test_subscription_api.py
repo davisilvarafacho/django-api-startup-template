@@ -10,13 +10,19 @@ from rest_framework.test import APIClient
 import pytest
 
 from apps.api.autenticacao.models import AuthToken, TokenMetaData, TokenType
+from apps.assinaturas.access_policies import MotivoRestricao, StatusAcesso
 from apps.assinaturas.catalogs import CatalogoPlanos
 from apps.assinaturas.features import CATALOGO_RECURSOS, ValoresRecursos
-from apps.assinaturas.models import AlteracaoAssinatura, Periodicidade, StatusAlteracaoAssinatura, TipoAlteracaoAssinatura
+from apps.assinaturas.models import (
+    AlteracaoAssinatura,
+    Periodicidade,
+    StatusAlteracaoAssinatura,
+    StatusAssinatura,
+    TipoAlteracaoAssinatura,
+)
 from apps.assinaturas.subscriptions import Assinaturas, PagamentoTrialConfirmado
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
 from apps.organizacoes.context import organizacao_atual_privilegiada
-from apps.organizacoes.memberships import OcupacaoSeats
 from apps.organizacoes.models import Papel, Vinculo
 from tests.support.usuarios import criar_usuario
 
@@ -51,7 +57,6 @@ def _assinatura_paga(*, slug):
                 periodo_iniciado_em=agora,
                 periodo_termina_em=agora + timedelta(days=30),
             ),
-            ocupacao=OcupacaoSeats(consumidos=0, reservados=0),
             agora=agora,
         )
     return organizacao, resultado.assinatura
@@ -83,6 +88,11 @@ def test_admin_consulta_assinatura_e_utilizacao_sem_recalculo_na_view():
         "trial_termina_em": None,
         "periodo_atual_termina_em": None,
         "cancelamento_agendado_para": None,
+        "situacao_acesso": {
+            "status": StatusAcesso.LIBERADO,
+            "motivos": [],
+            "regularizar_ate": None,
+        },
     }
     assert utilizacao.status_code == 200
     assert utilizacao.json() == {
@@ -108,6 +118,29 @@ def test_membro_consulta_recursos_efetivos_mas_nao_dados_financeiros():
     assert recursos.json() == ValoresRecursos(CATALOGO_RECURSOS, assinatura.recursos).materializar()
     assert contrato.status_code == 403
     assert contrato.json()["errors"][0]["code"] == "organizations.role_insufficient"
+
+
+def test_consulta_assinatura_expoe_duas_carencias_e_o_menor_prazo():
+    organizacao, assinatura = _assinatura_ativa(slug="api-situacao-acesso", seats=1)
+    proprietario = _usuario_na(organizacao, email="owner-situacao-acesso@example.com", papel=Papel.PROPRIETARIO)
+    _usuario_na(organizacao, email="membro-situacao-acesso@example.com", papel=Papel.MEMBRO)
+    agora = timezone.now()
+    inicio_pagamento = agora - timedelta(days=2)
+    inicio_seats = agora - timedelta(days=1)
+    with organizacao_atual_privilegiada(organizacao.pk):
+        assinatura = Assinaturas.registrar_falha_renovacao(assinatura, agora=inicio_pagamento)
+        Assinaturas.reconciliar_carencia_seats(assinatura, agora=inicio_seats)
+
+    resposta = _client(proprietario, organizacao).get("/assinatura/")
+
+    assert resposta.status_code == 200
+    situacao = resposta.json()["situacao_acesso"]
+    assert situacao["status"] == StatusAcesso.EM_CARENCIA
+    assert situacao["motivos"] == [
+        MotivoRestricao.PAYMENT_GRACE_PERIOD,
+        MotivoRestricao.SEAT_OVERAGE_GRACE_PERIOD,
+    ]
+    assert parse_datetime(situacao["regularizar_ate"]) == inicio_pagamento + timedelta(days=7)
 
 
 def test_consultas_financeiras_recusam_api_key_mesmo_com_scope():
@@ -253,6 +286,28 @@ def test_proprietario_agenda_e_desfaz_cancelamento_com_revisao():
         assinatura.refresh_from_db()
     assert assinatura.cancelamento_agendado_para is None
     assert assinatura.revisao == 4
+
+
+def test_cancelamento_imediato_de_trial_encerra_contrato_e_retorna_estado_terminal():
+    organizacao, assinatura = _trial(slug="api-cancelamento-imediato")
+    proprietario = _usuario_na(organizacao, email="owner-cancelamento-imediato@example.com", papel=Papel.PROPRIETARIO)
+
+    resposta = _client(proprietario, organizacao).post(
+        "/assinatura/cancelamento/",
+        {"revisao_esperada": assinatura.revisao},
+        format="json",
+    )
+
+    assert resposta.status_code == 200
+    assert resposta.json()["status"] == StatusAssinatura.ENCERRADA
+    assert resposta.json()["revisao"] == assinatura.revisao + 1
+    assert resposta.json()["cancelamento_agendado_para"] is None
+    assert parse_datetime(resposta.json()["encerrada_em"]) is not None
+    assert resposta.json()["motivo_encerramento"] == "subscription_cancelled"
+    with organizacao_atual_privilegiada(organizacao.pk):
+        assinatura.refresh_from_db()
+    assert assinatura.status == StatusAssinatura.ENCERRADA
+    assert assinatura.motivo_encerramento == "subscription_cancelled"
 
 
 def test_cancelamento_com_revisao_obsoleta_retorna_conflito():

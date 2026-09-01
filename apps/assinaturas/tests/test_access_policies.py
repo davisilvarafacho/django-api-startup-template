@@ -195,3 +195,27 @@ def test_politica_rejeita_utilizacao_incoerente_em_vez_de_recalcular_formula():
 
     with pytest.raises(ValueError, match="UtilizacaoSeats incoerente"):
         PoliticaAcessoAssinatura.avaliar(_assinatura(), utilizacao, timezone.now())
+
+
+def test_politica_rejeita_utilizacao_de_outro_snapshot_contratual():
+    with pytest.raises(ValueError, match="snapshot contratual"):
+        PoliticaAcessoAssinatura.avaliar(
+            _assinatura(seats_contratados=3),
+            _utilizacao(contratados=5),
+            timezone.now(),
+        )
+
+
+@pytest.mark.django_db
+def test_calculos_puros_rejeitam_assinatura_deferred_sem_consultar_banco(django_assert_num_queries):
+    from apps.assinaturas.tests.test_subscription_access_transitions import _assinatura_ativa
+    from apps.organizacoes.context import organizacao_atual_privilegiada
+
+    organizacao, assinatura = _assinatura_ativa(slug="politica-deferred")
+    with organizacao_atual_privilegiada(organizacao.pk):
+        deferred = AssinaturaOrganizacao.objects.only("id").get(pk=assinatura.pk)
+
+    with django_assert_num_queries(0), pytest.raises(ValueError, match="deferred"):
+        Assinaturas.calcular_utilizacao(deferred, OcupacaoSeats(consumidos=1, reservados=0))
+    with django_assert_num_queries(0), pytest.raises(ValueError, match="deferred"):
+        PoliticaAcessoAssinatura.avaliar(deferred, _utilizacao(), timezone.now())

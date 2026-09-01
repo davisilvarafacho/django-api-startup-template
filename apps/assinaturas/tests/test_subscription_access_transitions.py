@@ -9,6 +9,7 @@ from django.utils import timezone
 
 import pytest
 
+from apps.api.core.errors import APIError
 from apps.assinaturas.catalogs import PLANOS_BOOTSTRAP, CatalogoPlanos, sincronizar_planos
 from apps.assinaturas.features import CATALOGO_RECURSOS, ValoresRecursos
 from apps.assinaturas.models import (
@@ -34,7 +35,7 @@ from apps.assinaturas.subscriptions import (
     TrialConvertidoParaGratuito,
 )
 from apps.organizacoes.context import organizacao_atual_privilegiada
-from apps.organizacoes.memberships import OcupacaoSeats
+from apps.organizacoes.memberships import Vinculos
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
 from tests.support.usuarios import criar_usuario
 
@@ -79,10 +80,10 @@ def _assinatura_ativa(*, slug: str, seats: int = 5):
     return organizacao, assinatura
 
 
-def _trial(*, slug: str):
+def _trial(*, slug: str, agora=None):
     versao, preco = _catalogo("profissional")
     organizacao = Organizacao.objects.create(nome=slug, slug=slug)
-    agora = timezone.now() - timedelta(days=15)
+    agora = agora or timezone.now() - timedelta(days=15)
     with organizacao_atual_privilegiada(organizacao.pk):
         assinatura = Assinaturas.criar_trial(
             organizacao=organizacao,
@@ -93,6 +94,17 @@ def _trial(*, slug: str):
             agora=agora,
         )
     return organizacao, assinatura
+
+
+def _criar_membros(organizacao: Organizacao, *, prefixo: str, quantidade: int) -> list[Vinculo]:
+    return [
+        Vinculo.objects.create(
+            organizacao=organizacao,
+            usuario=criar_usuario(email=f"{prefixo}-{indice}@example.com"),
+            papel=Papel.MEMBRO,
+        )
+        for indice in range(quantidade)
+    ]
 
 
 def test_falha_de_renovacao_abre_carencia_uma_vez_sem_reiniciar_prazo():
@@ -112,14 +124,11 @@ def test_falha_de_renovacao_abre_carencia_uma_vez_sem_reiniciar_prazo():
 
 def test_pagamento_regulariza_apenas_carencia_financeira_e_e_idempotente():
     organizacao, assinatura = _assinatura_ativa(slug="pagamento-regulariza")
+    _criar_membros(organizacao, prefixo="pagamento-regulariza", quantidade=6)
     agora = timezone.now()
     with organizacao_atual_privilegiada(organizacao.pk):
         assinatura = Assinaturas.registrar_falha_renovacao(assinatura, agora=agora)
-        assinatura = Assinaturas.reconciliar_carencia_seats(
-            assinatura,
-            OcupacaoSeats(consumidos=6, reservados=0),
-            agora=agora,
-        )
+        assinatura = Assinaturas.reconciliar_carencia_seats(assinatura, agora=agora)
         regularizada = Assinaturas.registrar_pagamento_confirmado(assinatura, agora=agora + timedelta(hours=1))
         repetida = Assinaturas.registrar_pagamento_confirmado(regularizada, agora=agora + timedelta(hours=2))
 
@@ -133,24 +142,14 @@ def test_pagamento_regulariza_apenas_carencia_financeira_e_e_idempotente():
 
 def test_reconciliar_excesso_abre_e_limpa_somente_carencia_de_seats():
     organizacao, assinatura = _assinatura_ativa(slug="reconciliar-seats", seats=2)
+    vinculos = _criar_membros(organizacao, prefixo="reconciliar-seats", quantidade=3)
     agora = timezone.now()
     with organizacao_atual_privilegiada(organizacao.pk):
         assinatura = Assinaturas.registrar_falha_renovacao(assinatura, agora=agora)
-        com_excesso = Assinaturas.reconciliar_carencia_seats(
-            assinatura,
-            OcupacaoSeats(consumidos=3, reservados=4),
-            agora=agora + timedelta(hours=1),
-        )
-        repetida = Assinaturas.reconciliar_carencia_seats(
-            com_excesso,
-            OcupacaoSeats(consumidos=3, reservados=0),
-            agora=agora + timedelta(days=2),
-        )
-        regularizada = Assinaturas.reconciliar_carencia_seats(
-            repetida,
-            OcupacaoSeats(consumidos=2, reservados=5),
-            agora=agora + timedelta(days=3),
-        )
+        com_excesso = Assinaturas.reconciliar_carencia_seats(assinatura, agora=agora + timedelta(hours=1))
+        repetida = Assinaturas.reconciliar_carencia_seats(com_excesso, agora=agora + timedelta(days=2))
+        vinculos[-1].delete()
+        regularizada = Assinaturas.reconciliar_carencia_seats(repetida, agora=agora + timedelta(days=3))
 
     assert repetida.carencia_excesso_seats_iniciada_em == agora + timedelta(hours=1)
     assert repetida.carencia_excesso_seats_termina_em == agora + timedelta(days=7, hours=1)
@@ -172,13 +171,11 @@ def test_fallback_de_trial_muda_o_mesmo_contrato_e_abre_somente_carencia_de_seat
         resultado = Assinaturas.encerrar_trial(
             assinatura,
             resultado=FallbackTrialGratuito(MotivoFallbackTrial.PRIMEIRA_COBRANCA_FALHOU),
-            ocupacao=OcupacaoSeats(consumidos=2, reservados=0),
             agora=agora,
         )
         repetido = Assinaturas.encerrar_trial(
             assinatura,
             resultado=FallbackTrialGratuito(MotivoFallbackTrial.PRIMEIRA_COBRANCA_FALHOU),
-            ocupacao=OcupacaoSeats(consumidos=2, reservados=0),
             agora=agora + timedelta(minutes=1),
         )
         contratos = list(AssinaturaOrganizacao.all_objects.filter(organizacao=organizacao))
@@ -202,8 +199,46 @@ def test_fallback_de_trial_muda_o_mesmo_contrato_e_abre_somente_carencia_de_seat
     assert repetido.alteracao.pk == alteracoes[0].pk
 
 
+def test_encerrar_trial_calcula_ocupacao_real_dentro_da_secao_critica():
+    organizacao, assinatura = _trial(slug="trial-ocupacao-bloqueada")
+    for indice in range(2):
+        Vinculo.objects.create(
+            organizacao=organizacao,
+            usuario=criar_usuario(email=f"trial-ocupacao-bloqueada-{indice}@example.com"),
+            papel=Papel.MEMBRO,
+        )
+    agora = assinatura.trial_termina_em + timedelta(seconds=1)
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        resultado = Assinaturas.encerrar_trial(
+            assinatura,
+            resultado=FallbackTrialGratuito(MotivoFallbackTrial.TRIAL_LOCAL_ENCERRADO),
+            agora=agora,
+        )
+
+    assert isinstance(resultado, TrialConvertidoParaGratuito)
+    assert resultado.assinatura.carencia_excesso_seats_iniciada_em == agora
+
+
+def test_reconciliar_carencia_calcula_ocupacao_real_dentro_da_secao_critica():
+    organizacao, assinatura = _assinatura_ativa(slug="reconcile-ocupacao-bloqueada", seats=1)
+    for indice in range(2):
+        Vinculo.objects.create(
+            organizacao=organizacao,
+            usuario=criar_usuario(email=f"reconcile-ocupacao-bloqueada-{indice}@example.com"),
+            papel=Papel.MEMBRO,
+        )
+    agora = timezone.now()
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        reconciliada = Assinaturas.reconciliar_carencia_seats(assinatura, agora=agora)
+
+    assert reconciliada.carencia_excesso_seats_iniciada_em == agora
+
+
 def test_conversao_paga_exige_seats_reais_e_e_idempotente():
     organizacao, assinatura = _trial(slug="trial-pago")
+    _criar_membros(organizacao, prefixo="trial-pago", quantidade=3)
     agora = assinatura.trial_termina_em + timedelta(seconds=1)
     pagamento_insuficiente = PagamentoTrialConfirmado(
         seats_contratados=2,
@@ -216,7 +251,6 @@ def test_conversao_paga_exige_seats_reais_e_e_idempotente():
             Assinaturas.encerrar_trial(
                 assinatura,
                 resultado=pagamento_insuficiente,
-                ocupacao=OcupacaoSeats(consumidos=3, reservados=0),
                 agora=agora,
             )
         pagamento = PagamentoTrialConfirmado(
@@ -227,13 +261,11 @@ def test_conversao_paga_exige_seats_reais_e_e_idempotente():
         convertido = Assinaturas.encerrar_trial(
             assinatura,
             resultado=pagamento,
-            ocupacao=OcupacaoSeats(consumidos=3, reservados=5),
             agora=agora,
         )
         repetido = Assinaturas.encerrar_trial(
             assinatura,
             resultado=pagamento,
-            ocupacao=OcupacaoSeats(consumidos=3, reservados=0),
             agora=agora + timedelta(minutes=1),
         )
 
@@ -263,7 +295,6 @@ def test_task_e_evento_concorrentes_encerram_trial_uma_unica_vez():
                     return Assinaturas.encerrar_trial(
                         assinatura,
                         resultado=resultado,
-                        ocupacao=OcupacaoSeats(consumidos=1, reservados=0),
                         agora=agora,
                     )
                 except ConflitoRevisaoAssinatura as exc:
@@ -292,6 +323,95 @@ def test_task_e_evento_concorrentes_encerram_trial_uma_unica_vez():
         assert alteracoes.count() in (0, 1)
     assert assinatura.status == StatusAssinatura.ATIVA
     assert assinatura.revisao == 2
+
+
+@pytest.mark.django_db(transaction=True)
+def test_aceite_de_convite_e_fallback_serializam_ocupacao_real():
+    organizacao, assinatura = _trial(slug="trial-convite-concorrente")
+    _criar_membros(organizacao, prefixo="trial-convite-concorrente-existente", quantidade=1)
+    convidado = criar_usuario(email="trial-convite-concorrente-convidado@example.com")
+    convite = Vinculos.criar_convite(
+        organizacao=organizacao,
+        email=convidado.email,
+        papel=Papel.MEMBRO,
+        convidado_por=None,
+    )
+    agora = assinatura.trial_termina_em + timedelta(seconds=1)
+    barreira = Barrier(2)
+
+    def aceitar():
+        close_old_connections()
+        try:
+            barreira.wait(timeout=5)
+            try:
+                return Vinculos.aceitar_convite(convite, convidado).pk
+            except APIError as exc:
+                return exc
+        finally:
+            connections.close_all()
+
+    def aplicar_fallback():
+        close_old_connections()
+        try:
+            barreira.wait(timeout=5)
+            with organizacao_atual_privilegiada(organizacao.pk):
+                return Assinaturas.encerrar_trial(
+                    assinatura,
+                    resultado=FallbackTrialGratuito(MotivoFallbackTrial.TRIAL_LOCAL_ENCERRADO),
+                    agora=agora,
+                )
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        aceite_futuro = executor.submit(aceitar)
+        fallback_futuro = executor.submit(aplicar_fallback)
+        aceite = aceite_futuro.result(timeout=10)
+        fallback = fallback_futuro.result(timeout=10)
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        fallback.assinatura.refresh_from_db()
+    if isinstance(aceite, APIError):
+        assert fallback.assinatura.carencia_excesso_seats_iniciada_em is None
+    else:
+        assert fallback.assinatura.carencia_excesso_seats_iniciada_em == agora
+
+
+@pytest.mark.django_db(transaction=True)
+def test_encerramento_e_reconcile_serializam_sem_reabrir_contrato():
+    organizacao, assinatura = _assinatura_ativa(slug="encerramento-reconcile-concorrente", seats=1)
+    _criar_membros(organizacao, prefixo="encerramento-reconcile-concorrente", quantidade=2)
+    agora = timezone.now()
+    barreira = Barrier(2)
+
+    def encerrar():
+        close_old_connections()
+        try:
+            barreira.wait(timeout=5)
+            with organizacao_atual_privilegiada(organizacao.pk):
+                Assinaturas.encerrar(organizacao, encerrada_em=agora)
+        finally:
+            connections.close_all()
+
+    def reconciliar():
+        close_old_connections()
+        try:
+            barreira.wait(timeout=5)
+            with organizacao_atual_privilegiada(organizacao.pk):
+                return Assinaturas.reconciliar_carencia_seats(assinatura, agora=agora).pk
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        encerramento_futuro = executor.submit(encerrar)
+        reconcile_futuro = executor.submit(reconciliar)
+        encerramento_futuro.result(timeout=10)
+        assert reconcile_futuro.result(timeout=10) == assinatura.pk
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        assinatura.refresh_from_db()
+    assert assinatura.status == StatusAssinatura.ENCERRADA
+    assert assinatura.encerrada_em == agora
 
 
 def test_fallback_de_trial_nao_pode_ser_solicitado_pela_api_generica_de_alteracao():
@@ -377,6 +497,96 @@ def test_sql_nao_pode_inserir_fallback_para_contrato_ativo():
             )
 
 
+@pytest.mark.parametrize("escrita", ["save", "update", "bulk_update"])
+def test_orm_generico_nao_pode_alterar_termos_contratuais(escrita):
+    organizacao, assinatura = _assinatura_ativa(slug=f"termos-orm-{escrita}")
+
+    def escrever_genericamente():
+        if escrita == "save":
+            assinatura.seats_contratados += 1
+            assinatura.revisao += 1
+            assinatura.save(update_fields=["seats_contratados", "revisao", "last_modified_at"])
+        elif escrita == "update":
+            AssinaturaOrganizacao.objects.filter(pk=assinatura.pk).update(
+                seats_contratados=assinatura.seats_contratados + 1,
+                revisao=assinatura.revisao + 1,
+            )
+        else:
+            assinatura.seats_contratados += 1
+            assinatura.revisao += 1
+            AssinaturaOrganizacao.objects.bulk_update([assinatura], ["seats_contratados", "revisao"])
+
+    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(ValueError, match="transição nominal"):
+        escrever_genericamente()
+
+
+def test_sql_nao_pode_converter_trial_pago_sem_transicao_nominal_completa():
+    organizacao, assinatura = _trial(slug="trial-pago-sql-direto")
+
+    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(DatabaseError, match="(?i)trial pago"), transaction.atomic():
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE assinatura_organizacao
+                   SET status = %s,
+                       status_financeiro = %s,
+                       revisao = revisao + 1
+                 WHERE id = %s
+                """,
+                [StatusAssinatura.ATIVA, StatusFinanceiro.REGULAR, assinatura.pk],
+            )
+
+
+def test_sql_exige_incremento_unitario_para_mudar_termos_contratuais():
+    organizacao, assinatura = _assinatura_ativa(slug="termos-sql-revisao")
+
+    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(DatabaseError, match="(?i)incremento unitario"), transaction.atomic():
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE assinatura_organizacao
+                   SET seats_contratados = seats_contratados + 1,
+                       revisao = revisao + 2
+                 WHERE id = %s
+                """,
+                [assinatura.pk],
+            )
+
+
+def test_sql_nao_pode_reaproveitar_alteracao_compativel_para_mascarar_preco():
+    organizacao, assinatura = _assinatura_ativa(slug="termos-sql-snapshot-completo")
+    snapshot_anterior = Assinaturas._snapshot_assinatura(assinatura)
+    snapshot_pretendido = {
+        **snapshot_anterior,
+        "revisao": assinatura.revisao + 1,
+        "seats_contratados": assinatura.seats_contratados + 1,
+    }
+    with organizacao_atual_privilegiada(organizacao.pk):
+        AlteracaoAssinatura.objects.create(
+            organizacao=organizacao,
+            assinatura=assinatura,
+            tipo=TipoAlteracaoAssinatura.AUMENTO_SEATS,
+            momento_aplicacao=10,
+            status=10,
+            revisao_esperada=assinatura.revisao,
+            chave_idempotencia="termos-sql-snapshot-completo",
+            pedido={"seats_contratados": assinatura.seats_contratados + 1},
+            snapshot_anterior=snapshot_anterior,
+            snapshot_pretendido=snapshot_pretendido,
+        )
+        with pytest.raises(DatabaseError, match="(?i)AlteracaoAssinatura compativel"), transaction.atomic(), connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE assinatura_organizacao
+                   SET seats_contratados = seats_contratados + 1,
+                       valor_base_centavos = valor_base_centavos + 1,
+                       revisao = revisao + 1
+                 WHERE id = %s
+                """,
+                [assinatura.pk],
+            )
+
+
 def test_sql_recusa_carencia_financeira_sem_incremento_unitario_da_revisao():
     organizacao, assinatura = _assinatura_ativa(slug="bypass-carencia")
     agora = timezone.now()
@@ -419,6 +629,7 @@ def test_sql_recusa_prazo_de_carencia_financeira_divergente_do_snapshot():
 @pytest.mark.django_db(transaction=True)
 def test_pagamento_e_excesso_concorrentes_preservam_as_duas_causas():
     organizacao, assinatura = _assinatura_ativa(slug="pagamento-seats-concorrentes", seats=2)
+    _criar_membros(organizacao, prefixo="pagamento-seats-concorrentes", quantidade=3)
     agora = timezone.now()
     with organizacao_atual_privilegiada(organizacao.pk):
         assinatura = Assinaturas.registrar_falha_renovacao(assinatura, agora=agora)
@@ -440,7 +651,6 @@ def test_pagamento_e_excesso_concorrentes_preservam_as_duas_causas():
             with organizacao_atual_privilegiada(organizacao.pk):
                 return Assinaturas.reconciliar_carencia_seats(
                     assinatura,
-                    OcupacaoSeats(consumidos=3, reservados=0),
                     agora=agora + timedelta(hours=1),
                 ).pk
         finally:

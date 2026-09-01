@@ -22,7 +22,7 @@ def test_aceite_documenta_body_resposta_e_erros_reais():
 
     assert post["requestBody"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/AceitarPropostaRequest"}
     assert post["responses"]["200"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/AceitarPropostaResponse"}
-    assert set(post["responses"]) == {"200", "400", "401", "403", "404", "409", "422"}
+    assert set(post["responses"]) == {"200", "400", "401", "403", "404", "409", "422", "503"}
     for codigo in (
         "auth.token_not_provided",
         "auth.invalid_token",
@@ -35,7 +35,9 @@ def test_aceite_documenta_body_resposta_e_erros_reais():
     assert "organizations.membership_inactive" in post["responses"]["403"]["description"]
     assert "organizations.organization_inactive" in post["responses"]["403"]["description"]
     assert "organizations.role_insufficient" in post["responses"]["403"]["description"]
+    assert "billing.organization_restricted" in post["responses"]["403"]["description"]
     assert "core.not_found" in post["responses"]["404"]["description"]
     assert "billing.proposal_invalid" in post["responses"]["409"]["description"]
     assert "organizations.tenant_mismatch" in post["responses"]["409"]["description"]
     assert "organizations.header_required" in post["responses"]["422"]["description"]
+    assert "billing.subscription_required" in post["responses"]["503"]["description"]

@@ -13,7 +13,7 @@ from apps.api.core.errors import APIError, CoreErrorCode, ValidationErrorCode
 from apps.api.core.route_markers import regularizacao_assinatura
 from apps.assinaturas.errors import BillingErrorCode
 from apps.assinaturas.features import CATALOGO_RECURSOS, ValoresRecursos
-from apps.assinaturas.models import PropostaComercial
+from apps.assinaturas.models import AssinaturaOrganizacao, PropostaComercial, StatusAssinatura
 from apps.assinaturas.proposals import ConflitoPropostaComercial, Propostas
 from apps.assinaturas.schema import (
     document_proposal_accept,
@@ -67,7 +67,12 @@ class AssinaturaView(_AssinaturaSessionView):
     def get(self, request):
         _exigir_papel(request, Papel.ADMINISTRADOR)
         assinatura = request.tenant.assinatura
-        return Response(AssinaturaResponseSerializer(assinatura).data)
+        return Response(
+            AssinaturaResponseSerializer(
+                assinatura,
+                context={"situacao_acesso": request.tenant.situacao_acesso},
+            ).data
+        )
 
 
 @regularizacao_assinatura
@@ -131,9 +136,9 @@ class CancelamentoAssinaturaView(_AssinaturaSessionView):
             )
         except ConflitoRevisaoAssinatura as exc:
             raise APIError(BillingErrorCode.SUBSCRIPTION_CONFLICT, status_code=status.HTTP_409_CONFLICT) from exc
-        assinatura = Assinaturas.obter_corrente(request.organizacao)
-        assert assinatura is not None
-        return Response(CancelamentoAssinaturaResponseSerializer(assinatura).data, status=status.HTTP_202_ACCEPTED)
+        assinatura = AssinaturaOrganizacao.all_objects.get(pk=request.tenant.assinatura.pk)
+        resposta_status = status.HTTP_200_OK if assinatura.status == StatusAssinatura.ENCERRADA else status.HTTP_202_ACCEPTED
+        return Response(CancelamentoAssinaturaResponseSerializer(assinatura).data, status=resposta_status)
 
     @document_subscription_cancel_delete
     @require_recent_auth()
