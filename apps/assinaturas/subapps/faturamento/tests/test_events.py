@@ -15,6 +15,7 @@ import pytest
 import stripe
 from django_checkouts.enums import CheckoutMode, CheckoutStatus, EventType, Gateway, InvoiceStatus, ResourceKind, SetupStatus, SubscriptionStatus
 from django_checkouts.exceptions import ConfigurationError, GatewayProtocolError, WebhookVerificationError
+from django_checkouts.gateways.stripe.mapping import EVENT_MAP, SETUP_EVENT_MAP
 from django_checkouts.registry import GATEWAY_CACHE
 from django_checkouts.types import Checkout, WebhookEvent
 
@@ -111,21 +112,21 @@ def test_hash_canonico_ignora_raw_e_ordem_e_muda_com_fato_relevante():
     [
         (
             EventType.SETUP_COMPLETED,
-            SimpleNamespace(external_id="set_1", reference_id="ref", status="complete"),
+            SimpleNamespace(external_id="set_1", reference_id="ref", status=SetupStatus.COMPLETE),
             ResourceKind.SETUP,
             ("", "set_1", ""),
             {"customer_reference": "ref", "payment_status": "complete"},
         ),
         (
             EventType.SUBSCRIPTION_UPDATED,
-            SimpleNamespace(external_id="sub_1", status="active", current_period_start=None, current_period_end=None),
+            SimpleNamespace(external_id="sub_1", status=SubscriptionStatus.ACTIVE, current_period_start=None, current_period_end=None),
             ResourceKind.SUBSCRIPTION,
             ("sub_1", "", ""),
             {"subscription_status": "active"},
         ),
         (
             EventType.INVOICE_PAID,
-            SimpleNamespace(external_id="in_1", subscription_id="sub_1", status="paid", currency="brl", reference_id=None),
+            SimpleNamespace(external_id="in_1", subscription_id="sub_1", status=InvoiceStatus.PAID, currency="brl", reference_id=None),
             ResourceKind.INVOICE,
             ("sub_1", "", "in_1"),
             {"currency": "BRL", "invoice_status": "paid"},
@@ -269,14 +270,11 @@ def test_tipos_remotos_desconhecidos_distintos_colidem_e_tipo_inseguro_falha():
     ("tipo", "kind", "status_remoto"),
     [
         (EventType.CHECKOUT_PAID, ResourceKind.INVOICE, InvoiceStatus.PAID),
-        (EventType.CHECKOUT_PAID, ResourceKind.CHECKOUT, CheckoutStatus.PENDING),
-        (EventType.SETUP_COMPLETED, ResourceKind.SETUP, SetupStatus.OPEN),
-        (EventType.SUBSCRIPTION_CANCELED, ResourceKind.SUBSCRIPTION, SubscriptionStatus.ACTIVE),
-        (EventType.INVOICE_PAID, ResourceKind.INVOICE, InvoiceStatus.OPEN),
+        (EventType.CHECKOUT_PAID, ResourceKind.CHECKOUT, InvoiceStatus.PAID),
         (EventType.INVOICE_OPENED, ResourceKind.INVOICE, "future_valid_status"),
     ],
 )
-def test_matriz_fechada_rejeita_kind_status_ou_semantica_incoerente(tipo, kind, status_remoto):
+def test_matriz_fechada_rejeita_kind_classe_ou_status_futuro(tipo, kind, status_remoto):
     recurso = SimpleNamespace(
         external_id="resource_1",
         status=status_remoto,
@@ -306,6 +304,57 @@ def test_matriz_fechada_rejeita_kind_status_ou_semantica_incoerente(tipo, kind, 
         EventosCobranca(repositorio=repositorio, resolver_destino=lambda evento: None).receber("stripe", evento, client=SimpleNamespace())
 
     assert repositorio.eventos == {}
+
+
+@pytest.mark.parametrize(
+    ("remote_type", "tipo"),
+    [(remote_type, tipo) for remote_type, (tipo, kind) in EVENT_MAP.items() if kind == ResourceKind.CHECKOUT],
+)
+def test_taxonomia_checkout_aceita_evento_historico_com_snapshot_atual_pago(remote_type, tipo):
+    evento = checkout_evento(event_id=f"evt_{remote_type}")
+    object.__setattr__(evento, "event_type", remote_type)
+    object.__setattr__(evento, "type", tipo)
+
+    normalizado = EventosCobranca.normalizar(evento)
+
+    assert normalizado.tipo == tipo
+    assert normalizado.payload["payment_status"] == CheckoutStatus.PAID
+
+
+@pytest.mark.parametrize(
+    ("tipo", "kind", "status"),
+    [
+        (EventType.INVOICE_PAYMENT_FAILED, ResourceKind.INVOICE, InvoiceStatus.PAID),
+        (SETUP_EVENT_MAP["checkout.session.async_payment_failed"], ResourceKind.SETUP, SetupStatus.COMPLETE),
+        (EventType.SUBSCRIPTION_CANCELED, ResourceKind.SUBSCRIPTION, SubscriptionStatus.ACTIVE),
+    ],
+)
+def test_familias_aceitam_snapshot_atual_valido_independente_da_semantica_historica(tipo, kind, status):
+    recurso = SimpleNamespace(
+        external_id="resource_current",
+        status=status,
+        amount_total=100,
+        currency="BRL",
+        reference_id=None,
+        subscription_id="sub_1",
+        current_period_start=None,
+        current_period_end=None,
+    )
+    evento = WebhookEvent(
+        gateway=Gateway.STRIPE,
+        variant="stripe",
+        event_id=f"evt_{tipo}",
+        event_type=str(tipo),
+        type=tipo,
+        occurred_at=datetime(2026, 9, 1, tzinfo=UTC),
+        resource_kind=kind,
+        resource_id=recurso.external_id,
+        resource=recurso,
+        livemode=False,
+        raw={},
+    )
+
+    assert EventosCobranca.normalizar(evento).tipo == tipo
 
 
 def test_evento_conhecido_sem_recurso_e_falha_de_protocolo_sem_persistir():

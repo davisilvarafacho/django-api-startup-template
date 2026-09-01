@@ -88,23 +88,23 @@ class RepositorioEventos(Protocol):
 
 
 PROTOCOLO_EVENTOS = {
-    EventType.CHECKOUT_PENDING: (ResourceKind.CHECKOUT, CheckoutStatus, frozenset({CheckoutStatus.PENDING})),
-    EventType.CHECKOUT_PAID: (ResourceKind.CHECKOUT, CheckoutStatus, frozenset({CheckoutStatus.PAID})),
-    EventType.CHECKOUT_FAILED: (ResourceKind.CHECKOUT, CheckoutStatus, frozenset({CheckoutStatus.FAILED})),
-    EventType.CHECKOUT_EXPIRED: (ResourceKind.CHECKOUT, CheckoutStatus, frozenset({CheckoutStatus.EXPIRED})),
-    EventType.CHECKOUT_CANCELED: (ResourceKind.CHECKOUT, CheckoutStatus, frozenset({CheckoutStatus.CANCELED})),
-    EventType.SETUP_PENDING: (ResourceKind.SETUP, SetupStatus, frozenset({SetupStatus.OPEN})),
-    EventType.SETUP_COMPLETED: (ResourceKind.SETUP, SetupStatus, frozenset({SetupStatus.COMPLETE})),
-    EventType.SETUP_FAILED: (ResourceKind.SETUP, SetupStatus, frozenset({SetupStatus.OPEN})),
-    EventType.SETUP_EXPIRED: (ResourceKind.SETUP, SetupStatus, frozenset({SetupStatus.EXPIRED})),
-    EventType.SUBSCRIPTION_CREATED: (ResourceKind.SUBSCRIPTION, SubscriptionStatus, frozenset(SubscriptionStatus)),
-    EventType.SUBSCRIPTION_UPDATED: (ResourceKind.SUBSCRIPTION, SubscriptionStatus, frozenset(SubscriptionStatus)),
-    EventType.SUBSCRIPTION_CANCELED: (ResourceKind.SUBSCRIPTION, SubscriptionStatus, frozenset({SubscriptionStatus.CANCELED})),
-    EventType.INVOICE_OPENED: (ResourceKind.INVOICE, InvoiceStatus, frozenset({InvoiceStatus.DRAFT, InvoiceStatus.OPEN})),
-    EventType.INVOICE_PAID: (ResourceKind.INVOICE, InvoiceStatus, frozenset({InvoiceStatus.PAID})),
-    EventType.INVOICE_PAYMENT_FAILED: (ResourceKind.INVOICE, InvoiceStatus, frozenset({InvoiceStatus.OPEN})),
-    EventType.INVOICE_VOIDED: (ResourceKind.INVOICE, InvoiceStatus, frozenset({InvoiceStatus.VOID})),
-    EventType.INVOICE_UNCOLLECTIBLE: (ResourceKind.INVOICE, InvoiceStatus, frozenset({InvoiceStatus.UNCOLLECTIBLE})),
+    EventType.CHECKOUT_PENDING: (ResourceKind.CHECKOUT, CheckoutStatus),
+    EventType.CHECKOUT_PAID: (ResourceKind.CHECKOUT, CheckoutStatus),
+    EventType.CHECKOUT_FAILED: (ResourceKind.CHECKOUT, CheckoutStatus),
+    EventType.CHECKOUT_EXPIRED: (ResourceKind.CHECKOUT, CheckoutStatus),
+    EventType.CHECKOUT_CANCELED: (ResourceKind.CHECKOUT, CheckoutStatus),
+    EventType.SETUP_PENDING: (ResourceKind.SETUP, SetupStatus),
+    EventType.SETUP_COMPLETED: (ResourceKind.SETUP, SetupStatus),
+    EventType.SETUP_FAILED: (ResourceKind.SETUP, SetupStatus),
+    EventType.SETUP_EXPIRED: (ResourceKind.SETUP, SetupStatus),
+    EventType.SUBSCRIPTION_CREATED: (ResourceKind.SUBSCRIPTION, SubscriptionStatus),
+    EventType.SUBSCRIPTION_UPDATED: (ResourceKind.SUBSCRIPTION, SubscriptionStatus),
+    EventType.SUBSCRIPTION_CANCELED: (ResourceKind.SUBSCRIPTION, SubscriptionStatus),
+    EventType.INVOICE_OPENED: (ResourceKind.INVOICE, InvoiceStatus),
+    EventType.INVOICE_PAID: (ResourceKind.INVOICE, InvoiceStatus),
+    EventType.INVOICE_PAYMENT_FAILED: (ResourceKind.INVOICE, InvoiceStatus),
+    EventType.INVOICE_VOIDED: (ResourceKind.INVOICE, InvoiceStatus),
+    EventType.INVOICE_UNCOLLECTIBLE: (ResourceKind.INVOICE, InvoiceStatus),
 }
 WEBHOOKS_TOTAL = Counter(
     "billing_webhooks_total",
@@ -334,17 +334,16 @@ def _iso(valor):
 def _validar_protocolo_evento(evento: WebhookEvent) -> None:
     if not isinstance(evento.type, EventType) or evento.type not in PROTOCOLO_EVENTOS:
         raise EventoWebhookInvalido("O tipo normalizado conhecido não pertence ao protocolo suportado.")
-    kind, enum_status, permitidos = PROTOCOLO_EVENTOS[evento.type]
+    kind, enum_status = PROTOCOLO_EVENTOS[evento.type]
     if evento.resource_kind != kind or evento.resource is None:
         raise EventoWebhookInvalido("O recurso não corresponde à família do evento.")
     if getattr(evento.resource, "external_id", None) != evento.resource_id:
         raise EventoWebhookInvalido("O identificador do recurso normalizado diverge do evento.")
-    try:
-        status = enum_status(getattr(evento.resource, "status", None))
-    except (TypeError, ValueError):
-        raise EventoWebhookInvalido("O recurso contém status fora do vocabulário fechado.") from None
-    if status not in permitidos:
-        raise EventoWebhookInvalido("O status do recurso não corresponde à semântica do evento.")
+    # O evento é apenas um trigger histórico; o recurso pode ser um snapshot
+    # posterior. A Task15 recupera o estado atual antes de qualquer decisão
+    # financeira, portanto aqui validamos somente família e enum fechado.
+    if not isinstance(getattr(evento.resource, "status", None), enum_status):
+        raise EventoWebhookInvalido("O recurso contém status fora do vocabulário fechado da família.")
 
 
 def resolver_destino_evento(evento: WebhookEvent) -> DestinoEvento | None:
