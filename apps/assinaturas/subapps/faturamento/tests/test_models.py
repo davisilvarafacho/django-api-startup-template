@@ -34,7 +34,7 @@ from apps.assinaturas.subapps.faturamento.models import (
     StatusEventoCobranca,
     StatusFatura,
 )
-from apps.assinaturas.subapps.faturamento.payloads import normalizar_payload_evento
+from apps.assinaturas.subapps.faturamento.payloads import normalizar_payload_evento, validar_tipo_evento
 from apps.assinaturas.tests.test_proposal_models import _criar_proposta
 from apps.assinaturas.tests.test_subscription_models import _criar_assinatura, _criar_versao
 from apps.organizacoes.context import organizacao_atual_privilegiada
@@ -45,6 +45,9 @@ pytestmark = pytest.mark.django_db
 
 PAPEL_INGRESSO = "billing_ingress_tester"
 SENHA_INGRESSO = "billing_ingress_tester"
+PAPEL_WEB = "billing_web_tester"
+PAPEL_MIGRATION = "billing_migration_tester"
+SENHA_PAPEIS = "billing_roles_tester"
 
 
 @pytest.fixture(scope="module")
@@ -52,7 +55,12 @@ def papel_ingresso(django_db_setup, django_db_blocker):
     with django_db_blocker.unblock(), connection.cursor() as cursor:
         cursor.execute(f"DROP ROLE IF EXISTS {PAPEL_INGRESSO}")
         cursor.execute(f"CREATE ROLE {PAPEL_INGRESSO} LOGIN PASSWORD %s NOSUPERUSER NOBYPASSRLS NOINHERIT", [SENHA_INGRESSO])
+        cursor.execute(f"DROP ROLE IF EXISTS {PAPEL_WEB}")
+        cursor.execute(f"DROP ROLE IF EXISTS {PAPEL_MIGRATION}")
+        cursor.execute(f"CREATE ROLE {PAPEL_WEB} LOGIN PASSWORD %s NOSUPERUSER NOBYPASSRLS NOINHERIT", [SENHA_PAPEIS])
+        cursor.execute(f"CREATE ROLE {PAPEL_MIGRATION} LOGIN PASSWORD %s NOSUPERUSER NOBYPASSRLS NOINHERIT", [SENHA_PAPEIS])
         cursor.execute(f"GRANT billing_ingress_runtime TO {PAPEL_INGRESSO}")
+        cursor.execute(f"GRANT billing_functions_owner TO {PAPEL_MIGRATION} WITH SET TRUE")
         cursor.execute(f"GRANT USAGE ON SCHEMA public TO {PAPEL_INGRESSO}")
         cursor.execute(f"GRANT SELECT ON evento_cobranca TO {PAPEL_INGRESSO}")
         cursor.execute(f"GRANT SELECT, INSERT, UPDATE ON checkout_cobranca, fatura_assinatura TO {PAPEL_INGRESSO}")
@@ -61,6 +69,10 @@ def papel_ingresso(django_db_setup, django_db_blocker):
     with django_db_blocker.unblock(), connection.cursor() as cursor:
         cursor.execute(f"DROP OWNED BY {PAPEL_INGRESSO}")
         cursor.execute(f"DROP ROLE IF EXISTS {PAPEL_INGRESSO}")
+        cursor.execute(f"DROP OWNED BY {PAPEL_WEB}")
+        cursor.execute(f"DROP OWNED BY {PAPEL_MIGRATION}")
+        cursor.execute(f"DROP ROLE IF EXISTS {PAPEL_WEB}")
+        cursor.execute(f"DROP ROLE IF EXISTS {PAPEL_MIGRATION}")
 
 
 def test_modelos_respeitam_fronteira_global_e_tenantizada():
@@ -92,6 +104,49 @@ def test_configuracao_stripe_vem_do_ambiente_e_contexto_ingresso_e_registrado():
     assert dotted_path == "django_checkouts.gateways.stripe.StripeGateway"
     assert set(options) == {"api_key", "webhook_secret", "sandbox"}
     assert "billing_ingress" in settings.DJANGO_RLS["REGISTERED_CONTEXT_KEYS"]
+
+
+def test_configuracao_separa_roles_e_credencial_de_migration():
+    assert settings.BILLING_DATABASE_OWNER_ROLE == "billing_functions_owner"
+    assert settings.BILLING_INGRESS_DATABASE_ROLE == "billing_ingress_runtime"
+    assert settings.BILLING_DATABASE_OWNER_ROLE != settings.DATABASES["default"]["USER"]
+    assert settings.DATABASES["billing_migration"]["USER"] != settings.DATABASES["default"]["USER"]
+
+
+@pytest.mark.parametrize(
+    "tipo",
+    [
+        "invoice.paid",
+        "invoice.payment_succeeded",
+        "customer_subscription.updated",
+        "checkout_session.completed",
+        "a",
+        "a1.b2_c3",
+    ],
+)
+def test_tipo_evento_aceita_gramatica_canonica(tipo):
+    validar_tipo_evento(tipo)
+
+
+@pytest.mark.parametrize(
+    "tipo",
+    [
+        "",
+        "Invoice.paid",
+        "invoice-paid",
+        "invoice paid",
+        "invoice@paid.example",
+        ".invoice",
+        "invoice.",
+        "invoice..paid",
+        "invoice__paid",
+        "invoice\npaid",
+        "a" * 101,
+    ],
+)
+def test_tipo_evento_recusa_formas_ambiguas_ou_sensiveis(tipo):
+    with pytest.raises(ValidationError):
+        validar_tipo_evento(tipo)
 
 
 def test_checkout_forma_pagamento_exige_valor_zero():
@@ -194,70 +249,83 @@ def test_check_de_configuracao_malformada_retorna_error(config):
     assert isinstance(resultado[0], Error)
 
 
-def test_check_deploy_web_valida_role_segura_sem_exigir_membership():
-    cursor = patch("apps.assinaturas.subapps.faturamento.checks.connection.cursor")
-    with cursor as cursor_factory:
-        cursor_factory.return_value.__enter__.return_value.fetchone.return_value = (False, False, False, False, False, False, False, False, False)
-        with override_settings(BILLING_INGRESS_REQUIRE_MEMBERSHIP=False):
-            assert role_ingresso_check(None) == []
+def _mock_role_check(modo, owner_set, runtime_set, *, owner_outbound=False, runtime_replication=False, catalogo=(True, True, True)):
+    cursor_patch = patch("apps.assinaturas.subapps.faturamento.checks.connection.cursor")
+    cursor_factory = cursor_patch.start()
+    cursor = cursor_factory.return_value.__enter__.return_value
+    cursor.fetchall.return_value = [
+        ("billing_functions_owner", False, False, False, False, False, False, False, owner_set, owner_outbound, "app_user"),
+        ("billing_ingress_runtime", False, False, False, False, False, False, runtime_replication, runtime_set, False, "app_user"),
+    ]
+    cursor.fetchone.return_value = catalogo
+    settings_patch = override_settings(BILLING_DATABASE_MODE=modo)
+    settings_patch.enable()
+    return cursor_patch, settings_patch
 
 
-def test_check_deploy_worker_exige_membership_na_role_segura():
-    cursor = patch("apps.assinaturas.subapps.faturamento.checks.connection.cursor")
-    with cursor as cursor_factory:
-        fetchone = cursor_factory.return_value.__enter__.return_value.fetchone
-        fetchone.return_value = (False, False, False, False, False, False, False, False, False)
-        with override_settings(BILLING_INGRESS_REQUIRE_MEMBERSHIP=True):
-            assert [erro.id for erro in role_ingresso_check(None)] == ["faturamento.E004"]
-        fetchone.return_value = (False, False, False, False, False, False, False, True, False)
-        with override_settings(BILLING_INGRESS_REQUIRE_MEMBERSHIP=True):
-            assert role_ingresso_check(None) == []
-
-
-def test_check_deploy_rejeita_role_insegura_e_nome_arbitrario():
-    cursor = patch("apps.assinaturas.subapps.faturamento.checks.connection.cursor")
-    with cursor as cursor_factory:
-        cursor_factory.return_value.__enter__.return_value.fetchone.return_value = (False, False, False, False, False, False, True, True, False)
-        assert [erro.id for erro in role_ingresso_check(None)] == ["faturamento.E003"]
-    with override_settings(BILLING_INGRESS_DATABASE_ROLE="role-arbitraria"):
-        resultado = role_ingresso_check(None)
-    assert [erro.id for erro in resultado] == ["faturamento.E002"]
+@pytest.mark.parametrize(("modo", "memberships"), [("web", (False, False)), ("ingress", (False, True)), ("migration", (True, False))])
+def test_check_deploy_prova_memberships_por_modo(modo, memberships):
+    cursor_patch, settings_patch = _mock_role_check(modo, *memberships)
+    try:
+        assert role_ingresso_check(None) == []
+    finally:
+        settings_patch.disable()
+        cursor_patch.stop()
 
 
 @pytest.mark.parametrize(
-    "atributos",
+    ("kwargs", "error_id"),
     [
-        (False, False, False, False, False, False, True, True, False),
-        (False, False, False, False, False, False, False, True, True),
+        ({"modo": "web", "owner_set": True, "runtime_set": False}, "faturamento.E004"),
+        ({"modo": "ingress", "owner_set": False, "runtime_set": False}, "faturamento.E004"),
+        ({"modo": "migration", "owner_set": False, "runtime_set": False}, "faturamento.E004"),
+        ({"modo": "web", "owner_set": False, "runtime_set": False, "owner_outbound": True}, "faturamento.E003"),
+        ({"modo": "web", "owner_set": False, "runtime_set": False, "runtime_replication": True}, "faturamento.E003"),
+        ({"modo": "web", "owner_set": False, "runtime_set": False, "catalogo": (False, True, True)}, "faturamento.E006"),
     ],
 )
-def test_check_deploy_rejeita_replication_e_membership_concedida_a_role(atributos):
-    cursor = patch("apps.assinaturas.subapps.faturamento.checks.connection.cursor")
-    with cursor as cursor_factory:
-        cursor_factory.return_value.__enter__.return_value.fetchone.return_value = atributos
-        assert [erro.id for erro in role_ingresso_check(None)] == ["faturamento.E003"]
+def test_check_deploy_rejeita_grafo_ou_catalogo_inseguro(kwargs, error_id):
+    cursor_patch, settings_patch = _mock_role_check(**kwargs)
+    try:
+        assert [erro.id for erro in role_ingresso_check(None)] == [error_id]
+    finally:
+        settings_patch.disable()
+        cursor_patch.stop()
+
+
+def test_check_deploy_rejeita_nomes_e_modo_arbitrarios():
+    with override_settings(BILLING_INGRESS_DATABASE_ROLE="role-arbitraria"):
+        assert [erro.id for erro in role_ingresso_check(None)] == ["faturamento.E002"]
+    with override_settings(BILLING_DATABASE_MODE="arbitrario"):
+        assert [erro.id for erro in role_ingresso_check(None)] == ["faturamento.E005"]
 
 
 @pytest.mark.django_db(transaction=True)
-def test_check_deploy_rejeita_replication_e_membership_reais():
-    with connection.cursor() as cursor:
-        cursor.execute("ALTER ROLE billing_ingress_runtime REPLICATION")
-    try:
-        assert [erro.id for erro in role_ingresso_check(None)] == ["faturamento.E003"]
-    finally:
-        with connection.cursor() as cursor:
-            cursor.execute("ALTER ROLE billing_ingress_runtime NOREPLICATION")
+def test_roles_reais_separam_web_ingresso_e_migration(papel_ingresso):
+    database = settings.DATABASES["default"]
 
-    with connection.cursor() as cursor:
-        cursor.execute("DROP ROLE IF EXISTS billing_ingress_privilegiada_tester")
-        cursor.execute("CREATE ROLE billing_ingress_privilegiada_tester NOLOGIN BYPASSRLS")
-        cursor.execute("GRANT billing_ingress_privilegiada_tester TO billing_ingress_runtime")
-    try:
-        assert [erro.id for erro in role_ingresso_check(None)] == ["faturamento.E003"]
-    finally:
-        with connection.cursor() as cursor:
-            cursor.execute("REVOKE billing_ingress_privilegiada_tester FROM billing_ingress_runtime")
-            cursor.execute("DROP ROLE billing_ingress_privilegiada_tester")
+    def conectar(usuario, senha):
+        return psycopg2.connect(dbname=database["NAME"], user=usuario, password=senha, host=database["HOST"], port=database["PORT"])
+
+    for usuario, senha, permitida, negada in (
+        (PAPEL_WEB, SENHA_PAPEIS, None, "billing_ingress_runtime"),
+        (PAPEL_INGRESSO, SENHA_INGRESSO, "billing_ingress_runtime", "billing_functions_owner"),
+        (PAPEL_MIGRATION, SENHA_PAPEIS, "billing_functions_owner", "billing_ingress_runtime"),
+    ):
+        conexao = conectar(usuario, senha)
+        try:
+            with conexao.cursor() as cursor:
+                if permitida:
+                    cursor.execute(f"SET ROLE {permitida}")
+                    cursor.execute("RESET ROLE")
+                with pytest.raises(psycopg2.errors.InsufficientPrivilege):
+                    cursor.execute(f"SET ROLE {negada}")
+                conexao.rollback()
+                if usuario == PAPEL_WEB:
+                    with pytest.raises(psycopg2.errors.InsufficientPrivilege):
+                        cursor.execute("SET ROLE billing_functions_owner")
+        finally:
+            conexao.close()
 
 
 def test_admin_oculta_payload_urls_e_e_somente_leitura():
@@ -289,6 +357,13 @@ def test_rls_real_ingresso_roteia_uma_vez_e_tenant_isola(papel_ingresso):
                ORDER BY rolname"""
         )
         assert cursor.fetchall() == [("billing_ingress_runtime", False, False, False, False, False, False)]
+        cursor.execute(
+            """SELECT rolname, rolcanlogin, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb,
+                      rolinherit, rolreplication, current_user=rolname,
+                      EXISTS (SELECT 1 FROM pg_auth_members WHERE member=pg_roles.oid)
+               FROM pg_roles WHERE rolname='billing_functions_owner'"""
+        )
+        assert cursor.fetchone() == ("billing_functions_owner", False, False, False, False, False, False, False, False, False)
         cursor.execute(
             """SELECT table_name, privilege_type
                FROM information_schema.role_table_grants
@@ -325,7 +400,7 @@ def test_rls_real_ingresso_roteia_uma_vez_e_tenant_isola(papel_ingresso):
             ("faturamento_receber_evento", True, (False, True)),
             ("faturamento_rotear_evento", True, (False, True)),
         ]
-        assert all(linha[3] == database["USER"] for linha in funcoes)
+        assert all(linha[3] == settings.BILLING_DATABASE_OWNER_ROLE for linha in funcoes)
         cursor.execute(
             """SELECT polname, polcmd,
                       ARRAY(SELECT rolname FROM pg_roles WHERE oid=ANY(polroles) ORDER BY rolname)
@@ -335,9 +410,9 @@ def test_rls_real_ingresso_roteia_uma_vez_e_tenant_isola(papel_ingresso):
                ORDER BY polname"""
         )
         assert cursor.fetchall() == [
-            ("evento_interface_definidor_insert", "a", [database["USER"]]),
-            ("evento_interface_definidor_select", "r", [database["USER"]]),
-            ("evento_interface_definidor_update", "w", [database["USER"]]),
+            ("evento_interface_definidor_insert", "a", [settings.BILLING_DATABASE_OWNER_ROLE]),
+            ("evento_interface_definidor_select", "r", [settings.BILLING_DATABASE_OWNER_ROLE]),
+            ("evento_interface_definidor_update", "w", [settings.BILLING_DATABASE_OWNER_ROLE]),
         ]
     conexao = psycopg2.connect(
         dbname=database["NAME"],
@@ -458,6 +533,52 @@ def test_constraint_do_banco_recusa_payload_fora_do_schema():
             )
     assert evento.payload_normalizado == {"amount": 100, "currency": "BRL"}
 
+
+@pytest.mark.django_db(transaction=True)
+def test_tipo_evento_invalido_falha_em_save_bulk_e_sql():
+    organizacao = Organizacao.objects.create(nome="Tipo", slug="tipo-evento-invalido")
+    campos = {
+        "organizacao": organizacao,
+        "variante": "stripe",
+        "tipo": "customer@example.test",
+        "exige_tenant": False,
+        "payload_normalizado": {},
+        "hash_payload": "a" * 64,
+    }
+    with organizacao_atual_privilegiada(organizacao.pk):
+        with pytest.raises(IntegrityError), transaction.atomic():
+            EventoCobranca.objects.create(identificador_evento="evt-tipo-save", **campos)
+        with pytest.raises(IntegrityError), transaction.atomic():
+            EventoCobranca.objects.bulk_create([EventoCobranca(identificador_evento="evt-tipo-bulk", **campos)])
+        with pytest.raises(IntegrityError), transaction.atomic(), connection.cursor() as cursor:
+            cursor.execute(
+                """INSERT INTO evento_cobranca
+                   (created_at,last_modified_at,is_active,is_deleted,variante,identificador_evento,tipo,
+                    status,exige_tenant,tentativas_roteamento,tentativas_processamento,payload_normalizado,
+                    hash_payload,erro,organizacao_id,identificador_assinatura,identificador_checkout,identificador_fatura)
+                   VALUES (NOW(),NOW(),true,false,'stripe','evt-tipo-raw','Invoice Paid',10,false,0,0,'{}',%s,'',%s,'','','')""",
+                ["b" * 64, organizacao.pk],
+            )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_interface_ingresso_recusa_tipo_fora_da_gramatica(papel_ingresso):
+    database = settings.DATABASES["default"]
+    conexao = psycopg2.connect(dbname=database["NAME"], user=PAPEL_INGRESSO, password=SENHA_INGRESSO, host=database["HOST"], port=database["PORT"])
+    try:
+        with conexao, conexao.cursor() as cursor:
+            cursor.execute("SET ROLE billing_ingress_runtime")
+            cursor.execute("SELECT set_config('rls.tenant_id', '0', true)")
+            cursor.execute("SELECT set_config('rls.billing_ingress', '1', true)")
+            with pytest.raises(psycopg2.errors.InvalidParameterValue):
+                cursor.execute(
+                    "SELECT faturamento_receber_evento(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    ["stripe", "evt-tipo-funcao", "Invoice Paid", "", "", "", False, "{}", "c" * 64, None],
+                )
+    finally:
+        conexao.close()
+
+    organizacao = Organizacao.objects.create(nome="Payload direto", slug="payload-direto-invalido")
     invalido_bulk = EventoCobranca(
         organizacao=organizacao,
         variante="stripe",

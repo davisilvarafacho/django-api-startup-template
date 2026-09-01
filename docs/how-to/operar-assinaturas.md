@@ -10,33 +10,59 @@ de criar o contrato.
 
 ## Fazer o rollout
 
-Antes da migration de faturamento, o administrador do cluster deve
-pré-provisionar `billing_ingress_runtime` como `NOLOGIN NOSUPERUSER
-NOBYPASSRLS NOCREATEROLE NOCREATEDB NOINHERIT NOREPLICATION`. Não conceda
-nenhuma outra role a `billing_ingress_runtime`: mesmo com `NOINHERIT`, ela
-poderia usar `SET ROLE` para assumir uma role recebida. A migration não cria
-roles nem exige `CREATEROLE` ou `ALTER OWNER`, o que a torna
-compatível com PostgreSQL gerenciado. Conceda membership dessa role somente ao
-`DATABASE_USER` usado pelo worker que recebe webhooks. Esse worker deve executar
-`SET ROLE billing_ingress_runtime` antes do ingresso; processos web comuns não
-devem receber a membership. A migration concede à role somente `USAGE` no
-schema e `EXECUTE` nas interfaces estreitas `faturamento_receber_evento` e
-`faturamento_rotear_evento`; não há acesso direto às tabelas ou sequências. As
-funções são `SECURITY DEFINER`, têm `search_path` fixo e pertencem ao usuário
-isolado que aplica as migrations. Esse usuário é a fronteira administrativa do
-schema e não deve ser usado pela aplicação web nem concedido ao worker. O check
-`faturamento.E003` valida atributos e memberships da role operacional em todos
-os processos. Configure
-`BILLING_INGRESS_REQUIRE_MEMBERSHIP=True` somente no worker dedicado para que
-`faturamento.E004` valide sua membership; no processo web, o padrão `False`
-evita exigir acesso ao papel de ingresso. `BILLING_INGRESS_DATABASE_ROLE`
-documenta o nome contratual e deve permanecer `billing_ingress_runtime`.
+Antes da migration de faturamento, o administrador do banco deve
+pré-provisionar duas roles `NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE
+NOCREATEDB NOINHERIT NOREPLICATION`, ambas sem roles concedidas a elas:
+`billing_functions_owner`, dona exclusiva das interfaces `SECURITY DEFINER`, e
+`billing_ingress_runtime`, interface operacional do worker. A migration não
+executa `CREATE ROLE`, portanto o contrato funciona em PostgreSQL gerenciado.
+
+Use uma terceira credencial, exclusiva para DDL, em
+`BILLING_MIGRATION_DATABASE_USER`. Ela deve ser diferente dos usuários web e
+worker e receber `billing_functions_owner` com `SET OPTION`; em PostgreSQL 16+
+o provisionamento equivalente é:
+
+```sql
+GRANT billing_functions_owner TO app_migrator WITH SET TRUE;
+GRANT billing_ingress_runtime TO app_billing_worker WITH SET TRUE;
+```
+
+`app_migrator` continua precisando das permissões DDL usuais para o schema da
+aplicação; a membership acima acrescenta apenas a capacidade limitada de
+transferir ownership para a role NOLOGIN.
+
+Não conceda `billing_functions_owner` a web ou worker, nem
+`billing_ingress_runtime` a web ou migrator. A role owner recebe apenas os
+privilégios internos necessários às duas funções e às policies dedicadas. A
+role runtime recebe `USAGE` no schema e `EXECUTE` nas interfaces estreitas
+`faturamento_receber_evento` e `faturamento_rotear_evento`, sem grants em
+tabelas, colunas ou sequências. O worker faz `SET ROLE
+billing_ingress_runtime`; a função executa como `billing_functions_owner`.
+
+Configure `BILLING_DATABASE_MODE=web`, `ingress` ou `migration` em cada
+processo. O check de deploy prova atributos, memberships transitivas, owner das
+funções e roles das policies: web não pode assumir nenhuma role, ingress pode
+assumir somente runtime, e migration pode assumir somente owner. Use o alias
+explícito e nunca substitua automaticamente `DATABASE_USER`:
+
+```bash
+make billing-migrate
+BILLING_DATABASE_MODE=web uv run python manage.py check --deploy --tag database
+BILLING_DATABASE_MODE=ingress uv run python manage.py check --deploy --tag database
+```
+
+Não coloque senhas na linha de comando; injete
+`BILLING_MIGRATION_DATABASE_PASSWORD` pelo gerenciador de segredos. O tipo
+normalizado de evento segue a gramática
+`^[a-z][a-z0-9]*([._][a-z0-9]+)*$`, com no máximo 100 caracteres. E-mail,
+uppercase, whitespace, controles, hífen e segmentos vazios são rejeitados no
+Python, na constraint SQL e na interface de ingresso.
 
 Faça backup do banco e aplique primeiro as migrations. Antes de colocar
 instâncias da nova aplicação em tráfego, execute na mesma versão de código:
 
 ```bash
-uv run python manage.py migrate
+make billing-migrate
 uv run python manage.py sync_plans
 uv run python manage.py sync_plans --apply
 uv run python manage.py initialize_subscriptions --batch-size 100

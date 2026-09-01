@@ -14,7 +14,7 @@ from apps.assinaturas.models import (
     PropostaComercial,
 )
 
-from .payloads import normalizar_payload_evento, validar_payload_evento
+from .payloads import normalizar_payload_evento, validar_payload_evento, validar_tipo_evento
 from .policies import IngressoUpdatePolicy
 
 
@@ -193,7 +193,7 @@ class EventoCobranca(BaseTenantless, RLSModel):
     )
     variante = models.CharField(max_length=50)
     identificador_evento = models.CharField(max_length=255)
-    tipo = models.CharField(max_length=100)
+    tipo = models.CharField(max_length=100, validators=[validar_tipo_evento])
     identificador_assinatura = models.CharField(max_length=255, blank=True)
     identificador_checkout = models.CharField(max_length=255, blank=True)
     identificador_fatura = models.CharField(max_length=255, blank=True)
@@ -225,5 +225,9 @@ class EventoCobranca(BaseTenantless, RLSModel):
             models.CheckConstraint(
                 condition=~models.Q(status=StatusEventoCobranca.PROCESSADO, exige_tenant=True) | models.Q(organizacao__isnull=False),
                 name="evento_processado_exige_tenant",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(tipo__regex=r"^[a-z][a-z0-9]*([._][a-z0-9]+)*$") & ~models.Q(tipo__regex=r"[^a-z0-9._]"),
+                name="evento_tipo_normalizado",
             ),
         ]

@@ -1,6 +1,6 @@
 from django.conf import settings
 from django.core.checks import Error, Tags, register
-from django.db import connection
+from django.db import connection, connections
 
 
 @register()
@@ -13,53 +13,102 @@ def configuracao_faturamento_check(app_configs, **kwargs):
     return []
 
 
+def _erro(message, error_id, hint):
+    return [Error(message, hint=hint, id=error_id)]
+
+
 @register(Tags.database, deploy=True)
 def role_ingresso_check(app_configs, **kwargs):
-    del app_configs, kwargs
-    role = settings.BILLING_INGRESS_DATABASE_ROLE
-    if role != "billing_ingress_runtime":
-        return [Error("BILLING_INGRESS_DATABASE_ROLE deve ser billing_ingress_runtime.", id="faturamento.E002")]
-    if connection.vendor != "postgresql":
-        return []
-    with connection.cursor() as cursor:
-        cursor.execute(
-            """WITH RECURSIVE alvo AS (
-                   SELECT oid, rolcanlogin, rolsuper, rolbypassrls, rolcreaterole,
-                          rolcreatedb, rolinherit, rolreplication
-                   FROM pg_roles WHERE rolname=%s
-               ), memberships(roleid, caminho, ciclo) AS (
-                   SELECT membro.roleid, ARRAY[alvo.oid, membro.roleid], membro.roleid = alvo.oid
-                   FROM alvo JOIN pg_auth_members membro ON membro.member=alvo.oid
-                   UNION ALL
-                   SELECT membro.roleid, memberships.caminho || membro.roleid,
-                          membro.roleid = ANY(memberships.caminho)
-                   FROM memberships JOIN pg_auth_members membro ON membro.member=memberships.roleid
-                   WHERE NOT memberships.ciclo
-               )
-               SELECT rolcanlogin, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb,
-                      rolinherit, rolreplication, pg_has_role(current_user, alvo.oid, 'MEMBER'),
-                      EXISTS (SELECT 1 FROM memberships)
-               FROM alvo""",
-            [role],
+    """Prova o grafo owner/migration/web/worker e o catálogo SECURITY DEFINER."""
+    del app_configs
+    runtime = settings.BILLING_INGRESS_DATABASE_ROLE
+    owner = settings.BILLING_DATABASE_OWNER_ROLE
+    modo = settings.BILLING_DATABASE_MODE
+    if runtime != "billing_ingress_runtime" or owner != "billing_functions_owner" or runtime == owner:
+        return _erro(
+            "As roles de faturamento não correspondem ao contrato operacional.",
+            "faturamento.E002",
+            "Use roles fixas e distintas para runtime e owner.",
         )
-        atributos = cursor.fetchone()
-    if atributos is None or atributos[:7] != (False, False, False, False, False, False, False) or atributos[8]:
-        return [
-            Error(
-                "A role PostgreSQL billing_ingress_runtime está ausente ou possui atributos inseguros.",
-                hint=(
-                    "Pré-provisione-a como NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB "
-                    "NOINHERIT NOREPLICATION e não conceda outras roles a ela."
-                ),
-                id="faturamento.E003",
-            )
-        ]
-    if settings.BILLING_INGRESS_REQUIRE_MEMBERSHIP and not atributos[7]:
-        return [
-            Error(
-                "O DATABASE_USER do worker não possui membership em billing_ingress_runtime.",
-                hint="Conceda membership somente ao DATABASE_USER dedicado ao worker de ingresso.",
-                id="faturamento.E004",
-            )
-        ]
+    if modo not in {"web", "ingress", "migration"}:
+        return _erro("BILLING_DATABASE_MODE inválido.", "faturamento.E005", "Use web, ingress ou migration.")
+    aliases = kwargs.get("databases") or ("default",)
+    conexao = connections[aliases[0]] if aliases[0] != "default" else connection
+    if conexao.vendor != "postgresql":
+        return []
+
+    with conexao.cursor() as cursor:
+        cursor.execute(
+            """WITH RECURSIVE roles_alvo AS (
+                   SELECT oid, rolname, rolcanlogin, rolsuper, rolbypassrls, rolcreaterole,
+                          rolcreatedb, rolinherit, rolreplication
+                   FROM pg_roles WHERE rolname IN (%s, %s)
+               ), outbound(origem, destino, caminho, ciclo) AS (
+                   SELECT alvo.oid, membro.roleid, ARRAY[alvo.oid, membro.roleid], membro.roleid=alvo.oid
+                   FROM roles_alvo alvo JOIN pg_auth_members membro ON membro.member=alvo.oid
+                   UNION ALL
+                   SELECT outbound.origem, membro.roleid, outbound.caminho || membro.roleid,
+                          membro.roleid=ANY(outbound.caminho)
+                   FROM outbound JOIN pg_auth_members membro ON membro.member=outbound.destino
+                   WHERE NOT outbound.ciclo
+               )
+               SELECT alvo.rolname, alvo.rolcanlogin, alvo.rolsuper, alvo.rolbypassrls,
+                      alvo.rolcreaterole, alvo.rolcreatedb, alvo.rolinherit, alvo.rolreplication,
+                      pg_has_role(session_user, alvo.oid, 'SET'),
+                      EXISTS (SELECT 1 FROM outbound WHERE origem=alvo.oid), session_user
+               FROM roles_alvo alvo ORDER BY alvo.rolname""",
+            [owner, runtime],
+        )
+        rows = cursor.fetchall()
+        cursor.execute(
+            """SELECT
+                 (SELECT count(*) FROM pg_proc
+                   WHERE pronamespace='public'::regnamespace
+                     AND proname IN ('faturamento_receber_evento','faturamento_rotear_evento')) = 2
+                 AND NOT EXISTS (
+                   SELECT 1 FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner
+                   WHERE p.pronamespace='public'::regnamespace
+                     AND p.proname IN ('faturamento_receber_evento','faturamento_rotear_evento')
+                     AND (NOT p.prosecdef OR r.rolname<>%s)
+                 ),
+                 (SELECT count(*) FROM pg_policy
+                   WHERE polrelid=to_regclass('public.evento_cobranca')
+                     AND polname LIKE 'evento_interface_definidor_%%') = 3
+                 AND NOT EXISTS (
+                   SELECT 1 FROM pg_policy p
+                   WHERE p.polrelid=to_regclass('public.evento_cobranca')
+                     AND p.polname LIKE 'evento_interface_definidor_%%'
+                     AND p.polroles <> ARRAY[(SELECT oid FROM pg_roles WHERE rolname=%s)]
+                 ),
+                 (SELECT count(*) FROM pg_proc
+                   WHERE pronamespace='public'::regnamespace
+                     AND proname IN ('faturamento_receber_evento','faturamento_rotear_evento')) > 0""",
+            [owner, owner],
+        )
+        catalogo = cursor.fetchone()
+
+    if len(rows) != 2 or any(row[1:8] != (False, False, False, False, False, False, False) or row[9] for row in rows):
+        return _erro(
+            "Uma role PostgreSQL de faturamento está ausente ou possui atributos/memberships inseguros.",
+            "faturamento.E003",
+            (
+                "Pré-provisione owner e runtime como NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE "
+                "NOCREATEDB NOINHERIT NOREPLICATION, sem roles concedidas a elas."
+            ),
+        )
+    membership = {row[0]: row[8] for row in rows}
+    usuario = rows[0][10]
+    esperado = {"web": (False, False), "ingress": (False, True), "migration": (True, False)}[modo]
+    if usuario in {owner, runtime} or (membership[owner], membership[runtime]) != esperado:
+        return _erro(
+            f"A credencial do modo {modo} não respeita as memberships de faturamento.",
+            "faturamento.E004",
+            "Web não recebe roles; ingress recebe somente runtime; migration recebe somente owner com SET OPTION.",
+        )
+    if catalogo[2] and catalogo[:2] != (True, True):
+        return _erro(
+            "Owner ou policies das funções de faturamento divergem do contrato.",
+            "faturamento.E006",
+            "Reaplique a migration com a credencial DDL dedicada e não altere ownership/policies manualmente.",
+        )
     return []

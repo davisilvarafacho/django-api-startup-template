@@ -248,6 +248,19 @@ DATABASES = {
     },
 }
 
+# As migrations de faturamento transferem funções SECURITY DEFINER para uma
+# role NOLOGIN dedicada. O alias só existe no processo de migration, impedindo
+# que web/worker sequer tenham a credencial DDL disponível.
+_billing_migration_user = get_env_var("BILLING_MIGRATION_DATABASE_USER")
+_billing_migration_password = get_env_var("BILLING_MIGRATION_DATABASE_PASSWORD")
+if _billing_migration_user and _billing_migration_password:
+    DATABASES["billing_migration"] = {
+        **DATABASES["default"],
+        "USER": _billing_migration_user,
+        "PASSWORD": _billing_migration_password,
+        "TEST": {"MIRROR": "default"},
+    }
+
 
 STORAGES = {
     "staticfiles": {
@@ -390,7 +403,8 @@ CHECKOUT_VARIANTS = {
     )
 }
 BILLING_INGRESS_DATABASE_ROLE = get_env_var("BILLING_INGRESS_DATABASE_ROLE", "billing_ingress_runtime")
-BILLING_INGRESS_REQUIRE_MEMBERSHIP = get_bool_from_env("BILLING_INGRESS_REQUIRE_MEMBERSHIP", False)
+BILLING_DATABASE_OWNER_ROLE = get_env_var("BILLING_DATABASE_OWNER_ROLE", "billing_functions_owner")
+BILLING_DATABASE_MODE = get_env_var("BILLING_DATABASE_MODE", "web")
 
 
 LOGIN_REDIRECT_URL = "/admin/"

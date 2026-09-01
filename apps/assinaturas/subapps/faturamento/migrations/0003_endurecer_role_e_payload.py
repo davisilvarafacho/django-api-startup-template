@@ -1,4 +1,7 @@
-from django.db import migrations
+from django.conf import settings
+from django.db import migrations, models
+
+import apps.assinaturas.subapps.faturamento.payloads
 
 
 SQL = r"""
@@ -11,6 +14,10 @@ GRANT USAGE ON SCHEMA public TO billing_ingress_runtime;
 REVOKE ALL ON public.evento_cobranca FROM billing_ingress_runtime;
 REVOKE ALL ON public.assinatura_gateway FROM billing_ingress_runtime;
 REVOKE ALL ON SEQUENCE public.evento_cobranca_id_seq FROM billing_ingress_runtime;
+GRANT USAGE ON SCHEMA public TO __BILLING_OWNER__;
+GRANT SELECT, INSERT, UPDATE ON public.evento_cobranca TO __BILLING_OWNER__;
+GRANT SELECT ON public.assinatura_gateway TO __BILLING_OWNER__;
+GRANT USAGE, SELECT ON SEQUENCE public.evento_cobranca_id_seq TO __BILLING_OWNER__;
 
 DROP POLICY evento_ingresso_select ON public.evento_cobranca;
 DROP POLICY evento_ingresso_insert ON public.evento_cobranca;
@@ -19,22 +26,9 @@ DROP POLICY IF EXISTS evento_interface_definidor ON public.evento_cobranca;
 DROP POLICY IF EXISTS evento_interface_definidor_select ON public.evento_cobranca;
 DROP POLICY IF EXISTS evento_interface_definidor_insert ON public.evento_cobranca;
 DROP POLICY IF EXISTS evento_interface_definidor_update ON public.evento_cobranca;
-DO $policy$
-BEGIN
-    EXECUTE format(
-        'CREATE POLICY evento_interface_definidor_select ON public.evento_cobranca FOR SELECT TO %%I USING (true)',
-        current_user
-    );
-    EXECUTE format(
-        'CREATE POLICY evento_interface_definidor_insert ON public.evento_cobranca FOR INSERT TO %%I WITH CHECK (true)',
-        current_user
-    );
-    EXECUTE format(
-        'CREATE POLICY evento_interface_definidor_update ON public.evento_cobranca FOR UPDATE TO %%I USING (true) WITH CHECK (true)',
-        current_user
-    );
-END
-$policy$;
+CREATE POLICY evento_interface_definidor_select ON public.evento_cobranca FOR SELECT TO __BILLING_OWNER__ USING (true);
+CREATE POLICY evento_interface_definidor_insert ON public.evento_cobranca FOR INSERT TO __BILLING_OWNER__ WITH CHECK (true);
+CREATE POLICY evento_interface_definidor_update ON public.evento_cobranca FOR UPDATE TO __BILLING_OWNER__ USING (true) WITH CHECK (true);
 
 CREATE FUNCTION public.faturamento_receber_evento(
     text, text, text, text, text, text, boolean, jsonb, text, timestamptz
@@ -51,6 +45,7 @@ BEGIN
     IF $1 IS NULL OR length($1) NOT BETWEEN 1 AND 50
        OR $2 IS NULL OR length($2) NOT BETWEEN 1 AND 255
        OR $3 IS NULL OR length($3) NOT BETWEEN 1 AND 100
+       OR $3 !~ '^[a-z][a-z0-9]*([._][a-z0-9]+)*$' OR $3 ~ '[^a-z0-9._]'
        OR length(COALESCE($4, '')) > 255 OR length(COALESCE($5, '')) > 255
        OR length(COALESCE($6, '')) > 255 OR $7 IS NULL
        OR $8 IS NULL OR NOT public.evento_payload_valido($8)
@@ -72,6 +67,8 @@ BEGIN
     RETURN inseridas = 1;
 END;
 $$;
+ALTER FUNCTION public.faturamento_receber_evento(text, text, text, text, text, text, boolean, jsonb, text, timestamptz)
+    OWNER TO __BILLING_OWNER__;
 REVOKE ALL ON FUNCTION public.faturamento_receber_evento(text, text, text, text, text, text, boolean, jsonb, text, timestamptz) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.faturamento_receber_evento(text, text, text, text, text, text, boolean, jsonb, text, timestamptz) TO billing_ingress_runtime;
 
@@ -100,6 +97,7 @@ BEGIN
     RETURN alteradas = 1;
 END;
 $$;
+ALTER FUNCTION public.faturamento_rotear_evento(text, text) OWNER TO __BILLING_OWNER__;
 REVOKE ALL ON FUNCTION public.faturamento_rotear_evento(text, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.faturamento_rotear_evento(text, text) TO billing_ingress_runtime;
 
@@ -151,6 +149,10 @@ REVOKE ALL ON public.evento_cobranca FROM billing_ingress_runtime;
 REVOKE ALL ON public.assinatura_gateway FROM billing_ingress_runtime;
 REVOKE ALL ON SEQUENCE public.evento_cobranca_id_seq FROM billing_ingress_runtime;
 REVOKE USAGE ON SCHEMA public FROM billing_ingress_runtime;
+REVOKE ALL ON public.evento_cobranca FROM __BILLING_OWNER__;
+REVOKE ALL ON public.assinatura_gateway FROM __BILLING_OWNER__;
+REVOKE ALL ON SEQUENCE public.evento_cobranca_id_seq FROM __BILLING_OWNER__;
+REVOKE USAGE ON SCHEMA public FROM __BILLING_OWNER__;
 DROP FUNCTION IF EXISTS public.texto_timestamp_valido(text);
 CREATE OR REPLACE FUNCTION public.evento_payload_valido(jsonb) RETURNS boolean
 LANGUAGE sql IMMUTABLE STRICT AS $$
@@ -196,14 +198,48 @@ REVOKE ALL ON FUNCTION public.faturamento_rotear_evento(bigint,bigint) FROM PUBL
 
 def aplicar(apps, schema_editor):
     if schema_editor.connection.vendor == "postgresql":
-        schema_editor.execute(SQL)
+        if schema_editor.connection.alias != "billing_migration" and not settings.TESTING:
+            raise RuntimeError("A migration de faturamento deve usar o alias billing_migration dedicado.")
+        owner = settings.BILLING_DATABASE_OWNER_ROLE
+        runtime = settings.BILLING_INGRESS_DATABASE_ROLE
+        with schema_editor.connection.cursor() as cursor:
+            cursor.execute(
+                """SELECT rolcanlogin, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb,
+                          rolinherit, rolreplication,
+                          pg_has_role(current_user, oid, 'SET'), current_user,
+                          EXISTS (SELECT 1 FROM pg_auth_members WHERE member=pg_roles.oid)
+                   FROM pg_roles WHERE rolname=%s""",
+                [owner],
+            )
+            contrato = cursor.fetchone()
+        if owner == runtime or contrato is None or contrato[:7] != (False, False, False, False, False, False, False) or contrato[9]:
+            raise RuntimeError("A role owner de faturamento não existe ou possui atributos inseguros.")
+        if not contrato[7] or contrato[8] in {owner, runtime}:
+            raise RuntimeError("A credencial de migration deve ser separada e membro da role owner de faturamento.")
+        quoted_owner = schema_editor.connection.ops.quote_name(owner)
+        schema_editor.execute(SQL.replace("__BILLING_OWNER__", quoted_owner))
 
 
 def reverter(apps, schema_editor):
     if schema_editor.connection.vendor == "postgresql":
-        schema_editor.execute(REVERSE_SQL)
+        owner = schema_editor.connection.ops.quote_name(settings.BILLING_DATABASE_OWNER_ROLE)
+        schema_editor.execute(REVERSE_SQL.replace("__BILLING_OWNER__", owner))
 
 
 class Migration(migrations.Migration):
     dependencies = [("faturamento", "0002_alter_eventocobranca_payload_normalizado")]
-    operations = [migrations.RunPython(aplicar, reverter)]
+    operations = [
+        migrations.RunPython(aplicar, reverter),
+        migrations.AlterField(
+            model_name="eventocobranca",
+            name="tipo",
+            field=models.CharField(max_length=100, validators=[apps.assinaturas.subapps.faturamento.payloads.validar_tipo_evento]),
+        ),
+        migrations.AddConstraint(
+            model_name="eventocobranca",
+            constraint=models.CheckConstraint(
+                condition=models.Q(tipo__regex=r"^[a-z][a-z0-9]*([._][a-z0-9]+)*$") & ~models.Q(tipo__regex=r"[^a-z0-9._]"),
+                name="evento_tipo_normalizado",
+            ),
+        ),
+    ]

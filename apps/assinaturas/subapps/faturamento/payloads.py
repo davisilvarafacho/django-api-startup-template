@@ -22,6 +22,14 @@ _CODIGO = re.compile(r"^[A-Za-z0-9_.:-]{1,100}$")
 _REFERENCIA = re.compile(r"^[A-Za-z0-9_.:~-]{1,512}$")
 _TIMESTAMP = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]{1,6})?(Z|[+-](?:0[0-9]|1[0-4]):[0-5][0-9])$")
 _MAX_BIGINT = 9_223_372_036_854_775_807
+TIPO_EVENTO_PATTERN = r"^[a-z][a-z0-9]*([._][a-z0-9]+)*$"
+_TIPO_EVENTO = re.compile(TIPO_EVENTO_PATTERN)
+
+
+def validar_tipo_evento(tipo: object) -> None:
+    """Valida o identificador normalizado, sem PII ou separadores ambíguos."""
+    if not isinstance(tipo, str) or len(tipo) > 100 or not _TIPO_EVENTO.fullmatch(tipo):
+        raise ValidationError("Informe um tipo normalizado em lowercase, separado por ponto ou underscore.")
 
 
 def _normalizar_valor(chave: str, valor: object) -> str | int:
