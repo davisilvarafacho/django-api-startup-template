@@ -5,7 +5,9 @@ SQL = r"""
 DROP FUNCTION IF EXISTS public.faturamento_rotear_evento(bigint, bigint);
 
 GRANT USAGE ON SCHEMA public TO billing_ingress_runtime;
-GRANT SELECT, INSERT, UPDATE ON public.evento_cobranca TO billing_ingress_runtime;
+REVOKE UPDATE ON public.evento_cobranca FROM billing_ingress_runtime;
+GRANT SELECT, INSERT ON public.evento_cobranca TO billing_ingress_runtime;
+GRANT UPDATE (organizacao_id, status, last_modified_at) ON public.evento_cobranca TO billing_ingress_runtime;
 GRANT SELECT ON public.assinatura_gateway TO billing_ingress_runtime;
 GRANT USAGE, SELECT ON SEQUENCE public.evento_cobranca_id_seq TO billing_ingress_runtime;
 
@@ -13,7 +15,7 @@ DROP POLICY evento_ingresso_select ON public.evento_cobranca;
 DROP POLICY evento_ingresso_insert ON public.evento_cobranca;
 DROP POLICY evento_ingresso_update ON public.evento_cobranca;
 CREATE POLICY evento_ingresso_select ON public.evento_cobranca FOR SELECT TO billing_ingress_runtime USING (
-    ((organizacao_id IS NULL) OR id = NULLIF(current_setting('rls.billing_routing_event_id', true), '')::bigint)
+    (organizacao_id IS NULL OR (status = 20 AND last_modified_at = statement_timestamp()))
     AND NULLIF(current_setting('rls.tenant_id', true), '')::integer = 0
     AND NULLIF(current_setting('rls.billing_ingress', true), '') = '1'
 );
@@ -29,7 +31,7 @@ USING (
     AND NULLIF(current_setting('rls.billing_ingress', true), '') = '1'
 )
 WITH CHECK (
-    id = NULLIF(current_setting('rls.billing_routing_event_id', true), '')::bigint
+    status = 20
     AND organizacao_id = (
         SELECT ag.organizacao_id FROM public.assinatura_gateway ag
         WHERE ag.variante = evento_cobranca.variante
@@ -48,7 +50,6 @@ BEGIN
        OR NULLIF(current_setting('rls.billing_ingress', true), '') IS DISTINCT FROM '1' THEN
         RAISE EXCEPTION 'papel e contexto de ingresso obrigatorios' USING ERRCODE = '42501';
     END IF;
-    PERFORM set_config('rls.billing_routing_event_id', $1::text, true);
     UPDATE public.evento_cobranca SET
         organizacao_id = (
             SELECT ag.organizacao_id FROM public.assinatura_gateway ag
@@ -66,11 +67,7 @@ BEGIN
             AND ag.is_active AND NOT ag.is_deleted
       );
     GET DIAGNOSTICS alteradas = ROW_COUNT;
-    PERFORM set_config('rls.billing_routing_event_id', '', true);
     RETURN alteradas = 1;
-EXCEPTION WHEN OTHERS THEN
-    PERFORM set_config('rls.billing_routing_event_id', '', true);
-    RAISE;
 END;
 $$;
 REVOKE ALL ON FUNCTION public.faturamento_rotear_evento(bigint) FROM PUBLIC;
@@ -80,7 +77,7 @@ CREATE OR REPLACE FUNCTION public.texto_timestamp_valido(text) RETURNS boolean
 LANGUAGE plpgsql IMMUTABLE STRICT SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
  PERFORM $1::timestamptz;
- RETURN $1 ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?(Z|[+-](0[0-9]|1[0-4]):[0-5][0-9])$';
+ RETURN $1 ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]{1,6})?(Z|[+-](0[0-9]|1[0-4]):[0-5][0-9])$';
 EXCEPTION WHEN OTHERS THEN RETURN false;
 END;
 $$;

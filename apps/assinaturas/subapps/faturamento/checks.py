@@ -23,18 +23,26 @@ def role_ingresso_check(app_configs, **kwargs):
         return []
     with connection.cursor() as cursor:
         cursor.execute(
-            """SELECT rolcanlogin, rolsuper, rolbypassrls,
+            """SELECT rolcanlogin, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb, rolinherit,
                       pg_has_role(current_user, oid, 'MEMBER')
                FROM pg_roles WHERE rolname=%s""",
             [role],
         )
         atributos = cursor.fetchone()
-    if atributos != (False, False, False, True):
+    if atributos is None or atributos[:6] != (False, False, False, False, False, False):
         return [
             Error(
-                "A role PostgreSQL billing_ingress_runtime está ausente, insegura ou inacessível ao DATABASE_USER.",
-                hint="Pré-provisione-a como NOLOGIN NOSUPERUSER NOBYPASSRLS e conceda membership ao DATABASE_USER do worker de ingresso.",
+                "A role PostgreSQL billing_ingress_runtime está ausente ou possui atributos inseguros.",
+                hint="Pré-provisione-a como NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB NOINHERIT.",
                 id="faturamento.E003",
+            )
+        ]
+    if settings.BILLING_INGRESS_REQUIRE_MEMBERSHIP and not atributos[6]:
+        return [
+            Error(
+                "O DATABASE_USER do worker não possui membership em billing_ingress_runtime.",
+                hint="Conceda membership somente ao DATABASE_USER dedicado ao worker de ingresso.",
+                id="faturamento.E004",
             )
         ]
     return []

@@ -12,14 +12,19 @@ de criar o contrato.
 
 Antes da migration de faturamento, o administrador do cluster deve
 pré-provisionar `billing_ingress_runtime` como `NOLOGIN NOSUPERUSER
-NOBYPASSRLS`. A migration não cria roles nem exige `CREATEROLE`, o que a torna
+NOBYPASSRLS NOCREATEROLE NOCREATEDB NOINHERIT`. O `NOINHERIT` impede que essa
+role herde privilégios de roles que venham a ser concedidas a ela; o worker usa
+`SET ROLE` explicitamente. A migration não cria roles nem exige `CREATEROLE`, o que a torna
 compatível com PostgreSQL gerenciado. Conceda membership dessa role somente ao
 `DATABASE_USER` usado pelo worker que recebe webhooks. Esse worker deve executar
 `SET ROLE billing_ingress_runtime` antes do ingresso; processos web comuns não
 devem receber a membership. A migration concede à role apenas os privilégios
 nos objetos de faturamento necessários e o check `faturamento.E003` valida os
-atributos e a membership. `BILLING_INGRESS_DATABASE_ROLE` documenta o nome
-contratual e deve permanecer `billing_ingress_runtime`.
+atributos em todos os processos. Configure
+`BILLING_INGRESS_REQUIRE_MEMBERSHIP=True` somente no worker dedicado para que
+`faturamento.E004` valide sua membership; no processo web, o padrão `False`
+evita exigir acesso ao papel de ingresso. `BILLING_INGRESS_DATABASE_ROLE`
+documenta o nome contratual e deve permanecer `billing_ingress_runtime`.
 
 Faça backup do banco e aplique primeiro as migrations. Antes de colocar
 instâncias da nova aplicação em tráfego, execute na mesma versão de código:
