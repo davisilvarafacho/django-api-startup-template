@@ -1,6 +1,7 @@
 from dataclasses import asdict
 
 from rest_framework import status
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -29,7 +30,7 @@ from apps.assinaturas.subapps.faturamento.events import (
     EventoWebhookInvalido,
     VarianteWebhookInvalida,
 )
-from apps.assinaturas.subapps.faturamento.models import CheckoutCobranca, FinalidadeCheckout
+from apps.assinaturas.subapps.faturamento.models import CheckoutCobranca, FaturaAssinatura, FinalidadeCheckout
 from apps.assinaturas.subapps.faturamento.schema import (
     document_checkout_create,
     document_checkout_list,
@@ -41,6 +42,7 @@ from apps.assinaturas.subapps.faturamento.serializers import (
     CheckoutResponseSerializer,
     CriarCheckoutRequestSerializer,
     CriarFormaPagamentoCheckoutRequestSerializer,
+    FaturaResponseSerializer,
 )
 from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.errors import OrganizationErrorCode
@@ -179,8 +181,22 @@ class ListarCheckoutsView(_FaturamentoSessionView):
     @document_checkout_list
     def get(self, request):
         self.exigir_papel(request, Papel.ADMINISTRADOR)
-        checkouts = CheckoutCobranca.objects.order_by("-created_at", "-pk")[:100]
-        return Response(CheckoutResponseSerializer(checkouts, many=True).data)
+        checkouts = CheckoutCobranca.objects.order_by("-created_at", "-pk")
+        paginator = PageNumberPagination()
+        paginator.page_size = 50
+        page = paginator.paginate_queryset(checkouts, request, view=self)
+        return paginator.get_paginated_response(CheckoutResponseSerializer(page, many=True).data)
+
+
+@regularizacao_assinatura
+class ListarFaturasView(_FaturamentoSessionView):
+    def get(self, request):
+        self.exigir_papel(request, Papel.ADMINISTRADOR)
+        faturas = FaturaAssinatura.objects.order_by("-created_at", "-pk")
+        paginator = PageNumberPagination()
+        paginator.page_size = 50
+        page = paginator.paginate_queryset(faturas, request, view=self)
+        return paginator.get_paginated_response(FaturaResponseSerializer(page, many=True).data)
 
 
 @regularizacao_assinatura

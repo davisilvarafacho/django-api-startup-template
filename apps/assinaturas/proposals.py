@@ -21,6 +21,7 @@ from apps.assinaturas.models import (
     ModoAtivacaoProposta,
     Periodicidade,
     PropostaComercial,
+    StatusFinanceiro,
     StatusPropostaComercial,
     VersaoPlano,
 )
@@ -528,3 +529,44 @@ class Propostas:
             "carencia_pagamento_dias",
             "carencia_excesso_seats_dias",
         )
+
+    @classmethod
+    def ativar_pagamento_confirmado(
+        cls,
+        proposta: PropostaComercial,
+        *,
+        revisao_esperada: int,
+        evento_gateway: str,
+        agora: datetime | None = None,
+    ) -> AssinaturaOrganizacao:
+        """Ativa uma proposta paga somente a partir da confirmação autoritativa do faturamento."""
+        if not evento_gateway.strip():
+            raise ValueError("A ativação paga exige identificador de evento do gateway.")
+        agora = agora or timezone.now()
+        with cls._proposta_bloqueada(proposta) as bloqueada:
+            if bloqueada.modo_ativacao != ModoAtivacaoProposta.PAGAMENTO:
+                raise ConflitoPropostaComercial("A confirmação paga exige proposta com ativação por pagamento.")
+            cls._validar_vigente(bloqueada, agora=agora)
+            if bloqueada.status == StatusPropostaComercial.ATIVADA:
+                if revisao_esperada not in (bloqueada.revisao, bloqueada.revisao - 1):
+                    raise ConflitoPropostaComercial("A revisão da proposta mudou.")
+                return _criar_assinatura_enterprise_de_proposta(
+                    proposta_comercial=bloqueada,
+                    agora=agora,
+                    modo_esperado=ModoAtivacaoProposta.PAGAMENTO,
+                    status_financeiro=StatusFinanceiro.REGULAR,
+                )
+            cls._validar_revisao(bloqueada, revisao_esperada)
+            if bloqueada.status != StatusPropostaComercial.ACEITA:
+                raise ConflitoPropostaComercial("Somente proposta aceita pode ser ativada por pagamento.")
+            assinatura = _criar_assinatura_enterprise_de_proposta(
+                proposta_comercial=bloqueada,
+                agora=agora,
+                modo_esperado=ModoAtivacaoProposta.PAGAMENTO,
+                status_financeiro=StatusFinanceiro.REGULAR,
+            )
+            bloqueada.status = StatusPropostaComercial.ATIVADA
+            bloqueada.ativada_em = agora
+            bloqueada.revisao += 1
+            bloqueada._salvar_transicao(update_fields=["status", "ativada_em", "revisao", "last_modified_at"])
+            return assinatura

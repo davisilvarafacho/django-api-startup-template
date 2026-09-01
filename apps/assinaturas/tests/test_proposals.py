@@ -328,7 +328,7 @@ def test_ativacao_contratual_substitui_contrato_em_uma_transacao_e_audita_operad
     assert proposta.justificativa_ativacao == "Contrato enterprise assinado"
 
 
-def test_t10_nao_expoe_capacidade_local_para_ativar_aceite_pago():
+def test_confirmacao_autoritativa_ativa_proposta_paga_sem_bypass_publico_da_factory():
     agora = timezone.now()
     organizacao = Organizacao.objects.create(nome="Pagamento confirmado", slug="proposta-pagamento-confirmado")
     proprietario = criar_usuario(email="owner-pagamento-confirmado@example.com")
@@ -340,8 +340,20 @@ def test_t10_nao_expoe_capacidade_local_para_ativar_aceite_pago():
     with organizacao_atual_privilegiada(organizacao.pk):
         assert AssinaturaOrganizacao.objects.get(status=StatusAssinatura.ATIVA).pk == anterior.pk
 
-    assert "ativar_pagamento_confirmado" not in Propostas.__dict__
-    assert aceite.proposta.status == StatusPropostaComercial.ACEITA
+    nova = Propostas.ativar_pagamento_confirmado(
+        aceite.proposta,
+        revisao_esperada=aceite.proposta.revisao,
+        evento_gateway="evt_paid_1",
+        agora=agora,
+    )
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        anterior.refresh_from_db()
+        aceite.proposta.refresh_from_db()
+        assert anterior.status == StatusAssinatura.ENCERRADA
+        assert nova.proposta_comercial_id == aceite.proposta.pk
+        assert nova.status_financeiro == StatusFinanceiro.REGULAR
+        assert aceite.proposta.status == StatusPropostaComercial.ATIVADA
 
 
 def test_assinaturas_nao_expoe_criacao_enterprise_fora_da_ativacao_nominal():

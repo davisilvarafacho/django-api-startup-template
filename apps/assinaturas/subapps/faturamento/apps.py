@@ -7,4 +7,7 @@ class FaturamentoConfig(AppConfig):
     verbose_name = "Faturamento"
 
     def ready(self):
-        from . import checks  # noqa: F401
+        from . import (
+            checks,  # noqa: F401
+            tasks,  # noqa: F401
+        )

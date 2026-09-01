@@ -31,3 +31,16 @@ class CheckoutResponseSerializer(serializers.Serializer):
     valor_esperado_centavos = serializers.IntegerField()
     moeda_esperada = serializers.CharField()
     created_at = serializers.DateTimeField()
+
+
+class FaturaResponseSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    status = serializers.IntegerField()
+    motivo = serializers.CharField()
+    total_centavos = serializers.IntegerField()
+    moeda = serializers.CharField()
+    vencimento_em = serializers.DateTimeField(allow_null=True)
+    paga_em = serializers.DateTimeField(allow_null=True)
+    tentativas = serializers.IntegerField()
+    url_hospedada = serializers.URLField(allow_blank=True)
+    created_at = serializers.DateTimeField()

@@ -739,7 +739,17 @@ CELERY_BEAT_SCHEDULE = {
         "task": "assinaturas.reconciliar_carencias_seats",
         "schedule": crontab(minute="*/15"),
     },
+    "recover-billing-events": {
+        "task": "faturamento.recuperar_eventos_cobranca",
+        "schedule": crontab(minute="*/5"),
+    },
+    "reconcile-stripe-events": {
+        "task": "faturamento.reconciliar_eventos_stripe",
+        "schedule": crontab(minute="*/15"),
+    },
 }
+
+BILLING_RECONCILIATION_WINDOW_MINUTES = 20
 
 # sm testes, executa as tasks de forma síncrona e propaga exceções.
 CELERY_TASK_ALWAYS_EAGER = TESTING

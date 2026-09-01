@@ -599,14 +599,12 @@ def _condicao_estado_datas_proposta() -> models.Q:
         )
         & sem_ativacao_ou_terminal
     )
-    ativada = models.Q(
+    ativada_base = models.Q(
         status=StatusPropostaComercial.ATIVADA,
-        modo_ativacao=ModoAtivacaoProposta.CONTRATUAL,
         enviada_em__isnull=False,
         aceita_em__isnull=False,
         aceita_por__isnull=False,
         ativada_em__isnull=False,
-        ativada_por__isnull=False,
         enviada_em__lte=models.F("aceita_em"),
         aceita_em__lte=models.F("ativada_em"),
         ativada_em__lt=models.F("valida_ate"),
@@ -615,7 +613,11 @@ def _condicao_estado_datas_proposta() -> models.Q:
         expirada_em__isnull=True,
         cancelada_em__isnull=True,
         cancelada_por__isnull=True,
-    ) & ~models.Q(justificativa_ativacao="")
+    )
+    ativada = ativada_base & (
+        (models.Q(modo_ativacao=ModoAtivacaoProposta.CONTRATUAL, ativada_por__isnull=False) & ~models.Q(justificativa_ativacao=""))
+        | models.Q(modo_ativacao=ModoAtivacaoProposta.PAGAMENTO, ativada_por__isnull=True, justificativa_ativacao="")
+    )
     recusada = models.Q(
         status=StatusPropostaComercial.RECUSADA,
         enviada_em__isnull=False,

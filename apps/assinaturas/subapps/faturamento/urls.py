@@ -6,6 +6,7 @@ from apps.assinaturas.subapps.faturamento.views import (
     CriarCheckoutAssinaturaView,
     CriarCheckoutFormaPagamentoView,
     ListarCheckoutsView,
+    ListarFaturasView,
     WebhookFaturamentoView,
 )
 
@@ -14,6 +15,7 @@ router = DefaultRouter()
 urlpatterns = [
     path("assinatura/checkouts/", CriarCheckoutAssinaturaView.as_view(), name="criar-checkout-assinatura"),
     path("faturamento/checkouts/", ListarCheckoutsView.as_view(), name="listar-checkouts-faturamento"),
+    path("faturamento/faturas/", ListarFaturasView.as_view(), name="listar-faturas-faturamento"),
     path(
         "faturamento/forma-pagamento/checkouts/",
         CriarCheckoutFormaPagamentoView.as_view(),

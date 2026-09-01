@@ -354,6 +354,69 @@ class Assinaturas:
             return bloqueada
 
     @classmethod
+    def confirmar_contratacao_paga(
+        cls,
+        assinatura: AssinaturaOrganizacao,
+        *,
+        agora: datetime,
+    ) -> AssinaturaOrganizacao:
+        """Ativa idempotentemente um contrato pendente após confirmação autoritativa."""
+        cls._validar_transicao_temporal(assinatura, agora)
+        using = assinatura._state.db or "default"
+        with transaction.atomic(using=using):
+            cls._bloquear_organizacao(assinatura.organizacao_id, using=using)
+            bloqueada = AssinaturaOrganizacao.all_objects.using(using).select_for_update().get(pk=assinatura.pk)
+            if bloqueada.status == StatusAssinatura.ATIVA and bloqueada.status_financeiro == StatusFinanceiro.REGULAR:
+                return bloqueada
+            if bloqueada.status != StatusAssinatura.PENDENTE or bloqueada.status_financeiro != StatusFinanceiro.PENDENTE:
+                raise ConflitoRevisaoAssinatura("Somente contratação pendente pode ser confirmada por pagamento.")
+            bloqueada.status = StatusAssinatura.ATIVA
+            bloqueada.status_financeiro = StatusFinanceiro.REGULAR
+            bloqueada.revisao += 1
+            bloqueada._salvar_transicao(
+                using=using,
+                update_fields=["status", "status_financeiro", "revisao", "last_modified_at"],
+            )
+            return bloqueada
+
+    @classmethod
+    def sincronizar_estado_gateway(
+        cls,
+        assinatura: AssinaturaOrganizacao,
+        *,
+        status_financeiro: StatusFinanceiro | None,
+        periodo_iniciado_em: datetime | None,
+        periodo_termina_em: datetime | None,
+        cancelamento_agendado_para: datetime | None,
+        agora: datetime,
+    ) -> AssinaturaOrganizacao:
+        """Aplica um snapshot remoto validado sem permitir regressão temporal."""
+        cls._validar_transicao_temporal(assinatura, agora)
+        using = assinatura._state.db or "default"
+        with transaction.atomic(using=using):
+            cls._bloquear_organizacao(assinatura.organizacao_id, using=using)
+            bloqueada = AssinaturaOrganizacao.all_objects.using(using).select_for_update().get(pk=assinatura.pk)
+            campos: list[str] = []
+            for campo, valor in (
+                ("periodo_atual_iniciado_em", periodo_iniciado_em),
+                ("periodo_atual_termina_em", periodo_termina_em),
+                ("cancelamento_agendado_para", cancelamento_agendado_para),
+            ):
+                atual = getattr(bloqueada, campo)
+                if valor is not None and (atual is None or valor >= atual):
+                    setattr(bloqueada, campo, valor)
+                    campos.append(campo)
+            if campos:
+                bloqueada.revisao += 1
+                bloqueada._salvar_transicao(using=using, update_fields=[*campos, "revisao", "last_modified_at"])
+            if status_financeiro is not None and bloqueada.status == StatusAssinatura.ATIVA:
+                if status_financeiro == StatusFinanceiro.REGULAR:
+                    return cls.registrar_pagamento_confirmado(bloqueada, agora=agora)
+                if status_financeiro == StatusFinanceiro.INADIMPLENTE:
+                    return cls.registrar_falha_renovacao(bloqueada, agora=agora)
+            return bloqueada
+
+    @classmethod
     def registrar_pagamento_confirmado(
         cls,
         assinatura: AssinaturaOrganizacao,
@@ -1711,6 +1774,8 @@ def _criar_assinatura_enterprise_de_proposta(
     *,
     proposta_comercial: PropostaComercial,
     agora: datetime,
+    modo_esperado: ModoAtivacaoProposta = ModoAtivacaoProposta.CONTRATUAL,
+    status_financeiro: StatusFinanceiro = StatusFinanceiro.ISENTO,
 ) -> AssinaturaOrganizacao:
     """Cria o ciclo enterprise exclusivamente para a ativação nominal."""
     from apps.organizacoes.context import organizacao_atual_privilegiada
@@ -1729,8 +1794,8 @@ def _criar_assinatura_enterprise_de_proposta(
             proposta = PropostaComercial.all_objects.using(using).select_for_update().get(pk=proposta_comercial.pk)
             if proposta.organizacao_id != organizacao.pk:
                 raise ConflitoRevisaoAssinatura("A proposta pertence a outra organização.")
-            if proposta.modo_ativacao != ModoAtivacaoProposta.CONTRATUAL:
-                raise ConflitoRevisaoAssinatura("A criação enterprise exige proposta contratual.")
+            if proposta.modo_ativacao != modo_esperado:
+                raise ConflitoRevisaoAssinatura("A criação enterprise exige o modo de ativação confirmado.")
             if proposta.valida_ate <= agora:
                 raise ConflitoRevisaoAssinatura("A proposta enterprise expirou.")
             if proposta.status not in (StatusPropostaComercial.ACEITA, StatusPropostaComercial.ATIVADA):
@@ -1744,7 +1809,7 @@ def _criar_assinatura_enterprise_de_proposta(
                     existente.versao_plano_id is not None
                     or existente.proposta_comercial_id != proposta.pk
                     or existente.status != StatusAssinatura.ATIVA
-                    or existente.status_financeiro != StatusFinanceiro.ISENTO
+                    or existente.status_financeiro != status_financeiro
                 ):
                     raise ConflitoIdempotenciaAssinatura("O ciclo enterprise existente diverge da proposta contratual.")
                 return existente
@@ -1787,7 +1852,7 @@ def _criar_assinatura_enterprise_de_proposta(
                 proposta_comercial=proposta,
                 termos=termos,
                 status=StatusAssinatura.ATIVA,
-                status_financeiro=StatusFinanceiro.ISENTO,
+                status_financeiro=status_financeiro,
                 politica_trial=None,
                 trial_termina_em=None,
                 chave_idempotencia=chave,
