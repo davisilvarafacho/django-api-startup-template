@@ -2,8 +2,8 @@ from django.urls import include, path
 
 from rest_framework.routers import DefaultRouter
 
+from apps.assinaturas.subapps.faturamento.views import AceitarPropostaView
 from apps.assinaturas.views import (
-    AceitarPropostaView,
     AlteracoesAssinaturaView,
     AssinaturaView,
     CancelamentoAssinaturaView,

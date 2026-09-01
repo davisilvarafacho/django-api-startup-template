@@ -1,3 +1,5 @@
+from dataclasses import asdict
+
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -5,9 +7,13 @@ from rest_framework.views import APIView
 
 from apps.api.autenticacao.permissions import TokenScopePermission
 from apps.api.autenticacao.recent_auth import RecentAuthenticationPermission, require_recent_auth
-from apps.api.core.errors import APIError, CoreErrorCode
+from apps.api.core.errors import APIError, CoreErrorCode, ValidationErrorCode
 from apps.api.core.route_markers import io_externo_sem_transacao, regularizacao_assinatura
-from apps.assinaturas.models import AlteracaoAssinatura, PropostaComercial
+from apps.assinaturas.errors import BillingErrorCode
+from apps.assinaturas.models import AlteracaoAssinatura, AssinaturaOrganizacao, ModoAtivacaoProposta, PropostaComercial
+from apps.assinaturas.proposals import ConflitoPropostaComercial, Propostas
+from apps.assinaturas.schema import document_proposal_accept
+from apps.assinaturas.serializers import AceitarPropostaRequestSerializer, AceitarPropostaResponseSerializer
 from apps.assinaturas.subapps.faturamento.checkouts import (
     CheckoutIndisponivel,
     CheckoutPendente,
@@ -51,6 +57,54 @@ def _executar(criacao):
         raise APIError(ErrosFaturamento.CHECKOUT_INCERTO, status_code=status.HTTP_503_SERVICE_UNAVAILABLE) from exc
     except ConflitoCheckout as exc:
         raise APIError(ErrosFaturamento.CHECKOUT_CONFLITO, status_code=status.HTTP_409_CONFLICT) from exc
+
+
+@regularizacao_assinatura
+@io_externo_sem_transacao
+class AceitarPropostaView(_FaturamentoSessionView):
+    """Aceita proposta e cria checkout pago sem vazar finanças no módulo principal."""
+
+    @document_proposal_accept
+    @require_recent_auth()
+    def post(self, request, id: int):
+        serializer = AceitarPropostaRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.exigir_papel(request, Papel.PROPRIETARIO)
+        with organizacao_atual_privilegiada(request.organizacao_id):
+            proposta = PropostaComercial.objects.filter(pk=id, organizacao_id=request.organizacao_id).first()
+        if proposta is None:
+            raise APIError(CoreErrorCode.NOT_FOUND, status_code=status.HTTP_404_NOT_FOUND)
+        chave = serializer.validated_data.get("chave_idempotencia")
+        if proposta.modo_ativacao == ModoAtivacaoProposta.PAGAMENTO and not chave:
+            raise APIError(ValidationErrorCode.INVALID, status_code=status.HTTP_400_BAD_REQUEST)
+        try:
+            resultado = Propostas.aceitar(proposta, ator=request.user, revisao_esperada=serializer.validated_data["revisao_esperada"])
+        except ConflitoPropostaComercial as exc:
+            raise APIError(BillingErrorCode.PROPOSAL_INVALID, status_code=status.HTTP_409_CONFLICT) from exc
+        proposta = resultado.proposta
+        preparacao = asdict(resultado.preparacao_checkout) if resultado.preparacao_checkout is not None else None
+        if preparacao is not None:
+            assert chave is not None
+            with organizacao_atual_privilegiada(request.organizacao_id):
+                assinatura = AssinaturaOrganizacao.objects.get(organizacao_id=request.organizacao_id)
+            checkout = _executar(
+                CriacaoCheckout(
+                    assinatura=assinatura,
+                    finalidade=FinalidadeCheckout.PROPOSTA,
+                    chave_idempotencia=chave,
+                    proposta=proposta,
+                    ator=request.user,
+                )
+            ).checkout
+            preparacao.update(checkout_id=checkout.pk, checkout_url=checkout.url)
+        payload = {
+            "id": proposta.pk,
+            "status": proposta.status,
+            "revisao": proposta.revisao,
+            "modo_ativacao": proposta.modo_ativacao,
+            "preparacao_checkout": preparacao,
+        }
+        return Response(AceitarPropostaResponseSerializer(payload).data)
 
 
 @regularizacao_assinatura

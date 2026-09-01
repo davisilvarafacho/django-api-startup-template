@@ -1,11 +1,13 @@
 """Contrato OpenAPI literal do aceite de proposta."""
 
+from django.urls import resolve
+
 import pytest
 from drf_spectacular.generators import SchemaGenerator
 
 from apps.api.core.errors import discover_error_codes
 from apps.assinaturas import urls as assinaturas_urls
-from apps.assinaturas.views import AceitarPropostaView
+from apps.assinaturas.subapps.faturamento.views import AceitarPropostaView
 
 
 @pytest.fixture(autouse=True)
@@ -41,3 +43,9 @@ def test_aceite_documenta_body_resposta_e_erros_reais():
     assert "organizations.tenant_mismatch" in post["responses"]["409"]["description"]
     assert "organizations.header_required" in post["responses"]["422"]["description"]
     assert "billing.subscription_required" in post["responses"]["503"]["description"]
+
+
+def test_rota_de_aceite_e_owned_pelo_subapp_faturamento():
+    view = resolve("/assinatura/propostas/1/aceitar/").func.view_class
+    assert view is AceitarPropostaView
+    assert view.__module__ == "apps.assinaturas.subapps.faturamento.views"

@@ -17,8 +17,8 @@ from apps.assinaturas.catalogs import PLANOS_BOOTSTRAP, CatalogoPlanos, sincroni
 from apps.assinaturas.features import CATALOGO_RECURSOS, ValoresRecursos
 from apps.assinaturas.models import ModoAtivacaoProposta, Periodicidade, StatusPropostaComercial
 from apps.assinaturas.proposals import CriacaoPropostaComercial, Propostas
+from apps.assinaturas.subapps.faturamento.views import AceitarPropostaView
 from apps.assinaturas.subscriptions import Assinaturas, TermosAssinatura
-from apps.assinaturas.views import AceitarPropostaView
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
 from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
@@ -78,10 +78,10 @@ def test_proprietario_aceita_proposta_com_revisao_e_recebe_checkout_autoritativo
     proprietario = criar_usuario(email="owner-proposta-api@example.com")
     organizacao = _organizacao_do(proprietario, nome="Proposta API", slug="proposta-api")
     proposta = _proposta_enviada(organizacao)
-    from apps.assinaturas.subapps.faturamento import checkouts as billing_checkouts
+    from apps.assinaturas.subapps.faturamento import views as billing_views
 
     monkeypatch.setattr(
-        billing_checkouts,
+        billing_views,
         "criar_checkout",
         lambda criacao: SimpleNamespace(checkout=SimpleNamespace(pk=91, url="https://checkout.example/proposta")),
     )

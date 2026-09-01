@@ -106,6 +106,7 @@ class CheckoutCobranca(Base):
     chave_idempotencia = models.CharField(max_length=120)
     operacao_chave = models.CharField(max_length=180)
     snapshot_hash = models.CharField(max_length=64)
+    erro_codigo = models.CharField(max_length=64, blank=True)
     variante = models.CharField(max_length=50)
     identificador_externo = models.CharField(max_length=255, null=True, blank=True)
     url = models.URLField(max_length=2048, blank=True)

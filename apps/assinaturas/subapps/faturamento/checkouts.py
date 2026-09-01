@@ -189,10 +189,24 @@ class CheckoutsCobranca:
 
                 proposta = PropostaComercial.all_objects.select_for_update(of=("self",)).get(pk=criacao.proposta.pk)
             operacao_chave = cls._operacao_chave(criacao, assinatura, alteracao=alteracao, proposta=proposta)
-            tentativa_em_voo = CheckoutCobranca.objects.filter(
-                chave_idempotencia=criacao.chave_idempotencia,
-                status=StatusCheckout.AGUARDANDO_GATEWAY,
-            ).exists()
+            existente_previo = CheckoutCobranca.objects.filter(chave_idempotencia=criacao.chave_idempotencia).first()
+            if existente_previo is not None:
+                identidade_igual = (
+                    existente_previo.operacao_chave == operacao_chave
+                    and existente_previo.assinatura_id == assinatura.pk
+                    and existente_previo.alteracao_id == getattr(alteracao, "pk", None)
+                    and existente_previo.proposta_id == getattr(proposta, "pk", None)
+                    and existente_previo.finalidade == criacao.finalidade
+                    and existente_previo.variante == criacao.variante
+                )
+                total_previo, moeda_previa, _, valores_previos = cls._snapshot(criacao, assinatura, alteracao=alteracao, proposta=proposta)
+                hash_atual = cls._snapshot_hash(
+                    criacao, assinatura, total_previo, moeda_previa, valores_previos, alteracao=alteracao, proposta=proposta
+                )
+                if not identidade_igual or existente_previo.snapshot_hash != hash_atual:
+                    raise ConflitoCheckout("A chave idempotente já foi usada para outro estado ou conteúdo.")
+                if existente_previo.status == StatusCheckout.AGUARDANDO_GATEWAY:
+                    raise CheckoutPendente("O checkout desta operação ainda está sendo criado.")
             outra_ativa = (
                 CheckoutCobranca.objects.filter(
                     operacao_chave=operacao_chave,
@@ -201,7 +215,7 @@ class CheckoutsCobranca:
                 .exclude(chave_idempotencia=criacao.chave_idempotencia)
                 .exists()
             )
-            if tentativa_em_voo or outra_ativa:
+            if outra_ativa:
                 raise CheckoutPendente("Já existe checkout pendente para esta operação.")
             cls._validar_finalidade(criacao, assinatura, alteracao=alteracao, proposta=proposta)
             total, moeda, preco, valores = cls._snapshot(criacao, assinatura, alteracao=alteracao, proposta=proposta)
@@ -270,6 +284,7 @@ class CheckoutsCobranca:
 
     @classmethod
     def confirmar(cls, preparacao: _Preparacao, remoto: Checkout | Setup, *, referencia: str) -> CheckoutCobranca:
+        falha_incerta: FalhaCheckoutIncerta | None = None
         with organizacao_atual_privilegiada(preparacao.organizacao_id):
             ponte = CheckoutCobranca.objects.only("assinatura_id").get(pk=preparacao.checkout_id)
             assinatura = AssinaturaOrganizacao.all_objects.select_for_update(of=("self",)).get(pk=ponte.assinatura_id)
@@ -295,24 +310,34 @@ class CheckoutsCobranca:
             try:
                 cls._validar_finalidade(intencao, assinatura, alteracao=alteracao, proposta=proposta, confirmacao=True)
             except ConflitoCheckout as exc:
-                raise FalhaCheckoutIncerta("A operação deixou de ser vigente; exige conciliação.") from exc
+                falha_incerta = FalhaCheckoutIncerta("A operação deixou de ser vigente; exige conciliação.")
+                falha_incerta.__cause__ = exc
             total, moeda, _, valores = cls._snapshot(intencao, assinatura, alteracao=alteracao, proposta=proposta)
             atual = cls._snapshot_hash(intencao, assinatura, total, moeda, valores, alteracao=alteracao, proposta=proposta)
-            if atual != checkout.snapshot_hash:
-                raise FalhaCheckoutIncerta("A operação mudou durante a chamada; o checkout exige conciliação.")
-            cls._validar_resultado(preparacao, checkout, remoto, referencia=referencia)
-            if not isinstance(remoto, Setup) and (
-                remoto.amount_total != checkout.valor_esperado_centavos or remoto.currency != checkout.moeda_esperada
-            ):
-                checkout.status = StatusCheckout.FALHOU
-                checkout.save(update_fields=["status", "last_modified_at"])
-                raise ConflitoCheckout("O total normalizado do gateway diverge do snapshot local.")
-            checkout.status = StatusCheckout.ABERTO
-            checkout.identificador_externo = remoto.external_id
-            checkout.url = remoto.url or ""
-            checkout.expira_em = remoto.expires_at
-            checkout.save(update_fields=["status", "identificador_externo", "url", "expira_em", "last_modified_at"])
-            return checkout
+            if falha_incerta is not None or atual != checkout.snapshot_hash:
+                checkout.erro_codigo = "stale_after_io"
+                checkout.save(update_fields=["erro_codigo", "last_modified_at"])
+                falha_incerta = falha_incerta or FalhaCheckoutIncerta("A operação mudou durante a chamada; o checkout exige conciliação.")
+            else:
+                try:
+                    cls._validar_resultado(preparacao, checkout, remoto, referencia=referencia)
+                    if not isinstance(remoto, Setup) and (
+                        remoto.amount_total != checkout.valor_esperado_centavos or remoto.currency != checkout.moeda_esperada
+                    ):
+                        raise FalhaCheckoutIncerta("O total normalizado do gateway diverge do snapshot local; exige conciliação.")
+                except FalhaCheckoutIncerta as exc:
+                    checkout.erro_codigo = "remote_mismatch"
+                    checkout.save(update_fields=["erro_codigo", "last_modified_at"])
+                    falha_incerta = exc
+                else:
+                    checkout.status = StatusCheckout.ABERTO
+                    checkout.identificador_externo = remoto.external_id
+                    checkout.url = remoto.url or ""
+                    checkout.expira_em = remoto.expires_at
+                    checkout.save(update_fields=["status", "identificador_externo", "url", "expira_em", "last_modified_at"])
+        if falha_incerta is not None:
+            raise falha_incerta
+        return checkout
 
     @classmethod
     def falhar(cls, preparacao: _Preparacao, *, incerta: bool) -> None:
@@ -320,6 +345,9 @@ class CheckoutsCobranca:
             ponte = CheckoutCobranca.objects.only("assinatura_id").get(pk=preparacao.checkout_id)
             assinatura = AssinaturaOrganizacao.all_objects.select_for_update(of=("self",)).get(pk=ponte.assinatura_id)
             checkout = CheckoutCobranca.objects.select_for_update().get(pk=preparacao.checkout_id)
+            if checkout.status == StatusCheckout.AGUARDANDO_GATEWAY and incerta:
+                checkout.erro_codigo = "gateway_uncertain"
+                checkout.save(update_fields=["erro_codigo", "last_modified_at"])
             if checkout.status == StatusCheckout.AGUARDANDO_GATEWAY and not incerta:
                 alteracao = None
                 if checkout.alteracao_id:
@@ -337,17 +365,19 @@ class CheckoutsCobranca:
                     proposta=proposta,
                     variante=checkout.variante,
                 )
+                dominio_vigente = True
                 try:
                     cls._validar_finalidade(intencao, assinatura, alteracao=alteracao, proposta=proposta, confirmacao=True)
                 except ConflitoCheckout:
-                    return
+                    dominio_vigente = False
                 total, moeda, _, valores = cls._snapshot(intencao, assinatura, alteracao=alteracao, proposta=proposta)
                 atual = cls._snapshot_hash(intencao, assinatura, total, moeda, valores, alteracao=alteracao, proposta=proposta)
                 if atual != checkout.snapshot_hash:
-                    return
+                    dominio_vigente = False
                 checkout.status = StatusCheckout.FALHOU
-                checkout.save(update_fields=["status", "last_modified_at"])
-                if alteracao is not None:
+                checkout.erro_codigo = "gateway_rejected"
+                checkout.save(update_fields=["status", "erro_codigo", "last_modified_at"])
+                if dominio_vigente and alteracao is not None:
                     Assinaturas.falhar_alteracao(alteracao, codigo="checkout_failed", mensagem="O gateway recusou o checkout.")
 
     @staticmethod

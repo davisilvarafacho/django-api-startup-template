@@ -231,6 +231,42 @@ def test_falha_conhecida_termina_e_falha_incerta_preserva_para_conciliacao(error
         checkout = CheckoutCobranca.objects.get(chave_idempotencia=f"failure-{error_type.__name__}")
     assert checkout.status == expected_status
     assert len(gateway.commands) == 1
+    if error_type is GatewayPermanentError:
+        novo_gateway = FakeCheckoutGateway(results={CreateCheckout: _checkout_result}, capabilities=_capabilities(), variant="stripe")
+        novo = CheckoutsCobranca.criar(
+            CriacaoCheckout(assinatura=assinatura, finalidade=FinalidadeCheckout.CONTRATACAO, chave_idempotencia="apos-falha-conhecida"),
+            client=CheckoutClient(novo_gateway),
+        )
+        assert novo.checkout.status == StatusCheckout.ABERTO
+        assert len(novo_gateway.commands) == 1
+
+
+def test_falha_permanente_terminaliza_local_sem_mutar_dominio_stale():
+    organizacao, assinatura, preco = _cenario()
+    for componente, external_id in ((ComponentePreco.BASE, "price_base"), (ComponentePreco.SEAT, "price_seat")):
+        ReferenciaPrecoGateway.objects.create(preco_plano=preco, variante="stripe", componente=componente, identificador_externo=external_id)
+
+    def falhar_apos_encerrar(_command):
+        from apps.assinaturas.subscriptions import Assinaturas
+
+        with organizacao_atual_privilegiada(organizacao.pk):
+            Assinaturas.solicitar_encerramento(organizacao, agora=datetime.now(UTC), revisao_esperada=assinatura.revisao)
+        raise GatewayPermanentError("recusado", gateway="fake", variant="stripe")
+
+    gateway = FakeCheckoutGateway(results={CreateCheckout: falhar_apos_encerrar}, capabilities=_capabilities(), variant="stripe")
+    with pytest.raises(ConflitoCheckout) as capturada:
+        CheckoutsCobranca.criar(
+            CriacaoCheckout(assinatura=assinatura, finalidade=FinalidadeCheckout.CONTRATACAO, chave_idempotencia="permanent-stale"),
+            client=CheckoutClient(gateway),
+        )
+    with organizacao_atual_privilegiada(organizacao.pk):
+        checkout = CheckoutCobranca.objects.get(chave_idempotencia="permanent-stale")
+        assinatura.refresh_from_db()
+    assert type(capturada.value) is ConflitoCheckout
+    assert checkout.status == StatusCheckout.FALHOU
+    assert checkout.erro_codigo == "gateway_rejected"
+    assert assinatura.status == StatusAssinatura.ENCERRADA
+    assert assinatura.revisao == 2
 
 
 def test_confirmacao_recusa_tentativa_que_ficou_stale_durante_io():
@@ -360,13 +396,25 @@ def test_resposta_remota_incompativel_fica_incerta_sem_persistir_identidade(troc
         checkout = CheckoutCobranca.objects.get(chave_idempotencia=f"bad-{troca}")
     assert checkout.identificador_externo is None
     assert checkout.url == ""
+    assert checkout.erro_codigo == "remote_mismatch"
+    with pytest.raises(CheckoutPendente):
+        CheckoutsCobranca.criar(
+            CriacaoCheckout(assinatura=assinatura, finalidade=FinalidadeCheckout.CONTRATACAO, chave_idempotencia=f"retry-{troca}"),
+            client=CheckoutClient(gateway),
+        )
+    assert len(gateway.commands) == 1
 
 
 @pytest.mark.parametrize(
-    ("segunda_chave", "mudar_revisao"),
-    [("concorrente-1", False), ("concorrente-2", False), ("apos-revisao", True)],
+    ("segunda_chave", "mudar_revisao", "erro_segunda"),
+    [
+        ("concorrente-1", False, CheckoutPendente),
+        ("concorrente-2", False, CheckoutPendente),
+        ("apos-revisao", True, CheckoutPendente),
+        ("concorrente-1", True, ConflitoCheckout),
+    ],
 )
-def test_operacao_concorrente_mesma_ou_outra_chave_emite_um_comando_no_maximo(segunda_chave, mudar_revisao):
+def test_operacao_concorrente_mesma_ou_outra_chave_emite_um_comando_no_maximo(segunda_chave, mudar_revisao, erro_segunda):
     organizacao, assinatura, preco = _cenario()
     for componente, external_id in ((ComponentePreco.BASE, "price_base"), (ComponentePreco.SEAT, "price_seat")):
         ReferenciaPrecoGateway.objects.create(preco_plano=preco, variante="stripe", componente=componente, identificador_externo=external_id)
@@ -404,7 +452,7 @@ def test_operacao_concorrente_mesma_ou_outra_chave_emite_um_comando_no_maximo(se
         liberar.set()
         resultado_primeira = primeira.result(timeout=10)
 
-    assert isinstance(resultado_segunda, CheckoutPendente)
+    assert type(resultado_segunda) is erro_segunda
     if mudar_revisao:
         assert isinstance(resultado_primeira, FalhaCheckoutIncerta)
     else:
