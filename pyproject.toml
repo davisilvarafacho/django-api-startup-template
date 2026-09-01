@@ -273,4 +273,4 @@ version_files = [
 ]
 
 [tool.uv.sources]
-django-checkouts = { path = "/home/rafacho/dev/django-checkouts", editable = true }
+django-checkouts = { path = "../../../django-checkouts", editable = true }

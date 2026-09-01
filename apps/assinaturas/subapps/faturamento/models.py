@@ -14,6 +14,7 @@ from apps.assinaturas.models import (
     PropostaComercial,
 )
 
+from .payloads import normalizar_payload_evento, validar_payload_evento
 from .policies import IngressoUpdatePolicy
 
 
@@ -200,12 +201,16 @@ class EventoCobranca(BaseTenantless, RLSModel):
     exige_tenant = models.BooleanField(default=True)
     tentativas_roteamento = models.PositiveSmallIntegerField(default=0)
     tentativas_processamento = models.PositiveSmallIntegerField(default=0)
-    payload_normalizado = models.JSONField(default=dict)
+    payload_normalizado = models.JSONField(default=dict, validators=[validar_payload_evento])
     hash_payload = models.CharField(max_length=64)
     erro = models.CharField(max_length=500, blank=True)
     ocorrido_em = models.DateTimeField(null=True, blank=True)
     processado_em = models.DateTimeField(null=True, blank=True)
     proxima_tentativa_em = models.DateTimeField(null=True, blank=True)
+
+    def save(self, *args, **kwargs):
+        self.payload_normalizado = normalizar_payload_evento(self.payload_normalizado)
+        return super().save(*args, **kwargs)
 
     class Meta:
         db_table = "evento_cobranca"

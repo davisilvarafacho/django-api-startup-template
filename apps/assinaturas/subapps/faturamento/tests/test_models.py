@@ -1,12 +1,15 @@
 from django.conf import settings
 from django.contrib import admin
+from django.core.checks import Error
 from django.core.exceptions import ValidationError
-from django.db import connection, connections, models
+from django.db import DatabaseError, connection, connections, models, transaction
+from django.test import override_settings
 
 import psycopg2
 import pytest
 
 from apps.api.base.models import Base, BaseTenantless
+from apps.assinaturas.subapps.faturamento.checks import configuracao_faturamento_check
 from apps.assinaturas.subapps.faturamento.models import (
     AssinaturaGateway,
     CheckoutCobranca,
@@ -19,6 +22,7 @@ from apps.assinaturas.subapps.faturamento.models import (
     StatusEventoCobranca,
     StatusFatura,
 )
+from apps.assinaturas.subapps.faturamento.payloads import normalizar_payload_evento
 from apps.organizacoes.models import Organizacao
 
 pytestmark = pytest.mark.django_db
@@ -35,6 +39,7 @@ def papel_ingresso(django_db_setup, django_db_blocker):
         cursor.execute(f"GRANT USAGE ON SCHEMA public TO {PAPEL_INGRESSO}")
         cursor.execute(f"GRANT SELECT, INSERT, UPDATE ON evento_cobranca TO {PAPEL_INGRESSO}")
         cursor.execute(f"GRANT USAGE, SELECT ON SEQUENCE evento_cobranca_id_seq TO {PAPEL_INGRESSO}")
+        cursor.execute(f"GRANT EXECUTE ON FUNCTION faturamento_rotear_evento(bigint, bigint) TO {PAPEL_INGRESSO}")
     yield
     with django_db_blocker.unblock(), connection.cursor() as cursor:
         cursor.execute(f"DROP OWNED BY {PAPEL_INGRESSO}")
@@ -84,6 +89,28 @@ def test_evento_nao_expoe_campos_brutos_ou_headers():
     assert fields.isdisjoint({"raw", "body", "corpo_bruto", "headers", "token", "signature"})
 
 
+def test_normalizador_descarta_desconhecidos_pii_secrets_e_nested():
+    assert normalizar_payload_evento(
+        {
+            "amount": 1000,
+            "currency": "BRL",
+            "email": "pessoa@example.test",
+            "token": "secret",
+            "raw": {"card": "4242"},
+            "headers": {"stripe-signature": "secret"},
+            "unknown": ["nested"],
+        }
+    ) == {"amount": 1000, "currency": "BRL"}
+
+
+@pytest.mark.parametrize("config", [None, (), ("path",), ("path", []), ("path", {"api_key": "x"}), "stripe"])
+def test_check_de_configuracao_malformada_retorna_error(config):
+    with override_settings(CHECKOUT_VARIANTS={"stripe": config}):
+        resultado = configuracao_faturamento_check(None)
+    assert len(resultado) == 1
+    assert isinstance(resultado[0], Error)
+
+
 def test_admin_oculta_payload_urls_e_e_somente_leitura():
     for model in (AssinaturaGateway, CheckoutCobranca, FaturaAssinatura, EventoCobranca):
         model_admin = admin.site._registry[model]
@@ -106,6 +133,9 @@ def test_rls_real_ingresso_roteia_uma_vez_e_tenant_isola(papel_ingresso):
         port=database["PORT"],
     )
     try:
+        with conexao.cursor() as cursor, pytest.raises(psycopg2.errors.InsufficientPrivilege):
+            cursor.execute("SELECT faturamento_rotear_evento(0, %s)", [organizacao.pk])
+        conexao.rollback()
         with conexao, conexao.cursor() as cursor:
             cursor.execute("SELECT set_config('rls.tenant_id', '0', true)")
             cursor.execute("SELECT set_config('rls.billing_ingress', '1', true)")
@@ -121,6 +151,17 @@ def test_rls_real_ingresso_roteia_uma_vez_e_tenant_isola(papel_ingresso):
                            repeat('a', 64), '', '', '', '') RETURNING id"""
             )
             evento_id = cursor.fetchone()[0]
+
+        with conexao, conexao.cursor() as cursor:
+            cursor.execute("SELECT set_config('rls.tenant_id', '0', true)")
+            cursor.execute("SELECT set_config('rls.billing_ingress', '1', true)")
+            with pytest.raises(psycopg2.errors.InsufficientPrivilege):
+                cursor.execute("UPDATE evento_cobranca SET organizacao_id = %s WHERE id = %s", [organizacao.pk, evento_id])
+            conexao.rollback()
+
+        with conexao, conexao.cursor() as cursor:
+            cursor.execute("SELECT set_config('rls.tenant_id', '0', true)")
+            cursor.execute("SELECT set_config('rls.billing_ingress', '1', true)")
             cursor.execute("SELECT faturamento_rotear_evento(%s, %s)", [evento_id, organizacao.pk])
             assert cursor.fetchone() == (True,)
             cursor.execute("SELECT id FROM evento_cobranca WHERE id = %s", [evento_id])
@@ -136,3 +177,22 @@ def test_rls_real_ingresso_roteia_uma_vez_e_tenant_isola(papel_ingresso):
     finally:
         conexao.close()
         connections.close_all()
+
+
+def test_constraint_do_banco_recusa_payload_fora_do_schema():
+    organizacao = Organizacao.objects.create(nome="Payload", slug="payload-invalido")
+    from apps.organizacoes.context import organizacao_atual_privilegiada
+
+    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(DatabaseError), transaction.atomic(), connection.cursor() as cursor:
+        cursor.execute(
+            """INSERT INTO evento_cobranca
+               (created_at, last_modified_at, is_active, is_deleted, variante,
+                identificador_evento, tipo, organizacao_id, status, exige_tenant,
+                tentativas_roteamento, tentativas_processamento,
+                payload_normalizado, hash_payload, erro,
+                identificador_assinatura, identificador_checkout, identificador_fatura)
+               VALUES (NOW(), NOW(), true, false, 'stripe', 'evt-payload-invalido',
+                       'invoice.paid', %s, 10, false, 0, 0, %s::jsonb,
+                       repeat('a', 64), '', '', '', '')""",
+            [organizacao.pk, '{"email":"pii@example.test","raw":{"card":"4242"}}'],
+        )
