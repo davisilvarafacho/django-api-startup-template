@@ -1,6 +1,6 @@
 """Contrato OpenAPI dos checkouts de faturamento."""
 
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 
 from apps.api.autenticacao.errors import AuthErrorCode
 from apps.api.core.errors import CoreErrorCode, ValidationErrorCode
@@ -78,4 +78,19 @@ document_checkout_create = _create(CriarCheckoutRequestSerializer)
 document_setup_create = _create(CriarFormaPagamentoCheckoutRequestSerializer)
 document_checkout_list = extend_schema(
     responses={200: CheckoutResponseSerializer(many=True), 401: AUTH, 403: TENANT, 422: document_error_codes(OrganizationErrorCode.HEADER_REQUIRED)}
+)
+
+document_webhook = extend_schema(
+    request=None,
+    parameters=[OpenApiParameter("variante", str, OpenApiParameter.PATH, description="Variante configurada do gateway.")],
+    responses={
+        200: OpenApiResponse(description="Evento autenticado recebido ou duplicata idempotente."),
+        400: document_error_codes(
+            ErrosFaturamento.WEBHOOK_SIGNATURE_INVALID,
+            ErrosFaturamento.WEBHOOK_PROTOCOL_INVALID,
+            ErrosFaturamento.WEBHOOK_VARIANT_INVALID,
+        ),
+        409: document_error_codes(ErrosFaturamento.WEBHOOK_COLLISION),
+    },
+    auth=[],
 )

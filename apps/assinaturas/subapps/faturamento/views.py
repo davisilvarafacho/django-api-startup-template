@@ -1,14 +1,14 @@
 from dataclasses import asdict
 
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.api.autenticacao.permissions import TokenScopePermission
 from apps.api.autenticacao.recent_auth import RecentAuthenticationPermission, require_recent_auth
 from apps.api.core.errors import APIError, CoreErrorCode, ValidationErrorCode
-from apps.api.core.route_markers import io_externo_sem_transacao, regularizacao_assinatura
+from apps.api.core.route_markers import io_externo_sem_transacao, public, regularizacao_assinatura
 from apps.assinaturas.errors import BillingErrorCode
 from apps.assinaturas.models import AlteracaoAssinatura, AssinaturaOrganizacao, ModoAtivacaoProposta, PropostaComercial
 from apps.assinaturas.proposals import ConflitoPropostaComercial, Propostas
@@ -22,12 +22,20 @@ from apps.assinaturas.subapps.faturamento.checkouts import (
     criar_checkout,
 )
 from apps.assinaturas.subapps.faturamento.errors import ErrosFaturamento
+from apps.assinaturas.subapps.faturamento.events import (
+    AssinaturaWebhookInvalida,
+    ColisaoEventoCobranca,
+    EventosCobranca,
+    EventoWebhookInvalido,
+    VarianteWebhookInvalida,
+)
 from apps.assinaturas.subapps.faturamento.models import CheckoutCobranca, FinalidadeCheckout
 from apps.assinaturas.subapps.faturamento.schema import (
     document_checkout_create,
     document_checkout_list,
     document_proposal_accept,
     document_setup_create,
+    document_webhook,
 )
 from apps.assinaturas.subapps.faturamento.serializers import (
     CheckoutResponseSerializer,
@@ -38,6 +46,27 @@ from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.models import Papel
 from apps.organizacoes.permissions import TenantPermission
+
+
+@public
+@io_externo_sem_transacao
+class WebhookFaturamentoView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    @document_webhook
+    def post(self, request, variante: str):
+        try:
+            resultado = EventosCobranca().receber_bytes(variante, request.body, dict(request.headers))
+        except VarianteWebhookInvalida as exc:
+            raise APIError(ErrosFaturamento.WEBHOOK_VARIANT_INVALID, status_code=status.HTTP_400_BAD_REQUEST) from exc
+        except AssinaturaWebhookInvalida as exc:
+            raise APIError(ErrosFaturamento.WEBHOOK_SIGNATURE_INVALID, status_code=status.HTTP_400_BAD_REQUEST) from exc
+        except EventoWebhookInvalido as exc:
+            raise APIError(ErrosFaturamento.WEBHOOK_PROTOCOL_INVALID, status_code=status.HTTP_400_BAD_REQUEST) from exc
+        except ColisaoEventoCobranca as exc:
+            raise APIError(ErrosFaturamento.WEBHOOK_COLLISION, status_code=status.HTTP_409_CONFLICT) from exc
+        return Response({"received": True, "duplicate": not resultado.novo})
 
 
 class _FaturamentoSessionView(APIView):
