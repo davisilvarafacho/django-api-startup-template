@@ -268,6 +268,16 @@ CAMPOS_TRANSICAO_ASSINATURA = frozenset(
 )
 
 
+def _nomes_campos(campos):
+    nomes: set[str] = set()
+    for campo in campos or ():
+        if isinstance(campo, models.Field):
+            nomes.update((campo.name, campo.attname))
+        else:
+            nomes.add(campo)
+    return nomes
+
+
 class AssinaturasOrganizacaoQuerySet(BaseQuerySet):
     """Mantém snapshots de recursos completos também em escritas em lote."""
 
@@ -287,6 +297,8 @@ class AssinaturasOrganizacaoQuerySet(BaseQuerySet):
         update_fields=None,
         unique_fields=None,
     ):
+        if update_conflicts and _nomes_campos(update_fields) & CAMPOS_TRANSICAO_ASSINATURA:
+            raise ValueError("Termos da assinatura só podem mudar por uma transição nominal.")
         objetos = tuple(objs)
         for objeto in objetos:
             objeto.recursos = _materializar_recursos(objeto.recursos)

@@ -553,6 +553,54 @@ def test_sql_exige_incremento_unitario_para_mudar_termos_contratuais():
             )
 
 
+@pytest.mark.parametrize("incremento", [1, 7])
+def test_sql_nao_pode_alterar_revisao_isoladamente(incremento):
+    organizacao, assinatura = _assinatura_ativa(slug=f"revisao-isolada-{incremento}")
+
+    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(DatabaseError, match="(?i)revisao.*isoladamente"), transaction.atomic():
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE assinatura_organizacao SET revisao = revisao + %s WHERE id = %s",
+                [incremento, assinatura.pk],
+            )
+
+
+@pytest.mark.parametrize("usar_fields", [False, True])
+def test_bulk_create_com_conflito_nao_pode_encerrar_assinatura_genericamente(usar_fields):
+    organizacao, assinatura = _assinatura_ativa(slug=f"upsert-contratual-fields-{usar_fields}")
+    assinatura.status = StatusAssinatura.ENCERRADA
+    assinatura.encerrada_em = timezone.now()
+    assinatura.motivo_encerramento = "upsert_generico"
+    assinatura.revisao += 1
+    nomes = ["status", "encerrada_em", "motivo_encerramento", "revisao"]
+    update_fields = [AssinaturaOrganizacao._meta.get_field(nome) for nome in nomes] if usar_fields else nomes
+
+    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(ValueError, match="transição nominal"):
+        AssinaturaOrganizacao.objects.bulk_create(
+            [assinatura],
+            update_conflicts=True,
+            update_fields=update_fields,
+            unique_fields=["id"],
+        )
+
+
+def test_bulk_create_com_conflito_permite_atualizacao_operacional():
+    organizacao, assinatura = _assinatura_ativa(slug="upsert-operacional")
+    assinatura.is_active = False
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        AssinaturaOrganizacao.objects.bulk_create(
+            [assinatura],
+            update_conflicts=True,
+            update_fields=["is_active"],
+            unique_fields=["id"],
+        )
+        persistida = AssinaturaOrganizacao.all_objects.get(pk=assinatura.pk)
+
+    assert persistida.is_active is False
+    assert persistida.revisao == 1
+
+
 def test_sql_nao_pode_reaproveitar_alteracao_compativel_para_mascarar_preco():
     organizacao, assinatura = _assinatura_ativa(slug="termos-sql-snapshot-completo")
     snapshot_anterior = Assinaturas._snapshot_assinatura(assinatura)

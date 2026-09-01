@@ -119,7 +119,7 @@ def test_migration_0004_torna_lock_de_preco_compativel_e_reverse_restaura_0003()
 
 
 @pytest.mark.django_db(transaction=True, databases={"default", "logging"})
-def test_migrations_0010_0011_e_0012_executam_forward_e_reverse_no_sqlite():
+def test_migrations_0010_0011_0012_e_0013_executam_forward_e_reverse_no_sqlite():
     conexao = connections["logging"]
     executor = MigrationExecutor(conexao)
     alvos_finais = executor.loader.graph.leaf_nodes()
@@ -141,6 +141,14 @@ def test_migrations_0010_0011_e_0012_executam_forward_e_reverse_no_sqlite():
         executor = MigrationExecutor(conexao)
         executor.migrate([("assinaturas", "0012_endurecer_rollout_e_transicoes")])
         assert ("assinaturas", "0012_endurecer_rollout_e_transicoes") in aplicadas()
+
+        executor = MigrationExecutor(conexao)
+        executor.migrate([("assinaturas", "0013_proteger_revisao_e_upserts")])
+        assert ("assinaturas", "0013_proteger_revisao_e_upserts") in aplicadas()
+
+        executor = MigrationExecutor(conexao)
+        executor.migrate([("assinaturas", "0012_endurecer_rollout_e_transicoes")])
+        assert ("assinaturas", "0013_proteger_revisao_e_upserts") not in aplicadas()
 
         executor = MigrationExecutor(conexao)
         executor.migrate([("assinaturas", "0011_proteger_transicoes_acesso")])
@@ -323,7 +331,7 @@ def test_migration_0009_protege_insert_e_reverse_preserva_guarda_0008():
 
 
 @pytest.mark.django_db(transaction=True)
-def test_migrations_0010_0011_e_0012_sao_reversiveis_no_postgresql():
+def test_migrations_0010_0011_0012_e_0013_sao_reversiveis_no_postgresql():
     executor = MigrationExecutor(connection)
     alvos_finais = executor.loader.graph.leaf_nodes()
 
@@ -395,6 +403,14 @@ def test_migrations_0010_0011_e_0012_sao_reversiveis_no_postgresql():
                 """
             )
             assert cursor.fetchone() == (False, ["search_path=pg_catalog"])
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([("assinaturas", "0013_proteger_revisao_e_upserts")])
+        assert "Revisao da assinatura nao pode mudar isoladamente" in definicao_guarda_assinatura()
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([("assinaturas", "0012_endurecer_rollout_e_transicoes")])
+        assert "Revisao da assinatura nao pode mudar isoladamente" not in definicao_guarda_assinatura()
 
         executor = MigrationExecutor(connection)
         executor.migrate([("assinaturas", "0011_proteger_transicoes_acesso")])
