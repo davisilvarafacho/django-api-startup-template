@@ -8,7 +8,13 @@ from django_rls.context import clear_rls_context
 from apps.api.autenticacao.errors import AuthErrorCode
 from apps.api.autenticacao.models import TokenType
 from apps.api.core.errors import APIError, error_response_for_api_error
-from apps.api.core.route_markers import MARCADOR_PUBLICA, MARCADOR_REGULARIZACAO_ASSINATURA, MARCADOR_SEM_TENANCY, rota_tem_marcador
+from apps.api.core.route_markers import (
+    MARCADOR_IO_EXTERNO_SEM_TRANSACAO,
+    MARCADOR_PUBLICA,
+    MARCADOR_REGULARIZACAO_ASSINATURA,
+    MARCADOR_SEM_TENANCY,
+    rota_tem_marcador,
+)
 from apps.api.core.routes_registry import routes_registry
 from apps.organizacoes.constants import HEADER_ORGANIZACAO, META_HEADER_ORGANIZACAO
 from apps.organizacoes.context import (
@@ -114,6 +120,14 @@ class OrganizacaoMiddleware:
         request.tenant_required = True
 
         try:
+            if rota_tem_marcador(request.path_info, request.method, MARCADOR_IO_EXTERNO_SEM_TRANSACAO):
+                with transaction.atomic():
+                    try:
+                        self._preparar_contexto(request)
+                    except APIError as exc:
+                        return error_response_for_api_error(exc)
+                clear_rls_context({CHAVE_TENANT})
+                return self.get_response(request)
             with transaction.atomic():
                 try:
                     self._preparar_contexto(request)

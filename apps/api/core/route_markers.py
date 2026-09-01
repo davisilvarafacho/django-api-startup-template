@@ -19,10 +19,12 @@ from django.urls import Resolver404, resolve
 
 __all__ = [
     "MARCADOR_PUBLICA",
+    "MARCADOR_IO_EXTERNO_SEM_TRANSACAO",
     "MARCADOR_REGULARIZACAO_ASSINATURA",
     "MARCADOR_SEM_TENANCY",
     "MARCADORES_ROTA",
     "no_tenancy",
+    "io_externo_sem_transacao",
     "public",
     "regularizacao_assinatura",
     "rota_tem_marcador",
@@ -33,7 +35,8 @@ __all__ = [
 MARCADOR_PUBLICA = "_rota_publica"
 MARCADOR_SEM_TENANCY = "_rota_sem_tenancy"
 MARCADOR_REGULARIZACAO_ASSINATURA = "_rota_regularizacao_assinatura"
-MARCADORES_ROTA = frozenset({MARCADOR_PUBLICA, MARCADOR_SEM_TENANCY, MARCADOR_REGULARIZACAO_ASSINATURA})
+MARCADOR_IO_EXTERNO_SEM_TRANSACAO = "_rota_io_externo_sem_transacao"
+MARCADORES_ROTA = frozenset({MARCADOR_PUBLICA, MARCADOR_SEM_TENANCY, MARCADOR_REGULARIZACAO_ASSINATURA, MARCADOR_IO_EXTERNO_SEM_TRANSACAO})
 
 
 def _marcar(view, marcador):
@@ -56,6 +59,11 @@ def no_tenancy(view):
 def regularizacao_assinatura(view):
     """Declara uma view/action apta a regularizar acesso comercial restrito."""
     return _marcar(view, MARCADOR_REGULARIZACAO_ASSINATURA)
+
+
+def io_externo_sem_transacao(view):
+    """Encerra a transação tenant antes de uma view que fará I/O externo."""
+    return _marcar(view, MARCADOR_IO_EXTERNO_SEM_TRANSACAO)
 
 
 def view_do_path(path):
