@@ -41,7 +41,11 @@ ALTER TABLE evento_cobranca ADD CONSTRAINT evento_payload_schema_seguro CHECK (e
 REVERSE_SQL = """
 ALTER TABLE evento_cobranca DROP CONSTRAINT IF EXISTS evento_payload_schema_seguro;
 DROP FUNCTION IF EXISTS evento_payload_valido(jsonb);
-GRANT EXECUTE ON FUNCTION faturamento_rotear_evento(bigint, bigint) TO PUBLIC;
+DO $$ BEGIN
+    IF to_regprocedure('public.faturamento_rotear_evento(bigint,bigint)') IS NOT NULL THEN
+        GRANT EXECUTE ON FUNCTION public.faturamento_rotear_evento(bigint, bigint) TO PUBLIC;
+    END IF;
+END $$;
 """
 
 
