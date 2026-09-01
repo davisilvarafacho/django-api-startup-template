@@ -78,11 +78,11 @@ def test_proprietario_aceita_proposta_com_revisao_e_recebe_checkout_autoritativo
     proprietario = criar_usuario(email="owner-proposta-api@example.com")
     organizacao = _organizacao_do(proprietario, nome="Proposta API", slug="proposta-api")
     proposta = _proposta_enviada(organizacao)
-    from apps.assinaturas.subapps.faturamento import views as billing_views
+    from apps.assinaturas.subapps.faturamento import checkouts as billing_checkouts
 
     monkeypatch.setattr(
-        billing_views,
-        "_executar",
+        billing_checkouts,
+        "criar_checkout",
         lambda criacao: SimpleNamespace(checkout=SimpleNamespace(pk=91, url="https://checkout.example/proposta")),
     )
 

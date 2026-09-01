@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from threading import Event
 
-from django.db import close_old_connections, connection
+from django.db import close_old_connections, connection, connections
 from django.urls import resolve
 
 import pytest
@@ -23,8 +23,11 @@ from django_checkouts.gateways.commands import CreateCheckout, CreateSetup
 from django_checkouts.testing import FakeCheckoutGateway
 from django_checkouts.types import Checkout, Setup
 
+from apps.api.core.errors import APIError
 from apps.assinaturas.models import Periodicidade, StatusAssinatura
+from apps.assinaturas.subapps.faturamento import views as faturamento_views
 from apps.assinaturas.subapps.faturamento.checkouts import (
+    CheckoutIndisponivel,
     CheckoutPendente,
     CheckoutsCobranca,
     ConflitoCheckout,
@@ -32,12 +35,28 @@ from apps.assinaturas.subapps.faturamento.checkouts import (
     FalhaCheckoutIncerta,
     decodificar_referencia_checkout,
 )
+from apps.assinaturas.subapps.faturamento.errors import ErrosFaturamento
 from apps.assinaturas.subapps.faturamento.models import CheckoutCobranca, ComponentePreco, FinalidadeCheckout, ReferenciaPrecoGateway, StatusCheckout
 from apps.assinaturas.tests.test_subscription_models import _criar_assinatura, _criar_versao
 from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.models import Organizacao
 
 pytestmark = pytest.mark.django_db(transaction=True)
+
+
+@pytest.mark.parametrize(
+    ("erro", "codigo", "status_code"),
+    [
+        (CheckoutPendente("pending"), ErrosFaturamento.CHECKOUT_PENDENTE, 409),
+        (CheckoutIndisponivel("unavailable"), ErrosFaturamento.CHECKOUT_INDISPONIVEL, 422),
+    ],
+)
+def test_traducao_http_preserva_pending_e_unavailable(monkeypatch, erro, codigo, status_code):
+    monkeypatch.setattr(faturamento_views, "criar_checkout", lambda criacao: (_ for _ in ()).throw(erro))
+    with pytest.raises(APIError) as caught:
+        faturamento_views._executar(object())
+    assert caught.value.code == codigo.value
+    assert caught.value.status_code == status_code
 
 
 def _capabilities(*, catalog: bool = True, inline: bool = False, setup: bool = False) -> GatewayCapabilities:
@@ -298,14 +317,67 @@ def test_forma_pagamento_cria_setup_zero_sem_item_ou_raw_persistido():
     assert len(gateway.commands) == 1
 
 
-@pytest.mark.parametrize("segunda_chave", ["concorrente-1", "concorrente-2"])
-def test_operacao_concorrente_mesma_ou_outra_chave_emite_um_comando_no_maximo(segunda_chave):
-    _, assinatura, preco = _cenario()
+@pytest.mark.parametrize("troca", ["tipo", "variant", "referencia", "modo", "status"])
+def test_resposta_remota_incompativel_fica_incerta_sem_persistir_identidade(troca):
+    organizacao, assinatura, preco = _cenario()
+    for componente, external_id in ((ComponentePreco.BASE, "price_base"), (ComponentePreco.SEAT, "price_seat")):
+        ReferenciaPrecoGateway.objects.create(preco_plano=preco, variante="stripe", componente=componente, identificador_externo=external_id)
+
+    def maliciosa(command):
+        normal = _checkout_result(command)
+        if troca == "tipo":
+            return Setup(
+                external_id="seti_cross",
+                gateway="fake",
+                variant="stripe",
+                status="open",
+                url="https://evil.test",
+                customer=None,
+                reference_id=command.request.reference_id,
+                expires_at=None,
+                created_at=None,
+                raw={},
+            )
+        dados = {campo: getattr(normal, campo) for campo in normal.__dataclass_fields__ if campo != "raw"}
+        dados["raw"] = {}
+        if troca == "variant":
+            dados["variant"] = "other"
+        elif troca == "referencia":
+            dados["reference_id"] = "foreign"
+        elif troca == "modo":
+            dados["mode"] = CheckoutMode.PAYMENT
+        else:
+            dados["status"] = CheckoutStatus.PAID
+        return Checkout(**dados)
+
+    gateway = FakeCheckoutGateway(results={CreateCheckout: maliciosa}, capabilities=_capabilities(), variant="stripe")
+    with pytest.raises(FalhaCheckoutIncerta):
+        CheckoutsCobranca.criar(
+            CriacaoCheckout(assinatura=assinatura, finalidade=FinalidadeCheckout.CONTRATACAO, chave_idempotencia=f"bad-{troca}"),
+            client=CheckoutClient(gateway),
+        )
+    with organizacao_atual_privilegiada(organizacao.pk):
+        checkout = CheckoutCobranca.objects.get(chave_idempotencia=f"bad-{troca}")
+    assert checkout.identificador_externo is None
+    assert checkout.url == ""
+
+
+@pytest.mark.parametrize(
+    ("segunda_chave", "mudar_revisao"),
+    [("concorrente-1", False), ("concorrente-2", False), ("apos-revisao", True)],
+)
+def test_operacao_concorrente_mesma_ou_outra_chave_emite_um_comando_no_maximo(segunda_chave, mudar_revisao):
+    organizacao, assinatura, preco = _cenario()
     for componente, external_id in ((ComponentePreco.BASE, "price_base"), (ComponentePreco.SEAT, "price_seat")):
         ReferenciaPrecoGateway.objects.create(preco_plano=preco, variante="stripe", componente=componente, identificador_externo=external_id)
     entrou_gateway, liberar = Event(), Event()
 
     def remoto(command):
+        if mudar_revisao:
+            from apps.assinaturas.subscriptions import Assinaturas
+
+            with organizacao_atual_privilegiada(organizacao.pk):
+                Assinaturas.solicitar_encerramento(organizacao, agora=datetime.now(UTC), revisao_esperada=assinatura.revisao)
         entrou_gateway.set()
         assert liberar.wait(10)
         return _checkout_result(command)
@@ -322,7 +394,7 @@ def test_operacao_concorrente_mesma_ou_outra_chave_emite_um_comando_no_maximo(se
         except Exception as exc:  # devolve a exceção à thread coordenadora
             return exc
         finally:
-            close_old_connections()
+            connections.close_all()
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         primeira = pool.submit(executar, "concorrente-1")
@@ -333,5 +405,8 @@ def test_operacao_concorrente_mesma_ou_outra_chave_emite_um_comando_no_maximo(se
         resultado_primeira = primeira.result(timeout=10)
 
     assert isinstance(resultado_segunda, CheckoutPendente)
-    assert not isinstance(resultado_primeira, Exception)
+    if mudar_revisao:
+        assert isinstance(resultado_primeira, FalhaCheckoutIncerta)
+    else:
+        assert not isinstance(resultado_primeira, Exception)
     assert len(gateway.commands) == 1

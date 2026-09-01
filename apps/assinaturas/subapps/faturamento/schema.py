@@ -19,7 +19,7 @@ TENANT = document_error_codes(
     OrganizationErrorCode.ORGANIZATION_INACTIVE,
     OrganizationErrorCode.ROLE_INSUFFICIENT,
 )
-CONFLICT = document_error_codes(ErrosFaturamento.CHECKOUT_CONFLITO)
+CONFLICT = document_error_codes(ErrosFaturamento.CHECKOUT_CONFLITO, ErrosFaturamento.CHECKOUT_PENDENTE)
 UNCERTAIN = document_error_codes(ErrosFaturamento.CHECKOUT_INCERTO)
 
 
@@ -32,7 +32,7 @@ def _create(request):
             401: AUTH,
             403: TENANT,
             409: CONFLICT,
-            422: document_error_codes(OrganizationErrorCode.HEADER_REQUIRED),
+            422: document_error_codes(OrganizationErrorCode.HEADER_REQUIRED, ErrosFaturamento.CHECKOUT_INDISPONIVEL),
             503: UNCERTAIN,
         },
     )

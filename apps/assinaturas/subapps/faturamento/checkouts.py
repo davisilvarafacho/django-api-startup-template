@@ -14,7 +14,7 @@ from django.db import IntegrityError
 from django_checkouts import get_checkout_gateway
 from django_checkouts.enums import BillingCycle, CheckoutMode, RetryDisposition
 from django_checkouts.exceptions import GatewayPermanentError, GatewayTemporaryError
-from django_checkouts.types import CatalogPrice, CheckoutCreate, CheckoutItem, InlinePrice, Recurrence, Setup, SetupCreate
+from django_checkouts.types import CatalogPrice, Checkout, CheckoutCreate, CheckoutItem, InlinePrice, Recurrence, Setup, SetupCreate
 from prometheus_client import Counter
 
 from apps.assinaturas.models import (
@@ -32,7 +32,6 @@ from apps.organizacoes.context import organizacao_atual_privilegiada
 
 if TYPE_CHECKING:
     from django_checkouts.client import CheckoutClient
-    from django_checkouts.types import Checkout
 
     from apps.assinaturas.models import PropostaComercial
     from apps.usuarios.models import Usuario
@@ -57,6 +56,10 @@ class FalhaCheckoutIncerta(ConflitoCheckout):
 
 class CheckoutPendente(ConflitoCheckout):
     """Já há uma chamada ao gateway em andamento para a operação."""
+
+
+class CheckoutIndisponivel(ConflitoCheckout):
+    """A configuração/capability não permite criar a operação."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -91,6 +94,7 @@ class _Preparacao:
     request: CheckoutCreate | SetupCreate | None
     chave_gateway: str
     existente: bool
+    gateway: str
 
 
 def criar_referencia_checkout(checkout_id: int, organizacao_id: int) -> str:
@@ -167,7 +171,7 @@ class CheckoutsCobranca:
             cls.falhar(preparacao, incerta=True)
             CHECKOUTS_TOTAL.labels(finalidade=criacao.finalidade.label, resultado="falha_incerta").inc()
             raise FalhaCheckoutIncerta("A criação precisa ser conciliada antes de nova tentativa.") from exc
-        resultado = ResultadoCheckout(cls.confirmar(preparacao, remoto), referencia)
+        resultado = ResultadoCheckout(cls.confirmar(preparacao, remoto, referencia=referencia), referencia)
         CHECKOUTS_TOTAL.labels(finalidade=criacao.finalidade.label, resultado="aberto").inc()
         return resultado
 
@@ -184,20 +188,34 @@ class CheckoutsCobranca:
                 from apps.assinaturas.models import PropostaComercial
 
                 proposta = PropostaComercial.all_objects.select_for_update(of=("self",)).get(pk=criacao.proposta.pk)
+            operacao_chave = cls._operacao_chave(criacao, assinatura, alteracao=alteracao, proposta=proposta)
+            tentativa_em_voo = CheckoutCobranca.objects.filter(
+                chave_idempotencia=criacao.chave_idempotencia,
+                status=StatusCheckout.AGUARDANDO_GATEWAY,
+            ).exists()
+            outra_ativa = (
+                CheckoutCobranca.objects.filter(
+                    operacao_chave=operacao_chave,
+                    status__in=(StatusCheckout.CRIADO, StatusCheckout.AGUARDANDO_GATEWAY, StatusCheckout.ABERTO),
+                )
+                .exclude(chave_idempotencia=criacao.chave_idempotencia)
+                .exists()
+            )
+            if tentativa_em_voo or outra_ativa:
+                raise CheckoutPendente("Já existe checkout pendente para esta operação.")
             cls._validar_finalidade(criacao, assinatura, alteracao=alteracao, proposta=proposta)
             total, moeda, preco, valores = cls._snapshot(criacao, assinatura, alteracao=alteracao, proposta=proposta)
-            operacao_chave = cls._operacao_chave(criacao, assinatura, alteracao=alteracao, proposta=proposta)
             snapshot_hash = cls._snapshot_hash(criacao, assinatura, total, moeda, valores, alteracao=alteracao, proposta=proposta)
             request: CheckoutCreate | SetupCreate
             if criacao.finalidade == FinalidadeCheckout.FORMA_PAGAMENTO:
                 if not client.capabilities.checkouts.supports_setup:
-                    raise ConflitoCheckout("A variante não declara capability de setup de forma de pagamento.")
+                    raise CheckoutIndisponivel("A variante não declara capability de setup de forma de pagamento.")
                 request = SetupCreate(success_url=settings.BILLING_CHECKOUT_SUCCESS_URL, cancel_url=settings.BILLING_CHECKOUT_CANCEL_URL)
             else:
                 items = cls._itens(client, criacao.variante, preco, valores, moeda)
                 cycle = BillingCycle.MONTHLY if valores["periodicidade"] == Periodicidade.MENSAL else BillingCycle.YEARLY
                 if cycle not in client.capabilities.checkouts.billing_cycles:
-                    raise ConflitoCheckout("O gateway não suporta a periodicidade solicitada.")
+                    raise CheckoutIndisponivel("O gateway não suporta a periodicidade solicitada.")
                 request = CheckoutCreate(
                     items=items,
                     success_url=settings.BILLING_CHECKOUT_SUCCESS_URL,
@@ -219,7 +237,9 @@ class CheckoutsCobranca:
                 )
                 if not coerente or existente.status in STATUS_TERMINAIS:
                     raise ConflitoCheckout("A chave idempotente já foi usada para outro estado ou conteúdo.")
-                return _Preparacao(existente.pk, organizacao_id, None, cls._chave_gateway(organizacao_id, criacao.chave_idempotencia), True)
+                return _Preparacao(
+                    existente.pk, organizacao_id, None, cls._chave_gateway(organizacao_id, criacao.chave_idempotencia), True, str(client.gateway)
+                )
             if CheckoutCobranca.objects.filter(
                 operacao_chave=operacao_chave, status__in=(StatusCheckout.CRIADO, StatusCheckout.AGUARDANDO_GATEWAY, StatusCheckout.ABERTO)
             ).exists():
@@ -244,10 +264,12 @@ class CheckoutsCobranca:
                 raise CheckoutPendente("Já existe checkout pendente para esta operação.") from exc
             if alteracao is not None:
                 Assinaturas.marcar_aguardando_gateway(alteracao)
-            return _Preparacao(checkout.pk, organizacao_id, request, cls._chave_gateway(organizacao_id, criacao.chave_idempotencia), False)
+            return _Preparacao(
+                checkout.pk, organizacao_id, request, cls._chave_gateway(organizacao_id, criacao.chave_idempotencia), False, str(client.gateway)
+            )
 
     @classmethod
-    def confirmar(cls, preparacao: _Preparacao, remoto: Checkout | Setup) -> CheckoutCobranca:
+    def confirmar(cls, preparacao: _Preparacao, remoto: Checkout | Setup, *, referencia: str) -> CheckoutCobranca:
         with organizacao_atual_privilegiada(preparacao.organizacao_id):
             ponte = CheckoutCobranca.objects.only("assinatura_id").get(pk=preparacao.checkout_id)
             assinatura = AssinaturaOrganizacao.all_objects.select_for_update(of=("self",)).get(pk=ponte.assinatura_id)
@@ -270,10 +292,15 @@ class CheckoutsCobranca:
                 proposta=proposta,
                 variante=checkout.variante,
             )
+            try:
+                cls._validar_finalidade(intencao, assinatura, alteracao=alteracao, proposta=proposta, confirmacao=True)
+            except ConflitoCheckout as exc:
+                raise FalhaCheckoutIncerta("A operação deixou de ser vigente; exige conciliação.") from exc
             total, moeda, _, valores = cls._snapshot(intencao, assinatura, alteracao=alteracao, proposta=proposta)
             atual = cls._snapshot_hash(intencao, assinatura, total, moeda, valores, alteracao=alteracao, proposta=proposta)
             if atual != checkout.snapshot_hash:
                 raise FalhaCheckoutIncerta("A operação mudou durante a chamada; o checkout exige conciliação.")
+            cls._validar_resultado(preparacao, checkout, remoto, referencia=referencia)
             if not isinstance(remoto, Setup) and (
                 remoto.amount_total != checkout.valor_esperado_centavos or remoto.currency != checkout.moeda_esperada
             ):
@@ -291,14 +318,36 @@ class CheckoutsCobranca:
     def falhar(cls, preparacao: _Preparacao, *, incerta: bool) -> None:
         with organizacao_atual_privilegiada(preparacao.organizacao_id):
             ponte = CheckoutCobranca.objects.only("assinatura_id").get(pk=preparacao.checkout_id)
-            AssinaturaOrganizacao.all_objects.select_for_update(of=("self",)).get(pk=ponte.assinatura_id)
+            assinatura = AssinaturaOrganizacao.all_objects.select_for_update(of=("self",)).get(pk=ponte.assinatura_id)
             checkout = CheckoutCobranca.objects.select_for_update().get(pk=preparacao.checkout_id)
             if checkout.status == StatusCheckout.AGUARDANDO_GATEWAY and not incerta:
+                alteracao = None
+                if checkout.alteracao_id:
+                    alteracao = AlteracaoAssinatura.all_objects.select_for_update(of=("self",)).get(pk=checkout.alteracao_id)
+                proposta = None
+                if checkout.proposta_id:
+                    from apps.assinaturas.models import PropostaComercial
+
+                    proposta = PropostaComercial.all_objects.select_for_update(of=("self",)).get(pk=checkout.proposta_id)
+                intencao = CriacaoCheckout(
+                    assinatura=assinatura,
+                    finalidade=FinalidadeCheckout(checkout.finalidade),
+                    chave_idempotencia=checkout.chave_idempotencia,
+                    alteracao=alteracao,
+                    proposta=proposta,
+                    variante=checkout.variante,
+                )
+                try:
+                    cls._validar_finalidade(intencao, assinatura, alteracao=alteracao, proposta=proposta, confirmacao=True)
+                except ConflitoCheckout:
+                    return
+                total, moeda, _, valores = cls._snapshot(intencao, assinatura, alteracao=alteracao, proposta=proposta)
+                atual = cls._snapshot_hash(intencao, assinatura, total, moeda, valores, alteracao=alteracao, proposta=proposta)
+                if atual != checkout.snapshot_hash:
+                    return
                 checkout.status = StatusCheckout.FALHOU
                 checkout.save(update_fields=["status", "last_modified_at"])
-                if checkout.alteracao_id is not None:
-                    alteracao = checkout.alteracao
-                    assert alteracao is not None
+                if alteracao is not None:
                     Assinaturas.falhar_alteracao(alteracao, codigo="checkout_failed", mensagem="O gateway recusou o checkout.")
 
     @staticmethod
@@ -306,13 +355,14 @@ class CheckoutsCobranca:
         return f"org:{organizacao_id}:checkout:{chave}"
 
     @staticmethod
-    def _validar_finalidade(criacao: CriacaoCheckout, assinatura: AssinaturaOrganizacao, *, alteracao=None, proposta=None) -> None:
+    def _validar_finalidade(criacao, assinatura, *, alteracao=None, proposta=None, confirmacao=False) -> None:
         if assinatura.status == StatusAssinatura.ENCERRADA:
             raise ConflitoCheckout("Assinatura encerrada não aceita checkout.")
         if criacao.finalidade == FinalidadeCheckout.CONTRATACAO and assinatura.status != StatusAssinatura.PENDENTE:
             raise ConflitoCheckout("Contratação exige assinatura pendente.")
         if criacao.finalidade == FinalidadeCheckout.ALTERACAO:
-            if alteracao is None or alteracao.assinatura_id != assinatura.pk or alteracao.status != StatusAlteracaoAssinatura.SOLICITADA:
+            status_esperado = StatusAlteracaoAssinatura.AGUARDANDO_GATEWAY if confirmacao else StatusAlteracaoAssinatura.SOLICITADA
+            if alteracao is None or alteracao.assinatura_id != assinatura.pk or alteracao.status != status_esperado:
                 raise ConflitoCheckout("Alteração não está disponível para checkout.")
         elif criacao.alteracao is not None:
             raise ConflitoCheckout("Esta finalidade não aceita alteração.")
@@ -365,7 +415,7 @@ class CheckoutsCobranca:
             return f"alteracao:{alteracao.pk}"
         if proposta is not None:
             return f"proposta:{proposta.pk}"
-        return f"{criacao.finalidade}:{assinatura.pk}:{assinatura.revisao}"
+        return f"{criacao.finalidade}:{assinatura.pk}"
 
     @staticmethod
     def _snapshot_hash(criacao, assinatura, total, moeda, valores, *, alteracao=None, proposta=None) -> str:
@@ -373,8 +423,12 @@ class CheckoutsCobranca:
             "finalidade": int(criacao.finalidade),
             "assinatura": assinatura.pk,
             "revisao_assinatura": assinatura.revisao,
+            "status_assinatura": int(assinatura.status),
+            "status_financeiro": int(assinatura.status_financeiro),
             "alteracao": getattr(alteracao, "pk", None),
+            "revisao_alteracao": getattr(alteracao, "revisao", None),
             "proposta": getattr(proposta, "pk", None),
+            "status_proposta": getattr(proposta, "status", None),
             "revisao_proposta": getattr(proposta, "revisao", None),
             "total": total,
             "moeda": moeda,
@@ -383,12 +437,27 @@ class CheckoutsCobranca:
         return sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
 
     @staticmethod
+    def _validar_resultado(preparacao, checkout, remoto, *, referencia) -> None:
+        esperado_setup = checkout.finalidade == FinalidadeCheckout.FORMA_PAGAMENTO
+        if (esperado_setup and type(remoto) is not Setup) or (not esperado_setup and type(remoto) is not Checkout):
+            raise FalhaCheckoutIncerta("O gateway devolveu um tipo incompatível; exige conciliação.")
+        if str(remoto.gateway) != preparacao.gateway or remoto.variant != checkout.variante:
+            raise FalhaCheckoutIncerta("O gateway devolveu identidade incompatível; exige conciliação.")
+        if remoto.reference_id != referencia:
+            raise FalhaCheckoutIncerta("O gateway devolveu referência incompatível; exige conciliação.")
+        if esperado_setup:
+            if str(remoto.status) != "open":
+                raise FalhaCheckoutIncerta("O gateway devolveu setup em estado inseguro; exige conciliação.")
+        elif remoto.mode != CheckoutMode.SUBSCRIPTION or str(remoto.status) != "pending":
+            raise FalhaCheckoutIncerta("O gateway devolveu checkout em modo ou estado inseguro; exige conciliação.")
+
+    @staticmethod
     def _itens(client: CheckoutClient, variante: str, preco: PrecoPlano | None, valores: dict, moeda: str):
         caps = client.capabilities.checkouts
         if CheckoutMode.SUBSCRIPTION not in caps.modes:
-            raise ConflitoCheckout("O gateway não suporta checkout recorrente.")
+            raise CheckoutIndisponivel("O gateway não suporta checkout recorrente.")
         if not caps.supports_catalog_prices and not caps.supports_inline_prices:
-            raise ConflitoCheckout("O gateway não suporta preços de catálogo ou inline.")
+            raise CheckoutIndisponivel("O gateway não suporta preços de catálogo ou inline.")
         componentes = []
         if valores["valor_base_centavos"] > 0:
             componentes.append((ComponentePreco.BASE, 1, valores["valor_base_centavos"], "Assinatura"))
@@ -410,8 +479,13 @@ class CheckoutsCobranca:
             elif caps.supports_inline_prices:
                 price = InlinePrice(name=nome, unit_amount=valor, currency=moeda)
             else:
-                raise ConflitoCheckout("Referência de preço obrigatória não configurada.")
+                raise CheckoutIndisponivel("Referência de preço obrigatória não configurada.")
             items.append(CheckoutItem(price=price, quantity=quantidade, reference_id=str(componente)))
         if not items:
-            raise ConflitoCheckout("Checkout recorrente sem itens cobrados não é suportado.")
+            raise CheckoutIndisponivel("Checkout recorrente sem itens cobrados não é suportado.")
         return tuple(items)
+
+
+def criar_checkout(criacao: CriacaoCheckout) -> ResultadoCheckout:
+    """Caso de uso público para consumidores HTTP fora do subapp."""
+    return CheckoutsCobranca.criar(criacao)

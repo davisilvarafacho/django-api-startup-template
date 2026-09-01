@@ -201,21 +201,36 @@ class AceitarPropostaView(APIView):
         preparacao_checkout = asdict(resultado.preparacao_checkout) if resultado.preparacao_checkout is not None else None
         if preparacao_checkout is not None:
             assert chave is not None
-            from apps.assinaturas.subapps.faturamento.checkouts import CriacaoCheckout
+            from apps.assinaturas.subapps.faturamento.checkouts import (
+                CheckoutIndisponivel,
+                CheckoutPendente,
+                ConflitoCheckout,
+                CriacaoCheckout,
+                FalhaCheckoutIncerta,
+                criar_checkout,
+            )
+            from apps.assinaturas.subapps.faturamento.errors import ErrosFaturamento
             from apps.assinaturas.subapps.faturamento.models import FinalidadeCheckout
-            from apps.assinaturas.subapps.faturamento.views import _executar
 
             with organizacao_atual_privilegiada(request.organizacao_id):
                 assinatura = AssinaturaOrganizacao.objects.get(organizacao_id=request.organizacao_id)
-            checkout = _executar(
-                CriacaoCheckout(
-                    assinatura=assinatura,
-                    finalidade=FinalidadeCheckout.PROPOSTA,
-                    chave_idempotencia=chave,
-                    proposta=proposta,
-                    ator=request.user,
-                )
-            ).checkout
+            criacao = CriacaoCheckout(
+                assinatura=assinatura,
+                finalidade=FinalidadeCheckout.PROPOSTA,
+                chave_idempotencia=chave,
+                proposta=proposta,
+                ator=request.user,
+            )
+            try:
+                checkout = criar_checkout(criacao).checkout
+            except CheckoutPendente as exc:
+                raise APIError(ErrosFaturamento.CHECKOUT_PENDENTE, status_code=status.HTTP_409_CONFLICT) from exc
+            except CheckoutIndisponivel as exc:
+                raise APIError(ErrosFaturamento.CHECKOUT_INDISPONIVEL, status_code=status.HTTP_422_UNPROCESSABLE_ENTITY) from exc
+            except FalhaCheckoutIncerta as exc:
+                raise APIError(ErrosFaturamento.CHECKOUT_INCERTO, status_code=status.HTTP_503_SERVICE_UNAVAILABLE) from exc
+            except ConflitoCheckout as exc:
+                raise APIError(ErrosFaturamento.CHECKOUT_CONFLITO, status_code=status.HTTP_409_CONFLICT) from exc
             preparacao_checkout.update(checkout_id=checkout.pk, checkout_url=checkout.url)
         payload = {
             "id": proposta.pk,

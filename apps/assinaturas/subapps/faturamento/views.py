@@ -8,7 +8,14 @@ from apps.api.autenticacao.recent_auth import RecentAuthenticationPermission, re
 from apps.api.core.errors import APIError, CoreErrorCode
 from apps.api.core.route_markers import io_externo_sem_transacao, regularizacao_assinatura
 from apps.assinaturas.models import AlteracaoAssinatura, PropostaComercial
-from apps.assinaturas.subapps.faturamento.checkouts import CheckoutsCobranca, ConflitoCheckout, CriacaoCheckout, FalhaCheckoutIncerta
+from apps.assinaturas.subapps.faturamento.checkouts import (
+    CheckoutIndisponivel,
+    CheckoutPendente,
+    ConflitoCheckout,
+    CriacaoCheckout,
+    FalhaCheckoutIncerta,
+    criar_checkout,
+)
 from apps.assinaturas.subapps.faturamento.errors import ErrosFaturamento
 from apps.assinaturas.subapps.faturamento.models import CheckoutCobranca, FinalidadeCheckout
 from apps.assinaturas.subapps.faturamento.schema import document_checkout_create, document_checkout_list, document_setup_create
@@ -35,7 +42,11 @@ class _FaturamentoSessionView(APIView):
 
 def _executar(criacao):
     try:
-        return CheckoutsCobranca.criar(criacao)
+        return criar_checkout(criacao)
+    except CheckoutPendente as exc:
+        raise APIError(ErrosFaturamento.CHECKOUT_PENDENTE, status_code=status.HTTP_409_CONFLICT) from exc
+    except CheckoutIndisponivel as exc:
+        raise APIError(ErrosFaturamento.CHECKOUT_INDISPONIVEL, status_code=status.HTTP_422_UNPROCESSABLE_ENTITY) from exc
     except FalhaCheckoutIncerta as exc:
         raise APIError(ErrosFaturamento.CHECKOUT_INCERTO, status_code=status.HTTP_503_SERVICE_UNAVAILABLE) from exc
     except ConflitoCheckout as exc:
