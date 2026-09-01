@@ -81,6 +81,10 @@ def role_ingresso_check(app_configs, **kwargs):
                  CROSS JOIN LATERAL aclexplode(att.attacl) a
                  JOIN roles_faturamento r ON r.oid=a.grantee
                  WHERE c.relnamespace='public'::regnamespace
+               ), policies_tenant(relname,polname) AS (VALUES
+                 ('evento_cobranca','evento_tenant'),
+                 ('checkout_cobranca','isolamento_organizacao'),
+                 ('fatura_assinatura','isolamento_organizacao')
                ) SELECT
                  (SELECT count(*) FROM esperadas JOIN pg_proc p ON p.oid=esperadas.oid) = 2
                  AND (SELECT count(*) FROM pg_proc
@@ -111,6 +115,25 @@ def role_ingresso_check(app_configs, **kwargs):
                  (SELECT count(*) FROM pg_policy
                    WHERE polrelid=to_regclass('public.evento_cobranca')
                      AND polname LIKE 'evento_interface_definidor_%%') = 3
+                 AND (SELECT count(*) FROM pg_class c
+                      WHERE c.relnamespace='public'::regnamespace
+                        AND c.relname IN ('evento_cobranca','checkout_cobranca','fatura_assinatura')
+                        AND c.relrowsecurity AND c.relforcerowsecurity) = 3
+                 AND (SELECT count(*) FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid
+                      WHERE c.relnamespace='public'::regnamespace
+                        AND c.relname IN ('evento_cobranca','checkout_cobranca','fatura_assinatura')) = 6
+                 AND (SELECT count(*) FROM policies_tenant e JOIN pg_class c ON c.relname=e.relname
+                      AND c.relnamespace='public'::regnamespace
+                      JOIN pg_policy p ON p.polrelid=c.oid AND p.polname=e.polname) = 3
+                 AND NOT EXISTS (
+                   SELECT 1 FROM policies_tenant e
+                   LEFT JOIN pg_class c ON c.relname=e.relname AND c.relnamespace='public'::regnamespace
+                   LEFT JOIN pg_policy p ON p.polrelid=c.oid AND p.polname=e.polname
+                   WHERE p.oid IS NULL OR NOT p.polpermissive OR p.polcmd<>'*' OR p.polroles<>ARRAY[0::oid]
+                     OR regexp_replace(pg_get_expr(p.polqual,p.polrelid),'[[:space:]]','','g')
+                        IS DISTINCT FROM '(organizacao_id=(NULLIF(current_setting(''rls.tenant_id''::text,true),''''::text))::integer)'
+                     OR p.polqual::text IS DISTINCT FROM p.polwithcheck::text
+                 )
                  AND NOT EXISTS (
                    SELECT 1 FROM pg_policy p
                    WHERE p.polrelid=to_regclass('public.evento_cobranca')

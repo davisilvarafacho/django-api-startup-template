@@ -363,6 +363,30 @@ def test_check_deploy_rejeita_nomes_e_modo_arbitrarios():
             "CREATE FUNCTION faturamento_rotear_evento(text) RETURNS boolean LANGUAGE sql AS 'SELECT false'",
             "DROP FUNCTION faturamento_rotear_evento(text)",
         ),
+        ("ALTER TABLE evento_cobranca DISABLE ROW LEVEL SECURITY", "ALTER TABLE evento_cobranca ENABLE ROW LEVEL SECURITY"),
+        ("ALTER TABLE evento_cobranca NO FORCE ROW LEVEL SECURITY", "ALTER TABLE evento_cobranca FORCE ROW LEVEL SECURITY"),
+        (
+            "ALTER POLICY evento_tenant ON evento_cobranca USING (true) WITH CHECK (true)",
+            "ALTER POLICY evento_tenant ON evento_cobranca "
+            "USING (organizacao_id = NULLIF(current_setting('rls.tenant_id', true), '')::integer) "
+            "WITH CHECK (organizacao_id = NULLIF(current_setting('rls.tenant_id', true), '')::integer)",
+        ),
+        (
+            "DROP POLICY isolamento_organizacao ON checkout_cobranca",
+            "CREATE POLICY isolamento_organizacao ON checkout_cobranca "
+            "USING (organizacao_id = NULLIF(current_setting('rls.tenant_id', true), '')::integer) "
+            "WITH CHECK (organizacao_id = NULLIF(current_setting('rls.tenant_id', true), '')::integer)",
+        ),
+        (
+            "CREATE POLICY checkout_permissiva ON checkout_cobranca USING (true)",
+            "DROP POLICY checkout_permissiva ON checkout_cobranca",
+        ),
+        (
+            "ALTER POLICY isolamento_organizacao ON fatura_assinatura USING (true) WITH CHECK (true)",
+            "ALTER POLICY isolamento_organizacao ON fatura_assinatura "
+            "USING (organizacao_id = NULLIF(current_setting('rls.tenant_id', true), '')::integer) "
+            "WITH CHECK (organizacao_id = NULLIF(current_setting('rls.tenant_id', true), '')::integer)",
+        ),
     ],
 )
 def test_check_deploy_detecta_drift_real_de_privilegios(aplicar, restaurar):
