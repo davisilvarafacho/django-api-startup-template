@@ -3,75 +3,105 @@ from django.db import migrations
 
 SQL = r"""
 DROP FUNCTION IF EXISTS public.faturamento_rotear_evento(bigint, bigint);
+DROP FUNCTION IF EXISTS public.faturamento_rotear_evento(bigint);
+DROP FUNCTION IF EXISTS public.faturamento_rotear_evento(text, text);
+DROP FUNCTION IF EXISTS public.faturamento_receber_evento(text, text, text, text, text, text, boolean, jsonb, text, timestamptz);
 
 GRANT USAGE ON SCHEMA public TO billing_ingress_runtime;
-REVOKE UPDATE ON public.evento_cobranca FROM billing_ingress_runtime;
-GRANT SELECT, INSERT ON public.evento_cobranca TO billing_ingress_runtime;
-GRANT UPDATE (organizacao_id, status, last_modified_at) ON public.evento_cobranca TO billing_ingress_runtime;
-GRANT SELECT ON public.assinatura_gateway TO billing_ingress_runtime;
-GRANT USAGE, SELECT ON SEQUENCE public.evento_cobranca_id_seq TO billing_ingress_runtime;
+REVOKE ALL ON public.evento_cobranca FROM billing_ingress_runtime;
+REVOKE ALL ON public.assinatura_gateway FROM billing_ingress_runtime;
+REVOKE ALL ON SEQUENCE public.evento_cobranca_id_seq FROM billing_ingress_runtime;
 
 DROP POLICY evento_ingresso_select ON public.evento_cobranca;
 DROP POLICY evento_ingresso_insert ON public.evento_cobranca;
 DROP POLICY evento_ingresso_update ON public.evento_cobranca;
-CREATE POLICY evento_ingresso_select ON public.evento_cobranca FOR SELECT TO billing_ingress_runtime USING (
-    (organizacao_id IS NULL OR (status = 20 AND last_modified_at = statement_timestamp()))
-    AND NULLIF(current_setting('rls.tenant_id', true), '')::integer = 0
-    AND NULLIF(current_setting('rls.billing_ingress', true), '') = '1'
-);
-CREATE POLICY evento_ingresso_insert ON public.evento_cobranca FOR INSERT TO billing_ingress_runtime WITH CHECK (
-    organizacao_id IS NULL
-    AND NULLIF(current_setting('rls.tenant_id', true), '')::integer = 0
-    AND NULLIF(current_setting('rls.billing_ingress', true), '') = '1'
-);
-CREATE POLICY evento_ingresso_update ON public.evento_cobranca FOR UPDATE TO billing_ingress_runtime
-USING (
-    organizacao_id IS NULL
-    AND NULLIF(current_setting('rls.tenant_id', true), '')::integer = 0
-    AND NULLIF(current_setting('rls.billing_ingress', true), '') = '1'
-)
-WITH CHECK (
-    status = 20
-    AND organizacao_id = (
-        SELECT ag.organizacao_id FROM public.assinatura_gateway ag
-        WHERE ag.variante = evento_cobranca.variante
-          AND ag.identificador_externo = evento_cobranca.identificador_assinatura
-          AND ag.is_active AND NOT ag.is_deleted
-    )
-);
-
-CREATE FUNCTION public.faturamento_rotear_evento(bigint)
-RETURNS boolean LANGUAGE plpgsql SECURITY INVOKER
-SET search_path = pg_catalog, public, pg_temp AS $$
-DECLARE alteradas integer;
+DROP POLICY IF EXISTS evento_interface_definidor ON public.evento_cobranca;
+DROP POLICY IF EXISTS evento_interface_definidor_select ON public.evento_cobranca;
+DROP POLICY IF EXISTS evento_interface_definidor_insert ON public.evento_cobranca;
+DROP POLICY IF EXISTS evento_interface_definidor_update ON public.evento_cobranca;
+DO $policy$
 BEGIN
-    IF current_user IS DISTINCT FROM 'billing_ingress_runtime'
+    EXECUTE format(
+        'CREATE POLICY evento_interface_definidor_select ON public.evento_cobranca FOR SELECT TO %%I USING (true)',
+        current_user
+    );
+    EXECUTE format(
+        'CREATE POLICY evento_interface_definidor_insert ON public.evento_cobranca FOR INSERT TO %%I WITH CHECK (true)',
+        current_user
+    );
+    EXECUTE format(
+        'CREATE POLICY evento_interface_definidor_update ON public.evento_cobranca FOR UPDATE TO %%I USING (true) WITH CHECK (true)',
+        current_user
+    );
+END
+$policy$;
+
+CREATE FUNCTION public.faturamento_receber_evento(
+    text, text, text, text, text, text, boolean, jsonb, text, timestamptz
+)
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp AS $$
+DECLARE inseridas integer;
+BEGIN
+    IF NULLIF(current_setting('role', true), '') IS DISTINCT FROM 'billing_ingress_runtime'
        OR NULLIF(current_setting('rls.tenant_id', true), '')::integer IS DISTINCT FROM 0
        OR NULLIF(current_setting('rls.billing_ingress', true), '') IS DISTINCT FROM '1' THEN
         RAISE EXCEPTION 'papel e contexto de ingresso obrigatorios' USING ERRCODE = '42501';
     END IF;
-    UPDATE public.evento_cobranca SET
-        organizacao_id = (
-            SELECT ag.organizacao_id FROM public.assinatura_gateway ag
-            WHERE ag.variante = evento_cobranca.variante
-              AND ag.identificador_externo = evento_cobranca.identificador_assinatura
-              AND ag.is_active AND NOT ag.is_deleted
-        ),
+    IF $1 IS NULL OR length($1) NOT BETWEEN 1 AND 50
+       OR $2 IS NULL OR length($2) NOT BETWEEN 1 AND 255
+       OR $3 IS NULL OR length($3) NOT BETWEEN 1 AND 100
+       OR length(COALESCE($4, '')) > 255 OR length(COALESCE($5, '')) > 255
+       OR length(COALESCE($6, '')) > 255 OR $7 IS NULL
+       OR $8 IS NULL OR NOT public.evento_payload_valido($8)
+       OR $9 IS NULL OR $9 !~ '^[0-9a-f]{64}$' THEN
+        RAISE EXCEPTION 'evento normalizado invalido' USING ERRCODE = '22023';
+    END IF;
+    INSERT INTO public.evento_cobranca (
+        created_at, last_modified_at, is_active, is_deleted, variante,
+        identificador_evento, tipo, identificador_assinatura,
+        identificador_checkout, identificador_fatura, status, exige_tenant,
+        tentativas_roteamento, tentativas_processamento, payload_normalizado,
+        hash_payload, erro, ocorrido_em
+    ) VALUES (
+        statement_timestamp(), statement_timestamp(), true, false, $1,
+        $2, $3, COALESCE($4, ''), COALESCE($5, ''), COALESCE($6, ''),
+        10, $7, 0, 0, $8, $9, '', $10
+    ) ON CONFLICT (variante, identificador_evento) DO NOTHING;
+    GET DIAGNOSTICS inseridas = ROW_COUNT;
+    RETURN inseridas = 1;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.faturamento_receber_evento(text, text, text, text, text, text, boolean, jsonb, text, timestamptz) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.faturamento_receber_evento(text, text, text, text, text, text, boolean, jsonb, text, timestamptz) TO billing_ingress_runtime;
+
+CREATE FUNCTION public.faturamento_rotear_evento(text, text)
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp AS $$
+DECLARE alteradas integer;
+BEGIN
+    IF NULLIF(current_setting('role', true), '') IS DISTINCT FROM 'billing_ingress_runtime'
+       OR NULLIF(current_setting('rls.tenant_id', true), '')::integer IS DISTINCT FROM 0
+       OR NULLIF(current_setting('rls.billing_ingress', true), '') IS DISTINCT FROM '1' THEN
+        RAISE EXCEPTION 'papel e contexto de ingresso obrigatorios' USING ERRCODE = '42501';
+    END IF;
+    UPDATE public.evento_cobranca evento
+    SET organizacao_id = gateway.organizacao_id,
         status = 20,
         last_modified_at = statement_timestamp()
-    WHERE id = $1 AND organizacao_id IS NULL
-      AND EXISTS (
-          SELECT 1 FROM public.assinatura_gateway ag
-          WHERE ag.variante = evento_cobranca.variante
-            AND ag.identificador_externo = evento_cobranca.identificador_assinatura
-            AND ag.is_active AND NOT ag.is_deleted
-      );
+    FROM public.assinatura_gateway gateway
+    WHERE evento.variante = $1
+      AND evento.identificador_evento = $2
+      AND evento.organizacao_id IS NULL
+      AND gateway.variante = evento.variante
+      AND gateway.identificador_externo = evento.identificador_assinatura
+      AND gateway.is_active AND NOT gateway.is_deleted;
     GET DIAGNOSTICS alteradas = ROW_COUNT;
     RETURN alteradas = 1;
 END;
 $$;
-REVOKE ALL ON FUNCTION public.faturamento_rotear_evento(bigint) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.faturamento_rotear_evento(bigint) TO billing_ingress_runtime;
+REVOKE ALL ON FUNCTION public.faturamento_rotear_evento(text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.faturamento_rotear_evento(text, text) TO billing_ingress_runtime;
 
 CREATE OR REPLACE FUNCTION public.texto_timestamp_valido(text) RETURNS boolean
 LANGUAGE plpgsql IMMUTABLE STRICT SET search_path = pg_catalog, pg_temp AS $$
@@ -108,6 +138,12 @@ $$;
 
 REVERSE_SQL = """
 DROP FUNCTION IF EXISTS public.faturamento_rotear_evento(bigint);
+DROP FUNCTION IF EXISTS public.faturamento_rotear_evento(text, text);
+DROP FUNCTION IF EXISTS public.faturamento_receber_evento(text, text, text, text, text, text, boolean, jsonb, text, timestamptz);
+DROP POLICY IF EXISTS evento_interface_definidor ON public.evento_cobranca;
+DROP POLICY IF EXISTS evento_interface_definidor_select ON public.evento_cobranca;
+DROP POLICY IF EXISTS evento_interface_definidor_insert ON public.evento_cobranca;
+DROP POLICY IF EXISTS evento_interface_definidor_update ON public.evento_cobranca;
 DROP POLICY IF EXISTS evento_ingresso_update ON public.evento_cobranca;
 DROP POLICY IF EXISTS evento_ingresso_insert ON public.evento_cobranca;
 DROP POLICY IF EXISTS evento_ingresso_select ON public.evento_cobranca;

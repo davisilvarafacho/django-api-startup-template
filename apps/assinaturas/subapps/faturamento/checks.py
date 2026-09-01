@@ -23,21 +23,38 @@ def role_ingresso_check(app_configs, **kwargs):
         return []
     with connection.cursor() as cursor:
         cursor.execute(
-            """SELECT rolcanlogin, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb, rolinherit,
-                      pg_has_role(current_user, oid, 'MEMBER')
-               FROM pg_roles WHERE rolname=%s""",
+            """WITH RECURSIVE alvo AS (
+                   SELECT oid, rolcanlogin, rolsuper, rolbypassrls, rolcreaterole,
+                          rolcreatedb, rolinherit, rolreplication
+                   FROM pg_roles WHERE rolname=%s
+               ), memberships(roleid, caminho, ciclo) AS (
+                   SELECT membro.roleid, ARRAY[alvo.oid, membro.roleid], membro.roleid = alvo.oid
+                   FROM alvo JOIN pg_auth_members membro ON membro.member=alvo.oid
+                   UNION ALL
+                   SELECT membro.roleid, memberships.caminho || membro.roleid,
+                          membro.roleid = ANY(memberships.caminho)
+                   FROM memberships JOIN pg_auth_members membro ON membro.member=memberships.roleid
+                   WHERE NOT memberships.ciclo
+               )
+               SELECT rolcanlogin, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb,
+                      rolinherit, rolreplication, pg_has_role(current_user, alvo.oid, 'MEMBER'),
+                      EXISTS (SELECT 1 FROM memberships)
+               FROM alvo""",
             [role],
         )
         atributos = cursor.fetchone()
-    if atributos is None or atributos[:6] != (False, False, False, False, False, False):
+    if atributos is None or atributos[:7] != (False, False, False, False, False, False, False) or atributos[8]:
         return [
             Error(
                 "A role PostgreSQL billing_ingress_runtime está ausente ou possui atributos inseguros.",
-                hint="Pré-provisione-a como NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB NOINHERIT.",
+                hint=(
+                    "Pré-provisione-a como NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB "
+                    "NOINHERIT NOREPLICATION e não conceda outras roles a ela."
+                ),
                 id="faturamento.E003",
             )
         ]
-    if settings.BILLING_INGRESS_REQUIRE_MEMBERSHIP and not atributos[6]:
+    if settings.BILLING_INGRESS_REQUIRE_MEMBERSHIP and not atributos[7]:
         return [
             Error(
                 "O DATABASE_USER do worker não possui membership em billing_ingress_runtime.",

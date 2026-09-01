@@ -54,6 +54,7 @@ def papel_ingresso(django_db_setup, django_db_blocker):
         cursor.execute(f"CREATE ROLE {PAPEL_INGRESSO} LOGIN PASSWORD %s NOSUPERUSER NOBYPASSRLS NOINHERIT", [SENHA_INGRESSO])
         cursor.execute(f"GRANT billing_ingress_runtime TO {PAPEL_INGRESSO}")
         cursor.execute(f"GRANT USAGE ON SCHEMA public TO {PAPEL_INGRESSO}")
+        cursor.execute(f"GRANT SELECT ON evento_cobranca TO {PAPEL_INGRESSO}")
         cursor.execute(f"GRANT SELECT, INSERT, UPDATE ON checkout_cobranca, fatura_assinatura TO {PAPEL_INGRESSO}")
         cursor.execute(f"GRANT USAGE, SELECT ON SEQUENCE checkout_cobranca_id_seq, fatura_assinatura_id_seq TO {PAPEL_INGRESSO}")
     yield
@@ -196,7 +197,7 @@ def test_check_de_configuracao_malformada_retorna_error(config):
 def test_check_deploy_web_valida_role_segura_sem_exigir_membership():
     cursor = patch("apps.assinaturas.subapps.faturamento.checks.connection.cursor")
     with cursor as cursor_factory:
-        cursor_factory.return_value.__enter__.return_value.fetchone.return_value = (False, False, False, False, False, False, False)
+        cursor_factory.return_value.__enter__.return_value.fetchone.return_value = (False, False, False, False, False, False, False, False, False)
         with override_settings(BILLING_INGRESS_REQUIRE_MEMBERSHIP=False):
             assert role_ingresso_check(None) == []
 
@@ -205,10 +206,10 @@ def test_check_deploy_worker_exige_membership_na_role_segura():
     cursor = patch("apps.assinaturas.subapps.faturamento.checks.connection.cursor")
     with cursor as cursor_factory:
         fetchone = cursor_factory.return_value.__enter__.return_value.fetchone
-        fetchone.return_value = (False, False, False, False, False, False, False)
+        fetchone.return_value = (False, False, False, False, False, False, False, False, False)
         with override_settings(BILLING_INGRESS_REQUIRE_MEMBERSHIP=True):
             assert [erro.id for erro in role_ingresso_check(None)] == ["faturamento.E004"]
-        fetchone.return_value = (False, False, False, False, False, False, True)
+        fetchone.return_value = (False, False, False, False, False, False, False, True, False)
         with override_settings(BILLING_INGRESS_REQUIRE_MEMBERSHIP=True):
             assert role_ingresso_check(None) == []
 
@@ -216,11 +217,47 @@ def test_check_deploy_worker_exige_membership_na_role_segura():
 def test_check_deploy_rejeita_role_insegura_e_nome_arbitrario():
     cursor = patch("apps.assinaturas.subapps.faturamento.checks.connection.cursor")
     with cursor as cursor_factory:
-        cursor_factory.return_value.__enter__.return_value.fetchone.return_value = (False, False, False, False, False, True, True)
+        cursor_factory.return_value.__enter__.return_value.fetchone.return_value = (False, False, False, False, False, False, True, True, False)
         assert [erro.id for erro in role_ingresso_check(None)] == ["faturamento.E003"]
     with override_settings(BILLING_INGRESS_DATABASE_ROLE="role-arbitraria"):
         resultado = role_ingresso_check(None)
     assert [erro.id for erro in resultado] == ["faturamento.E002"]
+
+
+@pytest.mark.parametrize(
+    "atributos",
+    [
+        (False, False, False, False, False, False, True, True, False),
+        (False, False, False, False, False, False, False, True, True),
+    ],
+)
+def test_check_deploy_rejeita_replication_e_membership_concedida_a_role(atributos):
+    cursor = patch("apps.assinaturas.subapps.faturamento.checks.connection.cursor")
+    with cursor as cursor_factory:
+        cursor_factory.return_value.__enter__.return_value.fetchone.return_value = atributos
+        assert [erro.id for erro in role_ingresso_check(None)] == ["faturamento.E003"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_check_deploy_rejeita_replication_e_membership_reais():
+    with connection.cursor() as cursor:
+        cursor.execute("ALTER ROLE billing_ingress_runtime REPLICATION")
+    try:
+        assert [erro.id for erro in role_ingresso_check(None)] == ["faturamento.E003"]
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute("ALTER ROLE billing_ingress_runtime NOREPLICATION")
+
+    with connection.cursor() as cursor:
+        cursor.execute("DROP ROLE IF EXISTS billing_ingress_privilegiada_tester")
+        cursor.execute("CREATE ROLE billing_ingress_privilegiada_tester NOLOGIN BYPASSRLS")
+        cursor.execute("GRANT billing_ingress_privilegiada_tester TO billing_ingress_runtime")
+    try:
+        assert [erro.id for erro in role_ingresso_check(None)] == ["faturamento.E003"]
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute("REVOKE billing_ingress_privilegiada_tester FROM billing_ingress_runtime")
+            cursor.execute("DROP ROLE billing_ingress_privilegiada_tester")
 
 
 def test_admin_oculta_payload_urls_e_e_somente_leitura():
@@ -253,31 +290,55 @@ def test_rls_real_ingresso_roteia_uma_vez_e_tenant_isola(papel_ingresso):
         )
         assert cursor.fetchall() == [("billing_ingress_runtime", False, False, False, False, False, False)]
         cursor.execute(
-            """SELECT privilege_type
+            """SELECT table_name, privilege_type
                FROM information_schema.role_table_grants
-               WHERE table_schema='public' AND table_name='evento_cobranca'
-                 AND grantee='billing_ingress_runtime' AND privilege_type='UPDATE'"""
+               WHERE table_schema='public' AND grantee='billing_ingress_runtime'
+                 AND table_name IN ('evento_cobranca', 'assinatura_gateway')
+               ORDER BY table_name, privilege_type"""
         )
         assert cursor.fetchall() == []
         cursor.execute(
-            """SELECT column_name
+            """SELECT table_name, column_name, privilege_type
                FROM information_schema.role_column_grants
-               WHERE table_schema='public' AND table_name='evento_cobranca'
-                 AND grantee='billing_ingress_runtime' AND privilege_type='UPDATE'
-               ORDER BY column_name"""
+               WHERE table_schema='public' AND grantee='billing_ingress_runtime'
+                 AND table_name IN ('evento_cobranca', 'assinatura_gateway')
+               ORDER BY table_name, column_name, privilege_type"""
         )
-        assert cursor.fetchall() == [("last_modified_at",), ("organizacao_id",), ("status",)]
+        assert cursor.fetchall() == []
         cursor.execute(
-            """SELECT p.prosecdef, owner.rolname,
+            """SELECT privilege_type FROM information_schema.role_usage_grants
+               WHERE object_schema='public' AND object_name='evento_cobranca_id_seq'
+                 AND grantee='billing_ingress_runtime'"""
+        )
+        assert cursor.fetchall() == []
+        cursor.execute(
+            """SELECT p.proname, pg_get_function_identity_arguments(p.oid), p.prosecdef, owner.rolname,
                       has_function_privilege('public', p.oid, 'EXECUTE'),
                       has_function_privilege('billing_ingress_runtime', p.oid, 'EXECUTE')
                FROM pg_proc p JOIN pg_roles owner ON owner.oid = p.proowner
-               WHERE p.oid = 'public.faturamento_rotear_evento(bigint)'::regprocedure"""
+               WHERE p.pronamespace='public'::regnamespace
+                 AND p.proname IN ('faturamento_receber_evento', 'faturamento_rotear_evento')
+               ORDER BY p.proname"""
         )
-        seguranca_definidor = cursor.fetchone()
-        assert seguranca_definidor[0] is False
-        assert seguranca_definidor[1] == database["USER"]
-        assert seguranca_definidor[2:] == (False, True)
+        funcoes = cursor.fetchall()
+        assert [(linha[0], linha[2], linha[4:]) for linha in funcoes] == [
+            ("faturamento_receber_evento", True, (False, True)),
+            ("faturamento_rotear_evento", True, (False, True)),
+        ]
+        assert all(linha[3] == database["USER"] for linha in funcoes)
+        cursor.execute(
+            """SELECT polname, polcmd,
+                      ARRAY(SELECT rolname FROM pg_roles WHERE oid=ANY(polroles) ORDER BY rolname)
+               FROM pg_policy
+               WHERE polrelid='public.evento_cobranca'::regclass
+                 AND polname LIKE 'evento_interface_definidor_%'
+               ORDER BY polname"""
+        )
+        assert cursor.fetchall() == [
+            ("evento_interface_definidor_insert", "a", [database["USER"]]),
+            ("evento_interface_definidor_select", "r", [database["USER"]]),
+            ("evento_interface_definidor_update", "w", [database["USER"]]),
+        ]
     conexao = psycopg2.connect(
         dbname=database["NAME"],
         user=PAPEL_INGRESSO,
@@ -287,64 +348,79 @@ def test_rls_real_ingresso_roteia_uma_vez_e_tenant_isola(papel_ingresso):
     )
     try:
         with conexao.cursor() as cursor, pytest.raises(psycopg2.errors.InsufficientPrivilege):
-            cursor.execute("SELECT faturamento_rotear_evento(0)")
+            cursor.execute("SELECT faturamento_rotear_evento('stripe', 'evt-inexistente')")
         conexao.rollback()
+        for tenant_id, ingresso in ((None, None), ("1", "1"), ("0", "0"), ("1", "0")):
+            with conexao.cursor() as cursor:
+                cursor.execute("SET ROLE billing_ingress_runtime")
+                if tenant_id is not None:
+                    cursor.execute("SELECT set_config('rls.tenant_id', %s, true)", [tenant_id])
+                if ingresso is not None:
+                    cursor.execute("SELECT set_config('rls.billing_ingress', %s, true)", [ingresso])
+                with pytest.raises(psycopg2.errors.InsufficientPrivilege):
+                    cursor.execute(
+                        "SELECT faturamento_receber_evento(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        ["stripe", f"evt-contexto-{tenant_id}-{ingresso}", "invoice.paid", "sub-rls", "", "", True, "{}", "a" * 64, None],
+                    )
+            conexao.rollback()
         with conexao, conexao.cursor() as cursor:
             cursor.execute("SET ROLE billing_ingress_runtime")
             cursor.execute("SELECT set_config('rls.tenant_id', '0', true)")
             cursor.execute("SELECT set_config('rls.billing_ingress', '1', true)")
             cursor.execute(
-                """INSERT INTO evento_cobranca
-                   (created_at, last_modified_at, is_active, is_deleted, variante,
-                    identificador_evento, tipo, identificador_assinatura, status, exige_tenant,
-                    tentativas_roteamento, tentativas_processamento,
-                    payload_normalizado, hash_payload, erro,
-                    identificador_checkout, identificador_fatura)
-                   VALUES (NOW(), NOW(), true, false, 'stripe', 'evt-rls',
-                           'invoice.paid', 'sub-rls', 10, true, 0, 0, '{}'::jsonb,
-                           repeat('a', 64), '', '', '') RETURNING id"""
+                "SELECT faturamento_receber_evento(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                ["stripe", "evt-rls", "invoice.paid", "sub-rls", "", "", True, "{}", "a" * 64, None],
             )
-            evento_id = cursor.fetchone()[0]
+            assert cursor.fetchone() == (True,)
+            cursor.execute(
+                "SELECT faturamento_receber_evento(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                ["stripe", "evt-rls", "invoice.paid", "sub-rls", "", "", True, "{}", "a" * 64, None],
+            )
+            assert cursor.fetchone() == (False,)
+
+        with conexao.cursor() as cursor, pytest.raises(psycopg2.errors.InvalidParameterValue):
+            cursor.execute(
+                "SET ROLE billing_ingress_runtime; "
+                "SELECT set_config('rls.tenant_id', '0', true); "
+                "SELECT set_config('rls.billing_ingress', '1', true); "
+                "SELECT faturamento_receber_evento(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                ["stripe", "evt-adulterado", "invoice.paid", "sub-rls", "", "", True, '{"email":"pii@example.test"}', "x", None],
+            )
+        conexao.rollback()
+        assert not EventoCobranca._base_manager.filter(identificador_evento="evt-adulterado").exists()
+
+        evento_id = EventoCobranca._base_manager.get(identificador_evento="evt-rls").pk
 
         with conexao, conexao.cursor() as cursor:
             cursor.execute("SET ROLE billing_ingress_runtime")
             cursor.execute("SELECT set_config('rls.tenant_id', '0', true)")
             cursor.execute("SELECT set_config('rls.billing_ingress', '1', true)")
-            cursor.execute("SELECT set_config('rls.billing_routing_event_id', %s, true)", [str(evento_id)])
-            for coluna, valor in (
-                ("hash_payload", "repeat('b', 64)"),
-                ("payload_normalizado", "'{\"amount\":1}'::jsonb"),
-                ("identificador_evento", "'evt-adulterado'"),
-                ("tipo", "'customer.updated'"),
-                ("status", "30"),
-                ("tentativas_roteamento", "1"),
-                ("tentativas_processamento", "1"),
+            for comando in (
+                "SELECT * FROM evento_cobranca",
+                "INSERT INTO evento_cobranca DEFAULT VALUES",
+                "UPDATE evento_cobranca SET organizacao_id = NULL, status = 20, last_modified_at = NOW() RETURNING id, hash_payload",
+                "UPDATE evento_cobranca SET status = 20 WHERE organizacao_id IS NULL",
+                "DELETE FROM evento_cobranca",
+                "SELECT * FROM assinatura_gateway",
             ):
                 with pytest.raises(psycopg2.errors.InsufficientPrivilege):
-                    cursor.execute(f"UPDATE evento_cobranca SET {coluna} = {valor} WHERE id = %s", [evento_id])
+                    cursor.execute(comando)
                 conexao.rollback()
                 cursor.execute("SET ROLE billing_ingress_runtime")
                 cursor.execute("SELECT set_config('rls.tenant_id', '0', true)")
                 cursor.execute("SELECT set_config('rls.billing_ingress', '1', true)")
-                cursor.execute("SELECT set_config('rls.billing_routing_event_id', %s, true)", [str(evento_id)])
-            with pytest.raises(psycopg2.errors.InsufficientPrivilege):
-                cursor.execute("UPDATE evento_cobranca SET organizacao_id = %s WHERE id = %s", [organizacao.pk, evento_id])
-            conexao.rollback()
 
         with conexao, conexao.cursor() as cursor:
             cursor.execute("SET ROLE billing_ingress_runtime")
             cursor.execute("SELECT set_config('rls.tenant_id', '0', true)")
             cursor.execute("SELECT set_config('rls.billing_ingress', '1', true)")
-            cursor.execute("SELECT faturamento_rotear_evento(%s)", [evento_id])
+            cursor.execute("SELECT faturamento_rotear_evento(%s,%s)", ["stripe", "evt-rls"])
             assert cursor.fetchone() == (True,)
-            cursor.execute("SELECT set_config('rls.billing_routing_event_id', %s, true)", [str(evento_id)])
-            cursor.execute("SELECT id FROM evento_cobranca WHERE id = %s", [evento_id])
-            assert cursor.fetchall() == []
-            cursor.execute("SELECT faturamento_rotear_evento(%s)", [evento_id])
+            cursor.execute("SELECT faturamento_rotear_evento(%s,%s)", ["stripe", "evt-rls"])
             assert cursor.fetchone() == (False,)
 
         with conexao, conexao.cursor() as cursor:
-            cursor.execute("SET ROLE billing_ingress_runtime")
+            cursor.execute("RESET ROLE")
             cursor.execute("SELECT set_config('rls.tenant_id', %s, true)", [str(organizacao.pk)])
             cursor.execute("SELECT set_config('rls.billing_ingress', '0', true)")
             cursor.execute("SELECT id FROM evento_cobranca WHERE id = %s", [evento_id])
@@ -897,7 +973,13 @@ def test_migration_0003_restaura_0002_e_reaplica(papel_ingresso):
         executor = MigrationExecutor(connection)
         executor.migrate([("faturamento", "0003_endurecer_role_e_payload")])
         with connection.cursor() as cursor:
-            cursor.execute("SELECT to_regprocedure('public.faturamento_rotear_evento(bigint)')")
+            cursor.execute("SELECT to_regprocedure('public.faturamento_rotear_evento(text,text)')")
+            assert cursor.fetchone()[0] is not None
+            cursor.execute(
+                """SELECT to_regprocedure(
+                    'public.faturamento_receber_evento(text,text,text,text,text,text,boolean,jsonb,text,timestamp with time zone)'
+                )"""
+            )
             assert cursor.fetchone()[0] is not None
             cursor.execute("SELECT to_regprocedure('public.faturamento_rotear_evento(bigint,bigint)')")
             assert cursor.fetchone() == (None,)
@@ -907,7 +989,7 @@ def test_migration_0003_restaura_0002_e_reaplica(papel_ingresso):
         executor = MigrationExecutor(connection)
         executor.migrate([("faturamento", "0003_endurecer_role_e_payload")])
         with connection.cursor() as cursor:
-            cursor.execute("SELECT to_regprocedure('public.faturamento_rotear_evento(bigint)')")
+            cursor.execute("SELECT to_regprocedure('public.faturamento_rotear_evento(text,text)')")
             assert cursor.fetchone()[0] is not None
     finally:
         MigrationExecutor(connection).migrate(folhas)
