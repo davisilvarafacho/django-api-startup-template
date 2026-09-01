@@ -10,10 +10,10 @@ from rest_framework.views import APIView
 from apps.api.autenticacao.permissions import TokenScopePermission
 from apps.api.autenticacao.recent_auth import RecentAuthenticationPermission, require_recent_auth
 from apps.api.core.errors import APIError, CoreErrorCode, ValidationErrorCode
-from apps.api.core.route_markers import regularizacao_assinatura
+from apps.api.core.route_markers import io_externo_sem_transacao, regularizacao_assinatura
 from apps.assinaturas.errors import BillingErrorCode
 from apps.assinaturas.features import CATALOGO_RECURSOS, ValoresRecursos
-from apps.assinaturas.models import AssinaturaOrganizacao, PropostaComercial, StatusAssinatura
+from apps.assinaturas.models import AssinaturaOrganizacao, ModoAtivacaoProposta, PropostaComercial, StatusAssinatura
 from apps.assinaturas.proposals import ConflitoPropostaComercial, Propostas
 from apps.assinaturas.schema import (
     document_proposal_accept,
@@ -40,6 +40,7 @@ from apps.assinaturas.subscriptions import (
     ConflitoIdempotenciaAssinatura,
     ConflitoRevisaoAssinatura,
 )
+from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.models import Papel
 from apps.organizacoes.permissions import TenantPermission
@@ -157,6 +158,7 @@ class CancelamentoAssinaturaView(_AssinaturaSessionView):
 
 
 @regularizacao_assinatura
+@io_externo_sem_transacao
 class AceitarPropostaView(APIView):
     """Traduz o aceite HTTP para o caso de uso nominal, sem CRUD de proposta."""
 
@@ -178,9 +180,13 @@ class AceitarPropostaView(APIView):
         if vinculo is None or vinculo.papel != Papel.PROPRIETARIO:
             raise APIError(OrganizationErrorCode.ROLE_INSUFFICIENT, status_code=status.HTTP_403_FORBIDDEN)
 
-        proposta = PropostaComercial.objects.filter(pk=id, organizacao_id=request.organizacao_id).first()
+        with organizacao_atual_privilegiada(request.organizacao_id):
+            proposta = PropostaComercial.objects.filter(pk=id, organizacao_id=request.organizacao_id).first()
         if proposta is None:
             raise APIError(CoreErrorCode.NOT_FOUND, status_code=status.HTTP_404_NOT_FOUND)
+        chave = serializer.validated_data.get("chave_idempotencia")
+        if proposta.modo_ativacao == ModoAtivacaoProposta.PAGAMENTO and not chave:
+            raise APIError(ValidationErrorCode.INVALID, status_code=status.HTTP_400_BAD_REQUEST)
 
         try:
             resultado = Propostas.aceitar(
@@ -192,11 +198,30 @@ class AceitarPropostaView(APIView):
             raise APIError(BillingErrorCode.PROPOSAL_INVALID, status_code=status.HTTP_409_CONFLICT) from exc
 
         proposta = resultado.proposta
+        preparacao_checkout = asdict(resultado.preparacao_checkout) if resultado.preparacao_checkout is not None else None
+        if preparacao_checkout is not None:
+            assert chave is not None
+            from apps.assinaturas.subapps.faturamento.checkouts import CriacaoCheckout
+            from apps.assinaturas.subapps.faturamento.models import FinalidadeCheckout
+            from apps.assinaturas.subapps.faturamento.views import _executar
+
+            with organizacao_atual_privilegiada(request.organizacao_id):
+                assinatura = AssinaturaOrganizacao.objects.get(organizacao_id=request.organizacao_id)
+            checkout = _executar(
+                CriacaoCheckout(
+                    assinatura=assinatura,
+                    finalidade=FinalidadeCheckout.PROPOSTA,
+                    chave_idempotencia=chave,
+                    proposta=proposta,
+                    ator=request.user,
+                )
+            ).checkout
+            preparacao_checkout.update(checkout_id=checkout.pk, checkout_url=checkout.url)
         payload = {
             "id": proposta.pk,
             "status": proposta.status,
             "revisao": proposta.revisao,
             "modo_ativacao": proposta.modo_ativacao,
-            "preparacao_checkout": asdict(resultado.preparacao_checkout) if resultado.preparacao_checkout is not None else None,
+            "preparacao_checkout": preparacao_checkout,
         }
         return Response(AceitarPropostaResponseSerializer(payload).data)

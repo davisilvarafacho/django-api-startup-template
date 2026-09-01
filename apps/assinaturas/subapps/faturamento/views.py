@@ -11,6 +11,7 @@ from apps.assinaturas.models import AlteracaoAssinatura, PropostaComercial
 from apps.assinaturas.subapps.faturamento.checkouts import CheckoutsCobranca, ConflitoCheckout, CriacaoCheckout, FalhaCheckoutIncerta
 from apps.assinaturas.subapps.faturamento.errors import ErrosFaturamento
 from apps.assinaturas.subapps.faturamento.models import CheckoutCobranca, FinalidadeCheckout
+from apps.assinaturas.subapps.faturamento.schema import document_checkout_create, document_checkout_list, document_setup_create
 from apps.assinaturas.subapps.faturamento.serializers import (
     CheckoutResponseSerializer,
     CriarCheckoutRequestSerializer,
@@ -44,6 +45,7 @@ def _executar(criacao):
 @regularizacao_assinatura
 @io_externo_sem_transacao
 class CriarCheckoutAssinaturaView(_FaturamentoSessionView):
+    @document_checkout_create
     @require_recent_auth()
     def post(self, request):
         self.exigir_papel(request, Papel.PROPRIETARIO)
@@ -76,6 +78,7 @@ class CriarCheckoutAssinaturaView(_FaturamentoSessionView):
 
 @regularizacao_assinatura
 class ListarCheckoutsView(_FaturamentoSessionView):
+    @document_checkout_list
     def get(self, request):
         self.exigir_papel(request, Papel.ADMINISTRADOR)
         checkouts = CheckoutCobranca.objects.order_by("-created_at", "-pk")[:100]
@@ -85,6 +88,7 @@ class ListarCheckoutsView(_FaturamentoSessionView):
 @regularizacao_assinatura
 @io_externo_sem_transacao
 class CriarCheckoutFormaPagamentoView(_FaturamentoSessionView):
+    @document_setup_create
     @require_recent_auth()
     def post(self, request):
         self.exigir_papel(request, Papel.ADMINISTRADOR)

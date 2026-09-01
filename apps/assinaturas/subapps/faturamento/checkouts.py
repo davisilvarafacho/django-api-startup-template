@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import TYPE_CHECKING
 
+from django.conf import settings
 from django.core import signing
+from django.db import IntegrityError
 
 from django_checkouts import get_checkout_gateway
-from django_checkouts.enums import BillingCycle, CheckoutMode
+from django_checkouts.enums import BillingCycle, CheckoutMode, RetryDisposition
 from django_checkouts.exceptions import GatewayPermanentError, GatewayTemporaryError
-from django_checkouts.types import CatalogPrice, CheckoutCreate, CheckoutItem, InlinePrice, Recurrence
+from django_checkouts.types import CatalogPrice, CheckoutCreate, CheckoutItem, InlinePrice, Recurrence, Setup, SetupCreate
 from prometheus_client import Counter
 
 from apps.assinaturas.models import (
@@ -51,6 +55,10 @@ class FalhaCheckoutIncerta(ConflitoCheckout):
     """O gateway pode ter criado a sessão; é obrigatório conciliar antes de repetir."""
 
 
+class CheckoutPendente(ConflitoCheckout):
+    """Já há uma chamada ao gateway em andamento para a operação."""
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CriacaoCheckout:
     assinatura: AssinaturaOrganizacao
@@ -80,7 +88,7 @@ class ResultadoCheckout:
 class _Preparacao:
     checkout_id: int
     organizacao_id: int
-    request: CheckoutCreate | None
+    request: CheckoutCreate | SetupCreate | None
     chave_gateway: str
     existente: bool
 
@@ -112,28 +120,50 @@ class CheckoutsCobranca:
         referencia = criar_referencia_checkout(preparacao.checkout_id, preparacao.organizacao_id)
         if preparacao.existente:
             with organizacao_atual_privilegiada(preparacao.organizacao_id):
-                return ResultadoCheckout(CheckoutCobranca.objects.get(pk=preparacao.checkout_id), referencia)
+                checkout = CheckoutCobranca.objects.get(pk=preparacao.checkout_id)
+                if checkout.status == StatusCheckout.ABERTO and checkout.url:
+                    return ResultadoCheckout(checkout, referencia)
+                raise CheckoutPendente("O checkout desta operação ainda está sendo criado.")
         assert preparacao.request is not None
-        request = CheckoutCreate(
-            items=preparacao.request.items,
-            success_url=preparacao.request.success_url,
-            cancel_url=preparacao.request.cancel_url,
-            mode=preparacao.request.mode,
-            payment_methods=preparacao.request.payment_methods,
-            customer=preparacao.request.customer,
-            recurrence=preparacao.request.recurrence,
-            reference_id=referencia,
-            expires_at=preparacao.request.expires_at,
-            metadata=preparacao.request.metadata,
-            gateway_options=preparacao.request.gateway_options,
-        )
+        if isinstance(preparacao.request, SetupCreate):
+            request = SetupCreate(
+                success_url=preparacao.request.success_url,
+                cancel_url=preparacao.request.cancel_url,
+                payment_methods=preparacao.request.payment_methods,
+                customer=preparacao.request.customer,
+                reference_id=referencia,
+                metadata=preparacao.request.metadata,
+            )
+            command = client.setups.create
+        else:
+            request = CheckoutCreate(
+                items=preparacao.request.items,
+                success_url=preparacao.request.success_url,
+                cancel_url=preparacao.request.cancel_url,
+                mode=preparacao.request.mode,
+                payment_methods=preparacao.request.payment_methods,
+                customer=preparacao.request.customer,
+                recurrence=preparacao.request.recurrence,
+                reference_id=referencia,
+                expires_at=preparacao.request.expires_at,
+                metadata=preparacao.request.metadata,
+                gateway_options=preparacao.request.gateway_options,
+            )
+            command = client.checkouts.create
         try:
-            remoto = client.checkouts.create(request, idempotency_key=preparacao.chave_gateway)
+            remoto = command(request, idempotency_key=preparacao.chave_gateway)
         except GatewayPermanentError as exc:
-            cls.falhar(preparacao, incerta=False)
+            incerta = exc.retry_advice.disposition != RetryDisposition.NEVER
+            cls.falhar(preparacao, incerta=incerta)
+            if incerta:
+                raise FalhaCheckoutIncerta("A criação precisa ser conciliada antes de nova tentativa.") from exc
             CHECKOUTS_TOTAL.labels(finalidade=criacao.finalidade.label, resultado="falha_conhecida").inc()
             raise ConflitoCheckout("O gateway recusou a criação do checkout.") from exc
         except GatewayTemporaryError as exc:
+            cls.falhar(preparacao, incerta=True)
+            CHECKOUTS_TOTAL.labels(finalidade=criacao.finalidade.label, resultado="falha_incerta").inc()
+            raise FalhaCheckoutIncerta("A criação precisa ser conciliada antes de nova tentativa.") from exc
+        except Exception as exc:
             cls.falhar(preparacao, incerta=True)
             CHECKOUTS_TOTAL.labels(finalidade=criacao.finalidade.label, resultado="falha_incerta").inc()
             raise FalhaCheckoutIncerta("A criação precisa ser conciliada antes de nova tentativa.") from exc
@@ -146,56 +176,107 @@ class CheckoutsCobranca:
         organizacao_id = criacao.assinatura.organizacao_id
         with organizacao_atual_privilegiada(organizacao_id):
             assinatura = AssinaturaOrganizacao.all_objects.select_for_update(of=("self",)).get(pk=criacao.assinatura.pk)
-            cls._validar_finalidade(criacao, assinatura)
+            alteracao = None
+            if criacao.alteracao is not None:
+                alteracao = AlteracaoAssinatura.all_objects.select_for_update(of=("self",)).get(pk=criacao.alteracao.pk)
+            proposta = None
+            if criacao.proposta is not None:
+                from apps.assinaturas.models import PropostaComercial
+
+                proposta = PropostaComercial.all_objects.select_for_update(of=("self",)).get(pk=criacao.proposta.pk)
+            cls._validar_finalidade(criacao, assinatura, alteracao=alteracao, proposta=proposta)
+            total, moeda, preco, valores = cls._snapshot(criacao, assinatura, alteracao=alteracao, proposta=proposta)
+            operacao_chave = cls._operacao_chave(criacao, assinatura, alteracao=alteracao, proposta=proposta)
+            snapshot_hash = cls._snapshot_hash(criacao, assinatura, total, moeda, valores, alteracao=alteracao, proposta=proposta)
+            request: CheckoutCreate | SetupCreate
             if criacao.finalidade == FinalidadeCheckout.FORMA_PAGAMENTO:
-                raise ConflitoCheckout("A variante não declara capability de setup de forma de pagamento.")
-            total, moeda, preco, valores = cls._snapshot(criacao, assinatura)
+                if not client.capabilities.checkouts.supports_setup:
+                    raise ConflitoCheckout("A variante não declara capability de setup de forma de pagamento.")
+                request = SetupCreate(success_url=settings.BILLING_CHECKOUT_SUCCESS_URL, cancel_url=settings.BILLING_CHECKOUT_CANCEL_URL)
+            else:
+                items = cls._itens(client, criacao.variante, preco, valores, moeda)
+                cycle = BillingCycle.MONTHLY if valores["periodicidade"] == Periodicidade.MENSAL else BillingCycle.YEARLY
+                if cycle not in client.capabilities.checkouts.billing_cycles:
+                    raise ConflitoCheckout("O gateway não suporta a periodicidade solicitada.")
+                request = CheckoutCreate(
+                    items=items,
+                    success_url=settings.BILLING_CHECKOUT_SUCCESS_URL,
+                    cancel_url=settings.BILLING_CHECKOUT_CANCEL_URL,
+                    mode=CheckoutMode.SUBSCRIPTION,
+                    recurrence=Recurrence(cycle=cycle),
+                )
             existente = CheckoutCobranca.objects.filter(chave_idempotencia=criacao.chave_idempotencia).first()
             if existente is not None:
                 coerente = (
                     existente.assinatura_id == assinatura.pk
                     and existente.finalidade == criacao.finalidade
-                    and existente.alteracao_id == getattr(criacao.alteracao, "pk", None)
-                    and existente.proposta_id == getattr(criacao.proposta, "pk", None)
+                    and existente.alteracao_id == getattr(alteracao, "pk", None)
+                    and existente.proposta_id == getattr(proposta, "pk", None)
                     and existente.valor_esperado_centavos == total
                     and existente.moeda_esperada == moeda
                     and existente.variante == criacao.variante
+                    and existente.snapshot_hash == snapshot_hash
                 )
                 if not coerente or existente.status in STATUS_TERMINAIS:
                     raise ConflitoCheckout("A chave idempotente já foi usada para outro estado ou conteúdo.")
                 return _Preparacao(existente.pk, organizacao_id, None, cls._chave_gateway(organizacao_id, criacao.chave_idempotencia), True)
-            items = cls._itens(client, criacao.variante, preco, valores, moeda)
-            checkout = CheckoutCobranca.objects.create(
-                organizacao_id=organizacao_id,
-                assinatura=assinatura,
-                alteracao=criacao.alteracao,
-                proposta=criacao.proposta,
-                finalidade=criacao.finalidade,
-                status=StatusCheckout.AGUARDANDO_GATEWAY,
-                chave_idempotencia=criacao.chave_idempotencia,
-                variante=criacao.variante,
-                valor_esperado_centavos=total,
-                moeda_esperada=moeda,
-                created_by=criacao.ator,
-            )
-            if criacao.alteracao is not None:
-                Assinaturas.marcar_aguardando_gateway(criacao.alteracao)
-            request = CheckoutCreate(
-                items=items,
-                success_url="https://app.example/assinatura/checkout/sucesso",
-                cancel_url="https://app.example/assinatura/checkout/cancelado",
-                mode=CheckoutMode.SUBSCRIPTION,
-                recurrence=Recurrence(cycle=BillingCycle.MONTHLY if valores["periodicidade"] == Periodicidade.MENSAL else BillingCycle.YEARLY),
-            )
+            if CheckoutCobranca.objects.filter(
+                operacao_chave=operacao_chave, status__in=(StatusCheckout.CRIADO, StatusCheckout.AGUARDANDO_GATEWAY, StatusCheckout.ABERTO)
+            ).exists():
+                raise CheckoutPendente("Já existe checkout pendente para esta operação.")
+            try:
+                checkout = CheckoutCobranca.objects.create(
+                    organizacao_id=organizacao_id,
+                    assinatura=assinatura,
+                    alteracao=alteracao,
+                    proposta=proposta,
+                    finalidade=criacao.finalidade,
+                    status=StatusCheckout.AGUARDANDO_GATEWAY,
+                    chave_idempotencia=criacao.chave_idempotencia,
+                    operacao_chave=operacao_chave,
+                    snapshot_hash=snapshot_hash,
+                    variante=criacao.variante,
+                    valor_esperado_centavos=total,
+                    moeda_esperada=moeda,
+                    created_by=criacao.ator,
+                )
+            except IntegrityError as exc:
+                raise CheckoutPendente("Já existe checkout pendente para esta operação.") from exc
+            if alteracao is not None:
+                Assinaturas.marcar_aguardando_gateway(alteracao)
             return _Preparacao(checkout.pk, organizacao_id, request, cls._chave_gateway(organizacao_id, criacao.chave_idempotencia), False)
 
     @classmethod
-    def confirmar(cls, preparacao: _Preparacao, remoto: Checkout) -> CheckoutCobranca:
+    def confirmar(cls, preparacao: _Preparacao, remoto: Checkout | Setup) -> CheckoutCobranca:
         with organizacao_atual_privilegiada(preparacao.organizacao_id):
+            ponte = CheckoutCobranca.objects.only("assinatura_id").get(pk=preparacao.checkout_id)
+            assinatura = AssinaturaOrganizacao.all_objects.select_for_update(of=("self",)).get(pk=ponte.assinatura_id)
             checkout = CheckoutCobranca.objects.select_for_update().get(pk=preparacao.checkout_id)
             if checkout.status != StatusCheckout.AGUARDANDO_GATEWAY:
                 raise ConflitoCheckout("A tentativa deixou de ser vigente durante a comunicação com o gateway.")
-            if remoto.amount_total != checkout.valor_esperado_centavos or remoto.currency != checkout.moeda_esperada:
+            alteracao = None
+            if checkout.alteracao_id:
+                alteracao = AlteracaoAssinatura.all_objects.select_for_update(of=("self",)).get(pk=checkout.alteracao_id)
+            proposta = None
+            if checkout.proposta_id:
+                from apps.assinaturas.models import PropostaComercial
+
+                proposta = PropostaComercial.all_objects.select_for_update(of=("self",)).get(pk=checkout.proposta_id)
+            intencao = CriacaoCheckout(
+                assinatura=assinatura,
+                finalidade=FinalidadeCheckout(checkout.finalidade),
+                chave_idempotencia=checkout.chave_idempotencia,
+                alteracao=alteracao,
+                proposta=proposta,
+                variante=checkout.variante,
+            )
+            total, moeda, _, valores = cls._snapshot(intencao, assinatura, alteracao=alteracao, proposta=proposta)
+            atual = cls._snapshot_hash(intencao, assinatura, total, moeda, valores, alteracao=alteracao, proposta=proposta)
+            if atual != checkout.snapshot_hash:
+                raise FalhaCheckoutIncerta("A operação mudou durante a chamada; o checkout exige conciliação.")
+            if not isinstance(remoto, Setup) and (
+                remoto.amount_total != checkout.valor_esperado_centavos or remoto.currency != checkout.moeda_esperada
+            ):
                 checkout.status = StatusCheckout.FALHOU
                 checkout.save(update_fields=["status", "last_modified_at"])
                 raise ConflitoCheckout("O total normalizado do gateway diverge do snapshot local.")
@@ -209,6 +290,8 @@ class CheckoutsCobranca:
     @classmethod
     def falhar(cls, preparacao: _Preparacao, *, incerta: bool) -> None:
         with organizacao_atual_privilegiada(preparacao.organizacao_id):
+            ponte = CheckoutCobranca.objects.only("assinatura_id").get(pk=preparacao.checkout_id)
+            AssinaturaOrganizacao.all_objects.select_for_update(of=("self",)).get(pk=ponte.assinatura_id)
             checkout = CheckoutCobranca.objects.select_for_update().get(pk=preparacao.checkout_id)
             if checkout.status == StatusCheckout.AGUARDANDO_GATEWAY and not incerta:
                 checkout.status = StatusCheckout.FALHOU
@@ -223,35 +306,27 @@ class CheckoutsCobranca:
         return f"org:{organizacao_id}:checkout:{chave}"
 
     @staticmethod
-    def _validar_finalidade(criacao: CriacaoCheckout, assinatura: AssinaturaOrganizacao) -> None:
+    def _validar_finalidade(criacao: CriacaoCheckout, assinatura: AssinaturaOrganizacao, *, alteracao=None, proposta=None) -> None:
         if assinatura.status == StatusAssinatura.ENCERRADA:
             raise ConflitoCheckout("Assinatura encerrada não aceita checkout.")
         if criacao.finalidade == FinalidadeCheckout.CONTRATACAO and assinatura.status != StatusAssinatura.PENDENTE:
             raise ConflitoCheckout("Contratação exige assinatura pendente.")
         if criacao.finalidade == FinalidadeCheckout.ALTERACAO:
-            if (
-                criacao.alteracao is None
-                or criacao.alteracao.assinatura_id != assinatura.pk
-                or criacao.alteracao.status != StatusAlteracaoAssinatura.SOLICITADA
-            ):
+            if alteracao is None or alteracao.assinatura_id != assinatura.pk or alteracao.status != StatusAlteracaoAssinatura.SOLICITADA:
                 raise ConflitoCheckout("Alteração não está disponível para checkout.")
         elif criacao.alteracao is not None:
             raise ConflitoCheckout("Esta finalidade não aceita alteração.")
         if criacao.finalidade == FinalidadeCheckout.PROPOSTA:
-            if (
-                criacao.proposta is None
-                or criacao.proposta.organizacao_id != assinatura.organizacao_id
-                or criacao.proposta.status != StatusPropostaComercial.ACEITA
-            ):
+            if proposta is None or proposta.organizacao_id != assinatura.organizacao_id or proposta.status != StatusPropostaComercial.ACEITA:
                 raise ConflitoCheckout("Proposta não está aceita para checkout.")
         elif criacao.proposta is not None:
             raise ConflitoCheckout("Esta finalidade não aceita proposta.")
 
     @staticmethod
-    def _snapshot(criacao: CriacaoCheckout, assinatura: AssinaturaOrganizacao):
+    def _snapshot(criacao: CriacaoCheckout, assinatura: AssinaturaOrganizacao, *, alteracao=None, proposta=None):
         if criacao.finalidade == FinalidadeCheckout.ALTERACAO:
-            assert criacao.alteracao is not None
-            snapshot = criacao.alteracao.snapshot_pretendido
+            assert alteracao is not None
+            snapshot = alteracao.snapshot_pretendido
             valores = {
                 "valor_base_centavos": snapshot["valor_base_centavos"],
                 "valor_seat_centavos": snapshot["valor_seat_centavos"],
@@ -263,8 +338,8 @@ class CheckoutsCobranca:
             versao_id = snapshot.get("versao_plano_id")
         else:
             if criacao.finalidade == FinalidadeCheckout.PROPOSTA:
-                assert criacao.proposta is not None
-                origem = criacao.proposta
+                assert proposta is not None
+                origem = proposta
                 versao_id = origem.versao_plano_referencia_id
             else:
                 origem = assinatura
@@ -283,6 +358,29 @@ class CheckoutsCobranca:
         if versao_id is not None:
             preco = PrecoPlano.objects.filter(versao_plano_id=versao_id, periodicidade=valores["periodicidade"], moeda=moeda).first()
         return total, moeda, preco, valores
+
+    @staticmethod
+    def _operacao_chave(criacao, assinatura, *, alteracao=None, proposta=None) -> str:
+        if alteracao is not None:
+            return f"alteracao:{alteracao.pk}"
+        if proposta is not None:
+            return f"proposta:{proposta.pk}"
+        return f"{criacao.finalidade}:{assinatura.pk}:{assinatura.revisao}"
+
+    @staticmethod
+    def _snapshot_hash(criacao, assinatura, total, moeda, valores, *, alteracao=None, proposta=None) -> str:
+        payload = {
+            "finalidade": int(criacao.finalidade),
+            "assinatura": assinatura.pk,
+            "revisao_assinatura": assinatura.revisao,
+            "alteracao": getattr(alteracao, "pk", None),
+            "proposta": getattr(proposta, "pk", None),
+            "revisao_proposta": getattr(proposta, "revisao", None),
+            "total": total,
+            "moeda": moeda,
+            "valores": valores,
+        }
+        return sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
 
     @staticmethod
     def _itens(client: CheckoutClient, variante: str, preco: PrecoPlano | None, valores: dict, moeda: str):

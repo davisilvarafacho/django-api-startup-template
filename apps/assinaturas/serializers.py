@@ -104,6 +104,7 @@ class CancelamentoAssinaturaResponseSerializer(serializers.Serializer):
 
 class AceitarPropostaRequestSerializer(serializers.Serializer):
     revisao_esperada = serializers.IntegerField(min_value=1, max_value=32_767)
+    chave_idempotencia = serializers.CharField(min_length=1, max_length=120, required=False)
 
 
 class PreparacaoCheckoutPropostaSerializer(serializers.Serializer):
@@ -112,6 +113,8 @@ class PreparacaoCheckoutPropostaSerializer(serializers.Serializer):
     revisao = serializers.IntegerField()
     moeda = serializers.CharField()
     total_centavos = serializers.IntegerField()
+    checkout_id = serializers.IntegerField(required=False)
+    checkout_url = serializers.URLField(required=False)
 
 
 class AceitarPropostaResponseSerializer(serializers.Serializer):

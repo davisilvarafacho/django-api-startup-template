@@ -1,6 +1,7 @@
 """Contrato HTTP fino do aceite de proposta comercial."""
 
 from datetime import timedelta
+from types import SimpleNamespace
 
 from django.utils import timezone
 
@@ -73,14 +74,21 @@ def _organizacao_do(usuario, *, nome: str, slug: str, papel=Papel.PROPRIETARIO) 
     return organizacao
 
 
-def test_proprietario_aceita_proposta_com_revisao_e_recebe_preparacao_tipificada():
+def test_proprietario_aceita_proposta_com_revisao_e_recebe_checkout_autoritativo(monkeypatch):
     proprietario = criar_usuario(email="owner-proposta-api@example.com")
     organizacao = _organizacao_do(proprietario, nome="Proposta API", slug="proposta-api")
     proposta = _proposta_enviada(organizacao)
+    from apps.assinaturas.subapps.faturamento import views as billing_views
+
+    monkeypatch.setattr(
+        billing_views,
+        "_executar",
+        lambda criacao: SimpleNamespace(checkout=SimpleNamespace(pk=91, url="https://checkout.example/proposta")),
+    )
 
     response = _client(proprietario, organizacao).post(
         f"/assinatura/propostas/{proposta.pk}/aceitar/",
-        {"revisao_esperada": proposta.revisao},
+        {"revisao_esperada": proposta.revisao, "chave_idempotencia": "aceite-proposta-1"},
         format="json",
     )
 
@@ -98,8 +106,25 @@ def test_proprietario_aceita_proposta_com_revisao_e_recebe_preparacao_tipificada
             "revisao": 3,
             "moeda": "BRL",
             "total_centavos": 195_000,
+            "checkout_id": 91,
+            "checkout_url": "https://checkout.example/proposta",
         },
     }
+
+
+def test_proposta_pagamento_sem_chave_nao_e_aceita():
+    proprietario = criar_usuario(email="owner-proposta-sem-chave@example.com")
+    organizacao = _organizacao_do(proprietario, nome="Sem chave", slug="proposta-sem-chave")
+    proposta = _proposta_enviada(organizacao)
+
+    response = _client(proprietario, organizacao).post(
+        f"/assinatura/propostas/{proposta.pk}/aceitar/", {"revisao_esperada": proposta.revisao}, format="json"
+    )
+
+    assert response.status_code == 400
+    with organizacao_atual_privilegiada(organizacao.pk):
+        proposta.refresh_from_db()
+    assert proposta.status == StatusPropostaComercial.ENVIADA
 
 
 def test_aceite_exige_sessao_recente_e_papel_proprietario():
@@ -156,7 +181,7 @@ def test_revisao_invalida_retorna_conflito_publico_estavel():
 
     response = _client(proprietario, organizacao).post(
         f"/assinatura/propostas/{proposta.pk}/aceitar/",
-        {"revisao_esperada": 99},
+        {"revisao_esperada": 99, "chave_idempotencia": "revisao-invalida"},
         format="json",
     )
 

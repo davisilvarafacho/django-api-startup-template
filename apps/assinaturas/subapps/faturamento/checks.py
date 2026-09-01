@@ -8,9 +8,13 @@ def configuracao_faturamento_check(app_configs, **kwargs):
     del app_configs, kwargs
     stripe = settings.CHECKOUT_VARIANTS.get("stripe")
     configuracao = stripe[1] if isinstance(stripe, (tuple, list)) and len(stripe) == 2 and isinstance(stripe[1], dict) else {}
+    erros = []
     if not all(configuracao.get(key) for key in ("api_key", "webhook_secret")):
-        return [Error("Credenciais Stripe não configuradas.", id="faturamento.E001")]
-    return []
+        erros.append(Error("Credenciais Stripe não configuradas.", id="faturamento.E001"))
+    urls = (settings.BILLING_CHECKOUT_SUCCESS_URL, settings.BILLING_CHECKOUT_CANCEL_URL)
+    if settings.IN_PRODUCTION and not all(url.startswith("https://") for url in urls):
+        erros.append(Error("URLs de retorno do checkout devem usar HTTPS em produção.", id="faturamento.E006"))
+    return erros
 
 
 def _erro(message, error_id, hint):

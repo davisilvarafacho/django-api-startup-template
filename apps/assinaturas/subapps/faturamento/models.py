@@ -104,6 +104,8 @@ class CheckoutCobranca(Base):
     finalidade = models.PositiveSmallIntegerField(choices=FinalidadeCheckout.choices)
     status = models.PositiveSmallIntegerField(choices=StatusCheckout.choices, default=StatusCheckout.CRIADO)
     chave_idempotencia = models.CharField(max_length=120)
+    operacao_chave = models.CharField(max_length=180)
+    snapshot_hash = models.CharField(max_length=64)
     variante = models.CharField(max_length=50)
     identificador_externo = models.CharField(max_length=255, null=True, blank=True)
     url = models.URLField(max_length=2048, blank=True)
@@ -123,6 +125,12 @@ class CheckoutCobranca(Base):
         db_table = "checkout_cobranca"
         constraints = [
             models.UniqueConstraint(fields=("organizacao", "chave_idempotencia"), name="checkout_chave_unica_por_org"),
+            models.UniqueConstraint(
+                fields=("organizacao", "operacao_chave"),
+                condition=~models.Q(operacao_chave="")
+                & models.Q(status__in=(StatusCheckout.CRIADO, StatusCheckout.AGUARDANDO_GATEWAY, StatusCheckout.ABERTO)),
+                name="checkout_operacao_pendente_unica",
+            ),
             models.UniqueConstraint(
                 fields=("variante", "identificador_externo"),
                 condition=models.Q(identificador_externo__isnull=False),

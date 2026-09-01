@@ -402,6 +402,9 @@ CHECKOUT_VARIANTS = {
         },
     )
 }
+_BILLING_LOCAL_URL = "http://localhost:3000/assinatura/checkout"
+BILLING_CHECKOUT_SUCCESS_URL = get_env_var("BILLING_CHECKOUT_SUCCESS_URL", "" if IN_PRODUCTION else f"{_BILLING_LOCAL_URL}/sucesso")
+BILLING_CHECKOUT_CANCEL_URL = get_env_var("BILLING_CHECKOUT_CANCEL_URL", "" if IN_PRODUCTION else f"{_BILLING_LOCAL_URL}/cancelado")
 BILLING_INGRESS_DATABASE_ROLE = get_env_var("BILLING_INGRESS_DATABASE_ROLE", "billing_ingress_runtime")
 BILLING_DATABASE_OWNER_ROLE = get_env_var("BILLING_DATABASE_OWNER_ROLE", "billing_functions_owner")
 BILLING_DATABASE_MODE = get_env_var("BILLING_DATABASE_MODE", "web")
