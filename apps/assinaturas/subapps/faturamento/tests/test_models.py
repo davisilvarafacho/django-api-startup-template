@@ -338,16 +338,16 @@ def test_check_deploy_rejeita_nomes_e_modo_arbitrarios():
             "DROP POLICY evento_ingresso_permissiva ON evento_cobranca",
         ),
         (
-            "ALTER FUNCTION faturamento_rotear_evento(text,text) RESET search_path",
-            "ALTER FUNCTION faturamento_rotear_evento(text,text) SET search_path=pg_catalog,pg_temp",
+            "ALTER FUNCTION faturamento_rotear_evento_destino(bigint,bigint) RESET search_path",
+            "ALTER FUNCTION faturamento_rotear_evento_destino(bigint,bigint) SET search_path=pg_catalog,pg_temp",
         ),
         (
-            "REVOKE EXECUTE ON FUNCTION faturamento_rotear_evento(text,text) FROM billing_ingress_runtime",
-            "GRANT EXECUTE ON FUNCTION faturamento_rotear_evento(text,text) TO billing_ingress_runtime",
+            "REVOKE EXECUTE ON FUNCTION faturamento_rotear_evento_destino(bigint,bigint) FROM billing_ingress_runtime",
+            "GRANT EXECUTE ON FUNCTION faturamento_rotear_evento_destino(bigint,bigint) TO billing_ingress_runtime",
         ),
         (
-            "GRANT EXECUTE ON FUNCTION faturamento_rotear_evento(text,text) TO PUBLIC",
-            "REVOKE EXECUTE ON FUNCTION faturamento_rotear_evento(text,text) FROM PUBLIC",
+            "GRANT EXECUTE ON FUNCTION faturamento_rotear_evento_destino(bigint,bigint) TO PUBLIC",
+            "REVOKE EXECUTE ON FUNCTION faturamento_rotear_evento_destino(bigint,bigint) FROM PUBLIC",
         ),
         (
             "ALTER POLICY evento_interface_definidor_select ON evento_cobranca USING (false)",
@@ -360,8 +360,8 @@ def test_check_deploy_rejeita_nomes_e_modo_arbitrarios():
             "CREATE POLICY evento_interface_definidor_select ON evento_cobranca FOR SELECT TO billing_functions_owner USING (true)",
         ),
         (
-            "CREATE FUNCTION faturamento_rotear_evento(text) RETURNS boolean LANGUAGE sql AS 'SELECT false'",
-            "DROP FUNCTION faturamento_rotear_evento(text)",
+            "CREATE FUNCTION faturamento_rotear_evento(text,text) RETURNS boolean LANGUAGE sql AS 'SELECT false'",
+            "DROP FUNCTION faturamento_rotear_evento(text,text)",
         ),
         ("ALTER TABLE evento_cobranca DISABLE ROW LEVEL SECURITY", "ALTER TABLE evento_cobranca ENABLE ROW LEVEL SECURITY"),
         ("ALTER TABLE evento_cobranca NO FORCE ROW LEVEL SECURITY", "ALTER TABLE evento_cobranca FORCE ROW LEVEL SECURITY"),
@@ -493,13 +493,13 @@ def test_rls_real_ingresso_roteia_uma_vez_e_tenant_isola(papel_ingresso):
                       has_function_privilege('billing_ingress_runtime', p.oid, 'EXECUTE')
                FROM pg_proc p JOIN pg_roles owner ON owner.oid = p.proowner
                WHERE p.pronamespace='public'::regnamespace
-                 AND p.proname IN ('faturamento_receber_evento', 'faturamento_rotear_evento')
+                 AND p.proname IN ('faturamento_ingress_evento', 'faturamento_rotear_evento_destino')
                ORDER BY p.proname"""
         )
         funcoes = cursor.fetchall()
         assert [(linha[0], linha[2], linha[4:]) for linha in funcoes] == [
-            ("faturamento_receber_evento", True, (False, True)),
-            ("faturamento_rotear_evento", True, (False, True)),
+            ("faturamento_ingress_evento", True, (False, True)),
+            ("faturamento_rotear_evento_destino", True, (False, True)),
         ]
         assert all(linha[3] == settings.BILLING_DATABASE_OWNER_ROLE for linha in funcoes)
         cursor.execute(
@@ -524,7 +524,7 @@ def test_rls_real_ingresso_roteia_uma_vez_e_tenant_isola(papel_ingresso):
     )
     try:
         with conexao.cursor() as cursor, pytest.raises(psycopg2.errors.InsufficientPrivilege):
-            cursor.execute("SELECT faturamento_rotear_evento('stripe', 'evt-inexistente')")
+            cursor.execute("SELECT faturamento_rotear_evento_destino(1, 1)")
         conexao.rollback()
         for tenant_id, ingresso in ((None, None), ("1", "1"), ("0", "0"), ("1", "0")):
             with conexao.cursor() as cursor:
@@ -535,7 +535,7 @@ def test_rls_real_ingresso_roteia_uma_vez_e_tenant_isola(papel_ingresso):
                     cursor.execute("SELECT set_config('rls.billing_ingress', %s, true)", [ingresso])
                 with pytest.raises(psycopg2.errors.InsufficientPrivilege):
                     cursor.execute(
-                        "SELECT faturamento_receber_evento(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        "SELECT * FROM faturamento_ingress_evento(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                         ["stripe", f"evt-contexto-{tenant_id}-{ingresso}", "invoice.paid", "sub-rls", "", "", True, "{}", "a" * 64, None],
                     )
             conexao.rollback()
@@ -544,22 +544,23 @@ def test_rls_real_ingresso_roteia_uma_vez_e_tenant_isola(papel_ingresso):
             cursor.execute("SELECT set_config('rls.tenant_id', '0', true)")
             cursor.execute("SELECT set_config('rls.billing_ingress', '1', true)")
             cursor.execute(
-                "SELECT faturamento_receber_evento(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                "SELECT * FROM faturamento_ingress_evento(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 ["stripe", "evt-rls", "invoice.paid", "sub-rls", "", "", True, "{}", "a" * 64, None],
             )
-            assert cursor.fetchone() == (True,)
+            primeira = cursor.fetchone()
+            assert primeira[1] is True
             cursor.execute(
-                "SELECT faturamento_receber_evento(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                "SELECT * FROM faturamento_ingress_evento(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 ["stripe", "evt-rls", "invoice.paid", "sub-rls", "", "", True, "{}", "a" * 64, None],
             )
-            assert cursor.fetchone() == (False,)
+            assert cursor.fetchone()[1] is False
 
         with conexao.cursor() as cursor, pytest.raises(psycopg2.errors.InvalidParameterValue):
             cursor.execute(
                 "SET ROLE billing_ingress_runtime; "
                 "SELECT set_config('rls.tenant_id', '0', true); "
                 "SELECT set_config('rls.billing_ingress', '1', true); "
-                "SELECT faturamento_receber_evento(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                "SELECT * FROM faturamento_ingress_evento(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 ["stripe", "evt-adulterado", "invoice.paid", "sub-rls", "", "", True, '{"email":"pii@example.test"}', "x", None],
             )
         conexao.rollback()
@@ -590,9 +591,9 @@ def test_rls_real_ingresso_roteia_uma_vez_e_tenant_isola(papel_ingresso):
             cursor.execute("SET ROLE billing_ingress_runtime")
             cursor.execute("SELECT set_config('rls.tenant_id', '0', true)")
             cursor.execute("SELECT set_config('rls.billing_ingress', '1', true)")
-            cursor.execute("SELECT faturamento_rotear_evento(%s,%s)", ["stripe", "evt-rls"])
+            cursor.execute("SELECT faturamento_rotear_evento_destino(%s,%s)", [evento_id, organizacao.pk])
             assert cursor.fetchone() == (True,)
-            cursor.execute("SELECT faturamento_rotear_evento(%s,%s)", ["stripe", "evt-rls"])
+            cursor.execute("SELECT faturamento_rotear_evento_destino(%s,%s)", [evento_id, organizacao.pk])
             assert cursor.fetchone() == (False,)
 
         with conexao, conexao.cursor() as cursor:
@@ -673,7 +674,7 @@ def test_interface_ingresso_recusa_tipo_fora_da_gramatica(papel_ingresso):
             cursor.execute("SELECT set_config('rls.billing_ingress', '1', true)")
             with pytest.raises(psycopg2.errors.InvalidParameterValue):
                 cursor.execute(
-                    "SELECT faturamento_receber_evento(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    "SELECT * FROM faturamento_ingress_evento(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     ["stripe", "evt-tipo-funcao", "Invoice Paid", "", "", "", False, "{}", "c" * 64, None],
                 )
     finally:

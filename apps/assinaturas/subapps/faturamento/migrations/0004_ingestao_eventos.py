@@ -3,6 +3,10 @@ from django.db import migrations
 
 
 SQL = r"""
+REVOKE ALL ON FUNCTION public.faturamento_rotear_evento(text,text) FROM billing_ingress_runtime;
+DROP FUNCTION public.faturamento_rotear_evento(text,text);
+REVOKE ALL ON FUNCTION public.faturamento_receber_evento(text,text,text,text,text,text,boolean,jsonb,text,timestamptz) FROM billing_ingress_runtime;
+DROP FUNCTION public.faturamento_receber_evento(text,text,text,text,text,text,boolean,jsonb,text,timestamptz);
 CREATE OR REPLACE FUNCTION public.evento_payload_valido(jsonb) RETURNS boolean
 LANGUAGE sql IMMUTABLE STRICT SECURITY INVOKER SET search_path=pg_catalog,pg_temp AS $$
 SELECT jsonb_typeof($1)='object'
@@ -76,6 +80,47 @@ REVOKE ALL ON FUNCTION public.faturamento_rotear_evento_destino(bigint,bigint) F
 DROP FUNCTION public.faturamento_rotear_evento_destino(bigint,bigint);
 REVOKE ALL ON FUNCTION public.faturamento_ingress_evento(text,text,text,text,text,text,boolean,jsonb,text,timestamptz) FROM billing_ingress_runtime;
 DROP FUNCTION public.faturamento_ingress_evento(text,text,text,text,text,text,boolean,jsonb,text,timestamptz);
+CREATE FUNCTION public.faturamento_receber_evento(text,text,text,text,text,text,boolean,jsonb,text,timestamptz)
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $$
+DECLARE inseridas integer;
+BEGIN
+ IF NULLIF(current_setting('role',true),'') IS DISTINCT FROM 'billing_ingress_runtime'
+ OR NULLIF(current_setting('rls.tenant_id',true),'')::integer IS DISTINCT FROM 0
+ OR NULLIF(current_setting('rls.billing_ingress',true),'') IS DISTINCT FROM '1' THEN
+  RAISE EXCEPTION 'papel e contexto de ingresso obrigatorios' USING ERRCODE='42501'; END IF;
+ IF $1 IS NULL OR length($1) NOT BETWEEN 1 AND 50 OR $2 IS NULL OR length($2) NOT BETWEEN 1 AND 255
+ OR $3 IS NULL OR length($3) NOT BETWEEN 1 AND 100 OR $3!~'^[a-z][a-z0-9]*([._][a-z0-9]+)*$' OR $3~'[^a-z0-9._]'
+ OR length(COALESCE($4,''))>255 OR length(COALESCE($5,''))>255 OR length(COALESCE($6,''))>255 OR $7 IS NULL
+ OR $8 IS NULL OR NOT public.evento_payload_valido($8) OR $9 IS NULL OR $9!~'^[0-9a-f]{64}$' THEN
+  RAISE EXCEPTION 'evento normalizado invalido' USING ERRCODE='22023'; END IF;
+ INSERT INTO public.evento_cobranca(created_at,last_modified_at,is_active,is_deleted,variante,identificador_evento,tipo,
+ identificador_assinatura,identificador_checkout,identificador_fatura,status,exige_tenant,tentativas_roteamento,
+ tentativas_processamento,payload_normalizado,hash_payload,erro,ocorrido_em)
+ VALUES(statement_timestamp(),statement_timestamp(),true,false,$1,$2,$3,COALESCE($4,''),COALESCE($5,''),COALESCE($6,''),10,$7,0,0,$8,$9,'',$10)
+ ON CONFLICT(variante,identificador_evento) DO NOTHING;
+ GET DIAGNOSTICS inseridas=ROW_COUNT; RETURN inseridas=1;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.faturamento_receber_evento(text,text,text,text,text,text,boolean,jsonb,text,timestamptz) FROM PUBLIC;
+ALTER FUNCTION public.faturamento_receber_evento(text,text,text,text,text,text,boolean,jsonb,text,timestamptz) OWNER TO __BILLING_OWNER__;
+GRANT EXECUTE ON FUNCTION public.faturamento_receber_evento(text,text,text,text,text,text,boolean,jsonb,text,timestamptz) TO billing_ingress_runtime;
+CREATE FUNCTION public.faturamento_rotear_evento(text,text) RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $$
+DECLARE alteradas integer;
+BEGIN
+ IF NULLIF(current_setting('role',true),'') IS DISTINCT FROM 'billing_ingress_runtime'
+ OR NULLIF(current_setting('rls.tenant_id',true),'')::integer IS DISTINCT FROM 0
+ OR NULLIF(current_setting('rls.billing_ingress',true),'') IS DISTINCT FROM '1' THEN
+  RAISE EXCEPTION 'papel e contexto de ingresso obrigatorios' USING ERRCODE='42501'; END IF;
+ UPDATE public.evento_cobranca e SET organizacao_id=g.organizacao_id,status=20,last_modified_at=statement_timestamp()
+ FROM public.assinatura_gateway g WHERE e.variante=$1 AND e.identificador_evento=$2 AND e.organizacao_id IS NULL
+ AND g.variante=e.variante AND g.identificador_externo=e.identificador_assinatura AND g.is_active AND NOT g.is_deleted;
+ GET DIAGNOSTICS alteradas=ROW_COUNT; RETURN alteradas=1;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.faturamento_rotear_evento(text,text) FROM PUBLIC;
+ALTER FUNCTION public.faturamento_rotear_evento(text,text) OWNER TO __BILLING_OWNER__;
+GRANT EXECUTE ON FUNCTION public.faturamento_rotear_evento(text,text) TO billing_ingress_runtime;
 CREATE OR REPLACE FUNCTION public.evento_payload_valido(jsonb) RETURNS boolean
 LANGUAGE sql IMMUTABLE STRICT SECURITY INVOKER SET search_path=pg_catalog,pg_temp AS $$
 SELECT jsonb_typeof($1)='object'
@@ -133,7 +178,8 @@ def preflight(apps, schema_editor):
 def remover(apps, schema_editor):
     del apps
     if schema_editor.connection.vendor == "postgresql":
-        schema_editor.execute(REVERSE_SQL)
+        owner = settings.BILLING_DATABASE_OWNER_ROLE
+        schema_editor.execute(REVERSE_SQL.replace("__BILLING_OWNER__", owner))
 
 
 class Migration(migrations.Migration):

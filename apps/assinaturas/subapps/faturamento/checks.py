@@ -66,8 +66,6 @@ def role_ingresso_check(app_configs, **kwargs):
         rows = cursor.fetchall()
         cursor.execute(
             """WITH esperadas(oid) AS (VALUES
-                 (to_regprocedure('public.faturamento_receber_evento(text,text,text,text,text,text,boolean,jsonb,text,timestamptz)')),
-                 (to_regprocedure('public.faturamento_rotear_evento(text,text)')),
                  (to_regprocedure('public.faturamento_ingress_evento(text,text,text,text,text,text,boolean,jsonb,text,timestamptz)')),
                  (to_regprocedure('public.faturamento_rotear_evento_destino(bigint,bigint)'))
                ), roles_faturamento AS (
@@ -92,11 +90,11 @@ def role_ingresso_check(app_configs, **kwargs):
                  ('checkout_cobranca','isolamento_organizacao'),
                  ('fatura_assinatura','isolamento_organizacao')
                ) SELECT
-                 (SELECT count(*) FROM esperadas JOIN pg_proc p ON p.oid=esperadas.oid) = 4
+                 (SELECT count(*) FROM esperadas JOIN pg_proc p ON p.oid=esperadas.oid) = 2
                  AND (SELECT count(*) FROM pg_proc
                       WHERE pronamespace='public'::regnamespace
                         AND proname IN ('faturamento_receber_evento','faturamento_rotear_evento',
-                                       'faturamento_ingress_evento','faturamento_rotear_evento_destino')) = 4
+                                       'faturamento_ingress_evento','faturamento_rotear_evento_destino')) = 2
                  AND NOT EXISTS (
                    SELECT 1 FROM esperadas e
                    LEFT JOIN pg_proc p ON p.oid=e.oid LEFT JOIN pg_roles r ON r.oid=p.proowner

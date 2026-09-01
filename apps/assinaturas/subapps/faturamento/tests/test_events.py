@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 from django.db import connection, transaction
 from django.db.migrations.executor import MigrationExecutor
@@ -13,7 +13,7 @@ from django.urls import reverse
 
 import pytest
 import stripe
-from django_checkouts.enums import CheckoutMode, CheckoutStatus, EventType, Gateway, ResourceKind
+from django_checkouts.enums import CheckoutMode, CheckoutStatus, EventType, Gateway, InvoiceStatus, ResourceKind, SetupStatus, SubscriptionStatus
 from django_checkouts.exceptions import ConfigurationError, GatewayProtocolError, WebhookVerificationError
 from django_checkouts.registry import GATEWAY_CACHE
 from django_checkouts.types import Checkout, WebhookEvent
@@ -205,8 +205,107 @@ def test_tipo_desconhecido_e_ignorado_sem_enqueue():
 
     salvo = repositorio.eventos[("stripe", "evt_unknown")]
     assert salvo.status == StatusEventoCobranca.IGNORADO
+    assert EventosCobranca.normalizar(evento).tipo == "customer.tax_id.updated"
     assert resultado.novo is True
     enqueue.assert_not_called()
+
+
+def test_metricas_usam_apenas_variante_resultado_e_familia_fechada(monkeypatch):
+    evento = WebhookEvent(
+        gateway=Gateway.STRIPE,
+        variant="stripe",
+        event_id="evt_metric",
+        event_type="customer.secret.updated",
+        type=None,
+        occurred_at=datetime(2026, 9, 1, tzinfo=UTC),
+        resource_kind=None,
+        resource_id=None,
+        resource=None,
+        livemode=False,
+        raw={},
+    )
+    labels = Mock()
+    labels.return_value.inc = Mock()
+    monkeypatch.setattr("apps.assinaturas.subapps.faturamento.events.WEBHOOKS_TOTAL.labels", labels)
+
+    EventosCobranca(repositorio=RepositorioMemoria({})).receber("stripe", evento, client=SimpleNamespace())
+
+    assert labels.call_args_list == [
+        call("stripe", "received", "unknown"),
+        call("stripe", "ignored", "unknown"),
+    ]
+
+
+def test_tipos_remotos_desconhecidos_distintos_colidem_e_tipo_inseguro_falha():
+    primeiro = WebhookEvent(
+        gateway=Gateway.STRIPE,
+        variant="stripe",
+        event_id="evt_unknown_collision",
+        event_type="customer.tax_id.updated",
+        type=None,
+        occurred_at=datetime(2026, 9, 1, tzinfo=UTC),
+        resource_kind=None,
+        resource_id=None,
+        resource=None,
+        livemode=False,
+        raw={},
+    )
+    campos = {campo: getattr(primeiro, campo) for campo in primeiro.__dataclass_fields__ if campo != "event_type"}
+    segundo = WebhookEvent(**campos, event_type="customer.discount.updated")
+    repositorio = RepositorioMemoria({})
+    servico = EventosCobranca(repositorio=repositorio)
+
+    servico.receber("stripe", primeiro, client=SimpleNamespace())
+    with pytest.raises(ColisaoEventoCobranca):
+        servico.receber("stripe", segundo, client=SimpleNamespace())
+
+    object.__setattr__(segundo, "event_id", "evt_unknown_inseguro")
+    object.__setattr__(segundo, "event_type", "customer email\nupdated")
+    with pytest.raises(EventoWebhookInvalido):
+        servico.receber("stripe", segundo, client=SimpleNamespace())
+
+
+@pytest.mark.parametrize(
+    ("tipo", "kind", "status_remoto"),
+    [
+        (EventType.CHECKOUT_PAID, ResourceKind.INVOICE, InvoiceStatus.PAID),
+        (EventType.CHECKOUT_PAID, ResourceKind.CHECKOUT, CheckoutStatus.PENDING),
+        (EventType.SETUP_COMPLETED, ResourceKind.SETUP, SetupStatus.OPEN),
+        (EventType.SUBSCRIPTION_CANCELED, ResourceKind.SUBSCRIPTION, SubscriptionStatus.ACTIVE),
+        (EventType.INVOICE_PAID, ResourceKind.INVOICE, InvoiceStatus.OPEN),
+        (EventType.INVOICE_OPENED, ResourceKind.INVOICE, "future_valid_status"),
+    ],
+)
+def test_matriz_fechada_rejeita_kind_status_ou_semantica_incoerente(tipo, kind, status_remoto):
+    recurso = SimpleNamespace(
+        external_id="resource_1",
+        status=status_remoto,
+        amount_total=100,
+        currency="BRL",
+        reference_id=None,
+        subscription_id="sub_1",
+        current_period_start=None,
+        current_period_end=None,
+    )
+    evento = WebhookEvent(
+        gateway=Gateway.STRIPE,
+        variant="stripe",
+        event_id="evt_protocol",
+        event_type=str(tipo),
+        type=tipo,
+        occurred_at=datetime(2026, 9, 1, tzinfo=UTC),
+        resource_kind=kind,
+        resource_id="resource_1",
+        resource=recurso,
+        livemode=False,
+        raw={},
+    )
+    repositorio = RepositorioMemoria({})
+
+    with pytest.raises(EventoWebhookInvalido):
+        EventosCobranca(repositorio=repositorio, resolver_destino=lambda evento: None).receber("stripe", evento, client=SimpleNamespace())
+
+    assert repositorio.eventos == {}
 
 
 def test_evento_conhecido_sem_recurso_e_falha_de_protocolo_sem_persistir():
@@ -305,8 +404,22 @@ def test_roteia_referencia_assinada_e_recusa_adulteracao_ou_mapeamento_incoerent
         )
     referencia = criar_referencia_checkout(checkout.pk, organizacao.pk)
     evento = checkout_evento(reference_id=referencia)
+    object.__setattr__(evento, "resource_kind", ResourceKind.SETUP)
 
+    assert resolver_destino_evento(evento) is None
+    object.__setattr__(evento, "variant", "stripe-outro")
+    assert resolver_destino_evento(evento) is None
+    object.__setattr__(evento, "variant", "stripe")
+    with organizacao_atual_privilegiada(organizacao.pk):
+        checkout.identificador_externo = "cs_remoto_esperado"
+        checkout.save(update_fields=["identificador_externo", "last_modified_at"])
+    assert resolver_destino_evento(evento) is None
+    object.__setattr__(evento.resource, "external_id", "cs_remoto_esperado")
+    object.__setattr__(evento, "resource_id", "cs_remoto_esperado")
     assert resolver_destino_evento(evento) == DestinoEvento(organizacao_id=organizacao.pk, assinatura_id=assinatura.pk)
+    object.__setattr__(evento, "resource_kind", ResourceKind.CHECKOUT)
+    assert resolver_destino_evento(evento) is None
+    object.__setattr__(evento, "resource_kind", ResourceKind.SETUP)
     AssinaturaGateway.objects.create(
         assinatura=assinatura,
         organizacao=organizacao,
@@ -435,20 +548,36 @@ def test_migration_ingresso_reverte_reaplica_e_preserva_acl_minima():
                    WHERE grantee='billing_ingress_runtime' AND table_schema='public'"""
             )
             grants_diretos = cursor.fetchone()[0]
-        return funcoes, grants_diretos
+            cursor.execute(
+                """SELECT proname FROM pg_proc WHERE pronamespace='public'::regnamespace
+                   AND proname IN ('faturamento_receber_evento','faturamento_rotear_evento',
+                                   'faturamento_ingress_evento','faturamento_rotear_evento_destino') ORDER BY proname"""
+            )
+            nomes = [linha[0] for linha in cursor.fetchall()]
+        return funcoes, grants_diretos, nomes
 
     executor = MigrationExecutor(connection)
     folhas = executor.loader.graph.leaf_nodes()
     try:
         estado = catalogo()
         assert estado[1] == 0
+        assert estado[2] == ["faturamento_ingress_evento", "faturamento_rotear_evento_destino"]
         assert [(linha[0], *linha[1:5]) for linha in estado[0]] == [
             ("faturamento_ingress_evento", True, "billing_functions_owner", False, True),
             ("faturamento_rotear_evento_destino", True, "billing_functions_owner", False, True),
         ]
         assert all(linha[5] == ["search_path=pg_catalog, pg_temp"] for linha in estado[0])
         executor.migrate([("faturamento", "0003_checkout_erro_codigo")])
-        assert catalogo() == ([], 0)
+        assert catalogo() == ([], 0, ["faturamento_receber_evento", "faturamento_rotear_evento"])
+        with transaction.atomic(), connection.cursor() as cursor:
+            cursor.execute("SET LOCAL ROLE billing_ingress_runtime")
+            cursor.execute("SELECT set_config('rls.tenant_id','0',true)")
+            cursor.execute("SELECT set_config('rls.billing_ingress','1',true)")
+            cursor.execute(
+                "SELECT faturamento_receber_evento(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                ["stripe", "evt-interface-legacy", "invoice.paid", "", "", "in_legacy", True, "{}", "d" * 64, None],
+            )
+            assert cursor.fetchone() == (True,)
         MigrationExecutor(connection).migrate([("faturamento", "0004_ingestao_eventos")])
         assert catalogo() == estado
     finally:

@@ -13,11 +13,12 @@ from django.db import connection, transaction
 
 from celery import current_app
 from django_checkouts import get_checkout_gateway
-from django_checkouts.enums import ResourceKind
+from django_checkouts.enums import CheckoutStatus, EventType, InvoiceStatus, ResourceKind, SetupStatus, SubscriptionStatus
 from django_checkouts.exceptions import ConfigurationError, GatewayProtocolError, WebhookVerificationError
+from prometheus_client import Counter
 
 from apps.assinaturas.subapps.faturamento.checkouts import SALT_REFERENCIA, decodificar_referencia_checkout
-from apps.assinaturas.subapps.faturamento.models import AssinaturaGateway, CheckoutCobranca, StatusEventoCobranca
+from apps.assinaturas.subapps.faturamento.models import AssinaturaGateway, CheckoutCobranca, FinalidadeCheckout, StatusEventoCobranca
 from apps.assinaturas.subapps.faturamento.payloads import normalizar_payload_evento, validar_tipo_evento
 from apps.organizacoes.context import organizacao_atual_privilegiada
 
@@ -84,6 +85,43 @@ class RepositorioEventos(Protocol):
     def receber(self, dados: EventoNormalizado) -> tuple[EventoPersistido, bool]: ...
 
     def rotear(self, evento: EventoPersistido, destino: DestinoEvento) -> EventoPersistido: ...
+
+
+PROTOCOLO_EVENTOS = {
+    EventType.CHECKOUT_PENDING: (ResourceKind.CHECKOUT, CheckoutStatus, frozenset({CheckoutStatus.PENDING})),
+    EventType.CHECKOUT_PAID: (ResourceKind.CHECKOUT, CheckoutStatus, frozenset({CheckoutStatus.PAID})),
+    EventType.CHECKOUT_FAILED: (ResourceKind.CHECKOUT, CheckoutStatus, frozenset({CheckoutStatus.FAILED})),
+    EventType.CHECKOUT_EXPIRED: (ResourceKind.CHECKOUT, CheckoutStatus, frozenset({CheckoutStatus.EXPIRED})),
+    EventType.CHECKOUT_CANCELED: (ResourceKind.CHECKOUT, CheckoutStatus, frozenset({CheckoutStatus.CANCELED})),
+    EventType.SETUP_PENDING: (ResourceKind.SETUP, SetupStatus, frozenset({SetupStatus.OPEN})),
+    EventType.SETUP_COMPLETED: (ResourceKind.SETUP, SetupStatus, frozenset({SetupStatus.COMPLETE})),
+    EventType.SETUP_FAILED: (ResourceKind.SETUP, SetupStatus, frozenset({SetupStatus.OPEN})),
+    EventType.SETUP_EXPIRED: (ResourceKind.SETUP, SetupStatus, frozenset({SetupStatus.EXPIRED})),
+    EventType.SUBSCRIPTION_CREATED: (ResourceKind.SUBSCRIPTION, SubscriptionStatus, frozenset(SubscriptionStatus)),
+    EventType.SUBSCRIPTION_UPDATED: (ResourceKind.SUBSCRIPTION, SubscriptionStatus, frozenset(SubscriptionStatus)),
+    EventType.SUBSCRIPTION_CANCELED: (ResourceKind.SUBSCRIPTION, SubscriptionStatus, frozenset({SubscriptionStatus.CANCELED})),
+    EventType.INVOICE_OPENED: (ResourceKind.INVOICE, InvoiceStatus, frozenset({InvoiceStatus.DRAFT, InvoiceStatus.OPEN})),
+    EventType.INVOICE_PAID: (ResourceKind.INVOICE, InvoiceStatus, frozenset({InvoiceStatus.PAID})),
+    EventType.INVOICE_PAYMENT_FAILED: (ResourceKind.INVOICE, InvoiceStatus, frozenset({InvoiceStatus.OPEN})),
+    EventType.INVOICE_VOIDED: (ResourceKind.INVOICE, InvoiceStatus, frozenset({InvoiceStatus.VOID})),
+    EventType.INVOICE_UNCOLLECTIBLE: (ResourceKind.INVOICE, InvoiceStatus, frozenset({InvoiceStatus.UNCOLLECTIBLE})),
+}
+WEBHOOKS_TOTAL = Counter(
+    "billing_webhooks_total",
+    "Eventos de webhook por resultado e família normalizados.",
+    ("variante", "resultado", "familia"),
+)
+
+
+def _familia_evento(evento: WebhookEvent) -> str:
+    if isinstance(evento.type, EventType):
+        return str(evento.type).split(".", 1)[0]
+    return "unknown"
+
+
+def _registrar_metrica(variante: str, resultado: str, familia: str) -> None:
+    variante_finita = variante if variante in settings.CHECKOUT_VARIANTS else "unknown"
+    WEBHOOKS_TOTAL.labels(variante_finita, resultado, familia).inc()
 
 
 def hash_payload_evento(evento: EventoNormalizado) -> str:
@@ -169,7 +207,11 @@ class EventosCobranca:
     @staticmethod
     def normalizar(evento: WebhookEvent) -> EventoNormalizado:
         if evento.type is None:
-            tipo = "unknown"
+            tipo = evento.event_type
+            try:
+                validar_tipo_evento(tipo)
+            except ValidationError as exc:
+                raise EventoWebhookInvalido("O tipo remoto desconhecido não possui formato seguro.") from exc
             status = StatusEventoCobranca.IGNORADO
             exige_tenant = False
             payload = {}
@@ -177,6 +219,7 @@ class EventosCobranca:
         else:
             if evento.resource is None or evento.resource_kind is None or evento.resource_id is None:
                 raise EventoWebhookInvalido("Evento conhecido não contém o recurso normalizado obrigatório.")
+            _validar_protocolo_evento(evento)
             tipo = str(evento.type)
             status = StatusEventoCobranca.RECEBIDO
             exige_tenant = True
@@ -233,45 +276,90 @@ class EventosCobranca:
         try:
             client = client or get_checkout_gateway(variante)
         except ConfigurationError as exc:
+            _registrar_metrica(variante, "variant_invalid", "unknown")
             raise VarianteWebhookInvalida("A variante de webhook não está disponível.") from exc
         try:
             evento = client.webhooks.verify(body, headers)
         except WebhookVerificationError as exc:
+            _registrar_metrica(variante, "signature_invalid", "unknown")
             raise AssinaturaWebhookInvalida("A assinatura do webhook não confere.") from exc
         except GatewayProtocolError as exc:
+            _registrar_metrica(variante, "protocol", "unknown")
             raise EventoWebhookInvalido("O gateway devolveu um evento conhecido incompatível com o protocolo.") from exc
         return self.receber(variante, evento, client=client)
 
     def receber(self, variante: str, evento: WebhookEvent, *, client: CheckoutClient) -> ResultadoRecebimento:
         del client
         if evento.variant != variante:
+            _registrar_metrica(variante, "protocol", _familia_evento(evento))
             raise EventoWebhookInvalido("A variante autenticada não coincide com a rota.")
-        dados = self.normalizar(evento)
+        familia = _familia_evento(evento)
+        _registrar_metrica(variante, "received", familia)
+        try:
+            dados = self.normalizar(evento)
+        except EventoWebhookInvalido:
+            _registrar_metrica(variante, "protocol", familia)
+            raise
         destino = self.resolver_destino(evento) if dados.exige_tenant else None
         escopo = transaction.atomic() if isinstance(self.repositorio, RepositorioEventosPostgres) else nullcontext()
         with escopo:
             evento_local, novo = self.repositorio.receber(dados)
             if not novo:
                 if evento_local.hash_payload != dados.hash_payload:
+                    _registrar_metrica(variante, "collision", familia)
                     raise ColisaoEventoCobranca("O identificador do evento já existe com conteúdo diferente.")
+                _registrar_metrica(variante, "duplicate", familia)
                 return ResultadoRecebimento(evento_local.id, False, evento_local.status)
             if dados.status == StatusEventoCobranca.IGNORADO:
+                _registrar_metrica(variante, "ignored", familia)
                 return ResultadoRecebimento(evento_local.id, True, dados.status)
             if destino is not None:
                 evento_local = self.repositorio.rotear(evento_local, destino)
             if evento_local.status == StatusEventoCobranca.ROTEADO:
-                transaction.on_commit(lambda: self.enqueue(evento_local.id, variante))
+                _registrar_metrica(variante, "routed", familia)
+                transaction.on_commit(lambda: self._enfileirar(evento_local.id, variante, familia))
+            else:
+                _registrar_metrica(variante, "unrouted", familia)
             return ResultadoRecebimento(evento_local.id, True, evento_local.status)
+
+    def _enfileirar(self, evento_id: int, variante: str, familia: str) -> None:
+        self.enqueue(evento_id, variante)
+        _registrar_metrica(variante, "enqueue", familia)
 
 
 def _iso(valor):
     return valor.isoformat() if valor is not None else None
 
 
+def _validar_protocolo_evento(evento: WebhookEvent) -> None:
+    if not isinstance(evento.type, EventType) or evento.type not in PROTOCOLO_EVENTOS:
+        raise EventoWebhookInvalido("O tipo normalizado conhecido não pertence ao protocolo suportado.")
+    kind, enum_status, permitidos = PROTOCOLO_EVENTOS[evento.type]
+    if evento.resource_kind != kind or evento.resource is None:
+        raise EventoWebhookInvalido("O recurso não corresponde à família do evento.")
+    if getattr(evento.resource, "external_id", None) != evento.resource_id:
+        raise EventoWebhookInvalido("O identificador do recurso normalizado diverge do evento.")
+    try:
+        status = enum_status(getattr(evento.resource, "status", None))
+    except (TypeError, ValueError):
+        raise EventoWebhookInvalido("O recurso contém status fora do vocabulário fechado.") from None
+    if status not in permitidos:
+        raise EventoWebhookInvalido("O status do recurso não corresponde à semântica do evento.")
+
+
 def resolver_destino_evento(evento: WebhookEvent) -> DestinoEvento | None:
     recurso = evento.resource
     referencia = getattr(recurso, "reference_id", None) if recurso is not None else None
-    por_referencia = _resolver_referencia(referencia) if referencia else None
+    por_referencia = (
+        _resolver_referencia(
+            referencia,
+            variante=evento.variant,
+            resource_kind=evento.resource_kind,
+            resource_id=evento.resource_id,
+        )
+        if referencia
+        else None
+    )
     if referencia and por_referencia is None:
         return None
     identificador = getattr(recurso, "subscription_id", None) if recurso is not None else None
@@ -283,7 +371,13 @@ def resolver_destino_evento(evento: WebhookEvent) -> DestinoEvento | None:
     return por_referencia or por_assinatura
 
 
-def _resolver_referencia(referencia: str) -> DestinoEvento | None:
+def _resolver_referencia(
+    referencia: str,
+    *,
+    variante: str,
+    resource_kind: ResourceKind | None,
+    resource_id: str | None,
+) -> DestinoEvento | None:
     try:
         dados = signing.loads(referencia, salt=SALT_REFERENCIA)
         organizacao_id = dados.get("organizacao") if isinstance(dados, dict) else None
@@ -293,8 +387,22 @@ def _resolver_referencia(referencia: str) -> DestinoEvento | None:
     except (signing.BadSignature, ValueError):
         return None
     with organizacao_atual_privilegiada(organizacao_id):
-        checkout = CheckoutCobranca.objects.filter(pk=checkout_id, organizacao_id=organizacao_id).only("assinatura_id", "organizacao_id").first()
+        checkout = (
+            CheckoutCobranca.objects.filter(pk=checkout_id, organizacao_id=organizacao_id)
+            .only("assinatura_id", "organizacao_id", "variante", "finalidade", "identificador_externo")
+            .first()
+        )
     if checkout is None:
+        return None
+    if checkout.variante != variante:
+        return None
+    finalidade_compativel = (resource_kind == ResourceKind.SETUP) == (checkout.finalidade == FinalidadeCheckout.FORMA_PAGAMENTO)
+    if resource_kind not in {ResourceKind.CHECKOUT, ResourceKind.SETUP} or not finalidade_compativel:
+        return None
+    # Antes da confirmação do checkout, a referência assinada prova apenas o ID
+    # local e a organização — não prova qual recurso remoto a reutilizou. O
+    # evento fica pendente para recuperação até o ID externo ser conciliado.
+    if checkout.identificador_externo is None or checkout.identificador_externo != resource_id:
         return None
     return DestinoEvento(organizacao_id=checkout.organizacao_id, assinatura_id=checkout.assinatura_id)
 
