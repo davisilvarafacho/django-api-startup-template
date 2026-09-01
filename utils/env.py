@@ -65,6 +65,7 @@ EnviromentVar = Literal[
     # celery
     "CELERY_BROKER_URL",
     "CELERY_RESULT_BACKEND",
+    "SUBSCRIPTION_TASK_BATCH_SIZE",
     # sentry
     "SENTRY_DSN",
     "SENSITIVE_FIELD_KEYS",

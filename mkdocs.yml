@@ -26,6 +26,7 @@ nav:
       - Fluxo de desenvolvimento: how-to/fluxo-de-desenvolvimento.md
       - Resetar migrations: how-to/resetar-migrations.md
       - Desenvolvimento local: how-to/desenvolvimento-local.md
+      - Operar assinaturas: how-to/operar-assinaturas.md
       - Proxy reverso com nginx: how-to/proxy-nginx.md
       - Servidor MCP: how-to/usar-servidor-mcp.md
       - Proteção contra força bruta: how-to/protecao-forca-bruta.md

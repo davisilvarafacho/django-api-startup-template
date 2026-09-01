@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from django.db import transaction
@@ -55,6 +56,54 @@ class ConflitoIdempotenciaAssinatura(ErroAssinatura):
 
 class ConflitoRevisaoAssinatura(ErroAssinatura):
     """O contrato corrente diverge da revisão ou do ciclo esperado."""
+
+
+class MotivoFallbackTrial(StrEnum):
+    TRIAL_LOCAL_ENCERRADO = "local_trial_ended"
+    SEM_PAGAMENTO_VALIDO = "missing_valid_payment"
+    PRIMEIRA_COBRANCA_FALHOU = "first_charge_failed"
+
+
+@dataclass(frozen=True, slots=True)
+class PagamentoTrialConfirmado:
+    seats_contratados: int
+    periodo_iniciado_em: datetime
+    periodo_termina_em: datetime
+
+    def __post_init__(self):
+        if type(self.seats_contratados) is not int or not 0 <= self.seats_contratados <= MAIOR_SMALLINT:
+            raise ValueError("Pagamento do trial exige seats contratados no intervalo de smallint.")
+        datas = (self.periodo_iniciado_em, self.periodo_termina_em)
+        if not all(isinstance(data, datetime) and timezone.is_aware(data) for data in datas):
+            raise ValueError("Periodo pago do trial exige datetimes conscientes de fuso.")
+        if self.periodo_iniciado_em >= self.periodo_termina_em:
+            raise ValueError("Periodo pago do trial deve terminar depois do inicio.")
+
+
+@dataclass(frozen=True, slots=True)
+class FallbackTrialGratuito:
+    motivo: MotivoFallbackTrial
+
+    def __post_init__(self):
+        if not isinstance(self.motivo, MotivoFallbackTrial):
+            raise ValueError("Fallback do trial exige um motivo tipado.")
+
+
+type ResultadoProcessamentoTrial = PagamentoTrialConfirmado | FallbackTrialGratuito
+
+
+@dataclass(frozen=True, slots=True)
+class TrialConvertido:
+    assinatura: AssinaturaOrganizacao
+
+
+@dataclass(frozen=True, slots=True)
+class TrialConvertidoParaGratuito:
+    assinatura: AssinaturaOrganizacao
+    alteracao: AlteracaoAssinatura
+
+
+type ResultadoEncerramentoTrial = TrialConvertido | TrialConvertidoParaGratuito
 
 
 @dataclass(frozen=True)
@@ -169,6 +218,8 @@ class CriacaoAlteracaoAssinatura:
             raise ValueError("Alteração exige uma assinatura persistida.")
         if not isinstance(self.tipo, TipoAlteracaoAssinatura):
             raise ValueError("Tipo da alteração deve ser um TipoAlteracaoAssinatura concreto.")
+        if self.tipo == TipoAlteracaoAssinatura.FALLBACK_TRIAL:
+            raise ValueError("Fallback de trial e reservado ao encerramento nominal do trial.")
         if not isinstance(self.origem_pretendida, OrigemVersaoPlano):
             raise ValueError("Origem pretendida precisa ser uma origem de catálogo.")
         if not isinstance(self.termos_pretendidos, TermosAssinatura):
@@ -218,14 +269,20 @@ class Assinaturas:
     @classmethod
     def calcular_utilizacao(cls, assinatura: AssinaturaOrganizacao, ocupacao: OcupacaoSeats) -> UtilizacaoSeats:
         """Combina fatos já carregados sem disparar consultas implícitas."""
+        from apps.organizacoes.memberships import OcupacaoSeats
+
         if not isinstance(assinatura, AssinaturaOrganizacao):
             raise ValueError("Utilização exige uma assinatura.")
-        consumidos = getattr(ocupacao, "consumidos", None)
-        reservados = getattr(ocupacao, "reservados", None)
+        if not isinstance(ocupacao, OcupacaoSeats):
+            raise ValueError("Utilização exige uma OcupacaoSeats.")
+        consumidos = ocupacao.consumidos
+        reservados = ocupacao.reservados
         if type(consumidos) is not int or consumidos < 0 or type(reservados) is not int or reservados < 0:
-            raise ValueError("Ocupação exige totais inteiros não negativos.")
+            raise ValueError("Ocupação exige totais inteiros nao negativos.")
         comprometidos = consumidos + reservados
         contratados = assinatura.seats_contratados
+        if type(contratados) is not int or contratados < 0:
+            raise ValueError("Assinatura exige seats_contratados inteiro não negativo.")
         return UtilizacaoSeats(
             contratados=contratados,
             consumidos=consumidos,
@@ -257,6 +314,178 @@ class Assinaturas:
                 },
             )
         return utilizacao
+
+    @classmethod
+    def registrar_falha_renovacao(
+        cls,
+        assinatura: AssinaturaOrganizacao,
+        *,
+        agora: datetime,
+    ) -> AssinaturaOrganizacao:
+        """Abre a carencia financeira somente na primeira falha da renovacao."""
+        cls._validar_transicao_temporal(assinatura, agora)
+        using = assinatura._state.db or "default"
+        with transaction.atomic(using=using):
+            cls._bloquear_organizacao(assinatura.organizacao_id, using=using)
+            bloqueada = AssinaturaOrganizacao.all_objects.using(using).select_for_update().get(pk=assinatura.pk)
+            if bloqueada.status != StatusAssinatura.ATIVA:
+                return bloqueada
+            if bloqueada.status_financeiro == StatusFinanceiro.INADIMPLENTE:
+                return bloqueada
+            if bloqueada.status_financeiro != StatusFinanceiro.REGULAR:
+                return bloqueada
+
+            bloqueada.status_financeiro = StatusFinanceiro.INADIMPLENTE
+            bloqueada.carencia_pagamento_iniciada_em = agora
+            bloqueada.carencia_pagamento_termina_em = agora + timedelta(days=bloqueada.carencia_pagamento_dias)
+            bloqueada.revisao += 1
+            bloqueada.save(
+                using=using,
+                update_fields=[
+                    "status_financeiro",
+                    "carencia_pagamento_iniciada_em",
+                    "carencia_pagamento_termina_em",
+                    "revisao",
+                    "last_modified_at",
+                ],
+            )
+            return bloqueada
+
+    @classmethod
+    def registrar_pagamento_confirmado(
+        cls,
+        assinatura: AssinaturaOrganizacao,
+        *,
+        agora: datetime,
+    ) -> AssinaturaOrganizacao:
+        """Regulariza somente a causa financeira, preservando excesso de seats."""
+        cls._validar_transicao_temporal(assinatura, agora)
+        using = assinatura._state.db or "default"
+        with transaction.atomic(using=using):
+            cls._bloquear_organizacao(assinatura.organizacao_id, using=using)
+            bloqueada = AssinaturaOrganizacao.all_objects.using(using).select_for_update().get(pk=assinatura.pk)
+            if bloqueada.status != StatusAssinatura.ATIVA:
+                return bloqueada
+            if (
+                bloqueada.status_financeiro in (StatusFinanceiro.REGULAR, StatusFinanceiro.ISENTO)
+                and bloqueada.carencia_pagamento_iniciada_em is None
+                and bloqueada.carencia_pagamento_termina_em is None
+            ):
+                return bloqueada
+            if bloqueada.status_financeiro not in (
+                StatusFinanceiro.REGULAR,
+                StatusFinanceiro.INADIMPLENTE,
+                StatusFinanceiro.IRRECUPERAVEL,
+            ):
+                return bloqueada
+
+            bloqueada.status_financeiro = StatusFinanceiro.REGULAR
+            bloqueada.carencia_pagamento_iniciada_em = None
+            bloqueada.carencia_pagamento_termina_em = None
+            bloqueada.revisao += 1
+            bloqueada.save(
+                using=using,
+                update_fields=[
+                    "status_financeiro",
+                    "carencia_pagamento_iniciada_em",
+                    "carencia_pagamento_termina_em",
+                    "revisao",
+                    "last_modified_at",
+                ],
+            )
+            return bloqueada
+
+    @classmethod
+    def reconciliar_carencia_seats(
+        cls,
+        assinatura: AssinaturaOrganizacao,
+        ocupacao: OcupacaoSeats,
+        *,
+        agora: datetime,
+    ) -> AssinaturaOrganizacao:
+        """Abre ou limpa somente a carencia de excesso real de seats."""
+        cls._validar_transicao_temporal(assinatura, agora)
+        using = assinatura._state.db or "default"
+        with transaction.atomic(using=using):
+            cls._bloquear_organizacao(assinatura.organizacao_id, using=using)
+            bloqueada = AssinaturaOrganizacao.all_objects.using(using).select_for_update().get(pk=assinatura.pk)
+            utilizacao = cls.calcular_utilizacao(bloqueada, ocupacao)
+            if utilizacao.excesso_real > 0:
+                if bloqueada.carencia_excesso_seats_iniciada_em is not None:
+                    return bloqueada
+                bloqueada.carencia_excesso_seats_iniciada_em = agora
+                bloqueada.carencia_excesso_seats_termina_em = agora + timedelta(days=bloqueada.carencia_excesso_seats_dias)
+            else:
+                if bloqueada.carencia_excesso_seats_iniciada_em is None and bloqueada.carencia_excesso_seats_termina_em is None:
+                    return bloqueada
+                bloqueada.carencia_excesso_seats_iniciada_em = None
+                bloqueada.carencia_excesso_seats_termina_em = None
+            bloqueada.revisao += 1
+            bloqueada.save(
+                using=using,
+                update_fields=[
+                    "carencia_excesso_seats_iniciada_em",
+                    "carencia_excesso_seats_termina_em",
+                    "revisao",
+                    "last_modified_at",
+                ],
+            )
+            return bloqueada
+
+    @classmethod
+    def encerrar_trial(
+        cls,
+        assinatura: AssinaturaOrganizacao,
+        *,
+        resultado: ResultadoProcessamentoTrial,
+        ocupacao: OcupacaoSeats,
+        agora: datetime,
+    ) -> ResultadoEncerramentoTrial:
+        """Converte ou aplica fallback no mesmo contrato, sob uma unica revisao."""
+        cls._validar_transicao_temporal(assinatura, agora)
+        if not isinstance(resultado, (PagamentoTrialConfirmado, FallbackTrialGratuito)):
+            raise ValueError("Encerramento do trial exige um resultado tipado.")
+
+        termos_gratuitos = None
+        versao_gratuita = None
+        if isinstance(resultado, FallbackTrialGratuito):
+            from apps.assinaturas.catalogs import CatalogoPlanos
+
+            versao_gratuita, preco_gratuito = CatalogoPlanos.obter_versao_inicial(
+                codigo="gratuito",
+                periodicidade=Periodicidade(assinatura.periodicidade),
+                moeda=assinatura.moeda,
+            )
+            termos_gratuitos = cls._termos_catalogo(
+                versao_gratuita,
+                preco_gratuito,
+                seats_contratados=versao_gratuita.seats_inclusos,
+            )
+
+        using = assinatura._state.db or "default"
+        with transaction.atomic(using=using):
+            cls._bloquear_organizacao(assinatura.organizacao_id, using=using)
+            bloqueada = AssinaturaOrganizacao.all_objects.using(using).select_for_update().get(pk=assinatura.pk)
+            cls.calcular_utilizacao(bloqueada, ocupacao)
+            if isinstance(resultado, FallbackTrialGratuito):
+                assert versao_gratuita is not None
+                assert termos_gratuitos is not None
+                return cls._aplicar_fallback_trial(
+                    bloqueada,
+                    resultado=resultado,
+                    termos=termos_gratuitos,
+                    versao_plano=versao_gratuita,
+                    ocupacao=ocupacao,
+                    agora=agora,
+                    using=using,
+                )
+            return cls._converter_trial_pago(
+                bloqueada,
+                pagamento=resultado,
+                ocupacao=ocupacao,
+                agora=agora,
+                using=using,
+            )
 
     @classmethod
     def solicitar_expansao_automatica(
@@ -331,7 +560,13 @@ class Assinaturas:
         return TermoEncerramentoImediato()
 
     @classmethod
-    def solicitar_encerramento(cls, organizacao: Organizacao, *, agora: datetime) -> TermoEncerramento:
+    def solicitar_encerramento(
+        cls,
+        organizacao: Organizacao,
+        *,
+        agora: datetime,
+        revisao_esperada: int | None = None,
+    ) -> TermoEncerramento:
         """Decide o termo e persiste o cancelamento sob organização -> assinatura."""
         from apps.organizacoes.organizations import TermoEncerramentoAgendado, TermoEncerramentoImediato
 
@@ -341,9 +576,13 @@ class Assinaturas:
             assinatura = cls.obter_corrente(organizacao, bloquear=True)
             if assinatura is None:
                 raise APIError(BillingErrorCode.SUBSCRIPTION_REQUIRED, status_code=503)
+            if revisao_esperada is not None and assinatura.revisao != revisao_esperada:
+                raise ConflitoRevisaoAssinatura("A revisão esperada não corresponde ao contrato corrente.")
             cls._cancelar_alteracoes_pendentes_por_encerramento(assinatura, agora=agora, using=using)
             if assinatura.status != StatusAssinatura.ATIVA or assinatura.total_centavos <= 0 or assinatura.periodo_atual_termina_em is None:
                 return TermoEncerramentoImediato()
+            if assinatura.cancelamento_agendado_para is not None:
+                return TermoEncerramentoAgendado(agendado_para=assinatura.cancelamento_agendado_para)
             assinatura.cancelamento_agendado_para = assinatura.periodo_atual_termina_em
             assinatura.revisao += 1
             assinatura.save(
@@ -353,7 +592,7 @@ class Assinaturas:
             return TermoEncerramentoAgendado(agendado_para=assinatura.cancelamento_agendado_para)
 
     @classmethod
-    def cancelar_encerramento(cls, organizacao: Organizacao) -> None:
+    def cancelar_encerramento(cls, organizacao: Organizacao, *, revisao_esperada: int | None = None) -> None:
         """Limpa o agendamento contratual sob a mesma ordem global de locks."""
         using = organizacao._state.db or "default"
         with transaction.atomic(using=using):
@@ -361,6 +600,8 @@ class Assinaturas:
             assinatura = cls.obter_corrente(organizacao, bloquear=True)
             if assinatura is None:
                 raise APIError(BillingErrorCode.SUBSCRIPTION_REQUIRED, status_code=503)
+            if revisao_esperada is not None and assinatura.revisao != revisao_esperada:
+                raise ConflitoRevisaoAssinatura("A revisão esperada não corresponde ao contrato corrente.")
             if assinatura.cancelamento_agendado_para is None:
                 return
             assinatura.cancelamento_agendado_para = None
@@ -662,6 +903,78 @@ class Assinaturas:
             )
 
     @classmethod
+    def solicitar_alteracao_catalogo(
+        cls,
+        assinatura: AssinaturaOrganizacao,
+        *,
+        tipo: TipoAlteracaoAssinatura,
+        revisao_esperada: int,
+        chave_idempotencia: str,
+        solicitada_por: Usuario,
+        versao_plano_id: int | None = None,
+        periodicidade: Periodicidade | None = None,
+        seats_contratados: int | None = None,
+        seats_consumidos: int | None = None,
+    ) -> AlteracaoAssinatura:
+        """Traduz uma intenção pública em termos completos e imutáveis."""
+        if not isinstance(assinatura, AssinaturaOrganizacao) or assinatura.pk is None:
+            raise ValueError("Alteração de catálogo exige uma assinatura persistida.")
+        if not isinstance(tipo, TipoAlteracaoAssinatura) or tipo == TipoAlteracaoAssinatura.FALLBACK_TRIAL:
+            raise ValueError("Tipo de alteração pública inválido.")
+        if assinatura.versao_plano_id is None:
+            raise ValueError("Alteração de catálogo exige uma assinatura originada de plano.")
+        versao_atual = assinatura.versao_plano
+        if versao_atual is None:
+            raise ValueError("Alteração de catálogo exige uma versão de plano disponível.")
+
+        tipos_seats = (TipoAlteracaoAssinatura.AUMENTO_SEATS, TipoAlteracaoAssinatura.REDUCAO_SEATS)
+        if tipo in tipos_seats:
+            if seats_contratados is None:
+                raise ValueError("Alteração de seats exige a quantidade absoluta pretendida.")
+            versao = versao_atual
+            termos = cls._termos_atuais(assinatura, seats_contratados=seats_contratados)
+        else:
+            if tipo == TipoAlteracaoAssinatura.MUDANCA_PERIODICIDADE:
+                versao = versao_atual
+            else:
+                if versao_plano_id is None:
+                    raise ValueError("Mudança de plano exige a versão pretendida.")
+                versao = VersaoPlano.objects.select_related("plano").filter(pk=versao_plano_id, is_active=True, publicada_em__isnull=False).first()
+                if versao is None:
+                    raise ValueError("Versão de plano pretendida não está disponível.")
+            periodicidade_pretendida = periodicidade or Periodicidade(assinatura.periodicidade)
+            preco = (
+                PrecoPlano.objects.filter(
+                    versao_plano=versao,
+                    periodicidade=periodicidade_pretendida,
+                    moeda=assinatura.moeda,
+                    is_active=True,
+                )
+                .order_by("pk")
+                .first()
+            )
+            if preco is None:
+                raise ValueError("Preço publicado não está disponível para a alteração.")
+            termos = cls._termos_catalogo(
+                versao,
+                preco,
+                seats_contratados=assinatura.seats_contratados,
+            )
+
+        return cls.solicitar_alteracao(
+            CriacaoAlteracaoAssinatura(
+                assinatura=assinatura,
+                tipo=tipo,
+                origem_pretendida=OrigemVersaoPlano(versao),
+                termos_pretendidos=termos,
+                revisao_esperada=revisao_esperada,
+                chave_idempotencia=chave_idempotencia,
+                solicitada_por=solicitada_por,
+                seats_consumidos=seats_consumidos,
+            )
+        )
+
+    @classmethod
     def marcar_aguardando_gateway(cls, alteracao: AlteracaoAssinatura) -> AlteracaoAssinatura:
         """Executa a transição nominal que antecede uma confirmação externa."""
         with cls._alteracao_bloqueada(alteracao) as bloqueada:
@@ -789,6 +1102,184 @@ class Assinaturas:
             bloqueada.processada_em = agora
             bloqueada.save(update_fields=["status", "processada_em", "last_modified_at"])
             return bloqueada
+
+    @classmethod
+    def _converter_trial_pago(
+        cls,
+        assinatura: AssinaturaOrganizacao,
+        *,
+        pagamento: PagamentoTrialConfirmado,
+        ocupacao: OcupacaoSeats,
+        agora: datetime,
+        using: str,
+    ) -> TrialConvertido:
+        if assinatura.status != StatusAssinatura.EM_TRIAL:
+            equivalente = (
+                assinatura.status == StatusAssinatura.ATIVA
+                and assinatura.status_financeiro == StatusFinanceiro.REGULAR
+                and assinatura.seats_contratados == pagamento.seats_contratados
+                and assinatura.periodo_atual_iniciado_em == pagamento.periodo_iniciado_em
+                and assinatura.periodo_atual_termina_em == pagamento.periodo_termina_em
+            )
+            if equivalente:
+                return TrialConvertido(assinatura=assinatura)
+            raise ConflitoRevisaoAssinatura("O trial ja foi encerrado com outro resultado.")
+        cls._validar_trial_pronto_para_encerramento(assinatura, agora)
+        if pagamento.periodo_iniciado_em > agora:
+            raise ConflitoRevisaoAssinatura("O periodo pago do trial ainda nao iniciou.")
+        if pagamento.seats_contratados < ocupacao.consumidos:
+            raise ConflitoRevisaoAssinatura("Os seats pagos precisam cobrir o consumo real do trial.")
+
+        assinatura.status = StatusAssinatura.ATIVA
+        assinatura.status_financeiro = StatusFinanceiro.REGULAR
+        assinatura.seats_contratados = pagamento.seats_contratados
+        assinatura.periodo_atual_iniciado_em = pagamento.periodo_iniciado_em
+        assinatura.periodo_atual_termina_em = pagamento.periodo_termina_em
+        assinatura.carencia_pagamento_iniciada_em = None
+        assinatura.carencia_pagamento_termina_em = None
+        assinatura.carencia_excesso_seats_iniciada_em = None
+        assinatura.carencia_excesso_seats_termina_em = None
+        assinatura.revisao += 1
+        assinatura.save(
+            using=using,
+            update_fields=[
+                "status",
+                "status_financeiro",
+                "seats_contratados",
+                "periodo_atual_iniciado_em",
+                "periodo_atual_termina_em",
+                "carencia_pagamento_iniciada_em",
+                "carencia_pagamento_termina_em",
+                "carencia_excesso_seats_iniciada_em",
+                "carencia_excesso_seats_termina_em",
+                "revisao",
+                "last_modified_at",
+            ],
+        )
+        return TrialConvertido(assinatura=assinatura)
+
+    @classmethod
+    def _aplicar_fallback_trial(
+        cls,
+        assinatura: AssinaturaOrganizacao,
+        *,
+        resultado: FallbackTrialGratuito,
+        termos: TermosAssinatura,
+        versao_plano: VersaoPlano,
+        ocupacao: OcupacaoSeats,
+        agora: datetime,
+        using: str,
+    ) -> TrialConvertidoParaGratuito:
+        chave = f"trial-fallback:{assinatura.pk}"
+        existente = (
+            AlteracaoAssinatura.all_objects.using(using)
+            .select_for_update()
+            .filter(organizacao_id=assinatura.organizacao_id, chave_idempotencia=chave)
+            .first()
+        )
+        if existente is not None:
+            if existente.tipo != TipoAlteracaoAssinatura.FALLBACK_TRIAL or existente.pedido.get("motivo") != resultado.motivo.value:
+                raise ConflitoIdempotenciaAssinatura("O fallback idempotente do trial diverge do resultado original.")
+            return TrialConvertidoParaGratuito(assinatura=assinatura, alteracao=existente)
+        if assinatura.status != StatusAssinatura.EM_TRIAL:
+            raise ConflitoRevisaoAssinatura("O trial ja foi encerrado com outro resultado.")
+        cls._validar_trial_pronto_para_encerramento(assinatura, agora)
+
+        snapshot_anterior = cls._snapshot_assinatura(assinatura)
+        revisao_anterior = assinatura.revisao
+        excesso_real = max(ocupacao.consumidos - termos.seats_contratados, 0)
+        carencia_seats_iniciada_em = agora if excesso_real else None
+        carencia_seats_termina_em = agora + timedelta(days=termos.carencia_excesso_seats_dias) if excesso_real else None
+
+        snapshot_pretendido = dict(snapshot_anterior)
+        snapshot_pretendido.update(
+            {
+                "versao_plano_id": versao_plano.pk,
+                "proposta_comercial_id": None,
+                "status": int(StatusAssinatura.ATIVA),
+                "status_financeiro": int(StatusFinanceiro.ISENTO),
+                "revisao": revisao_anterior + 1,
+                **cls._dados_termos(termos),
+                "carencia_pagamento_iniciada_em": None,
+                "carencia_pagamento_termina_em": None,
+                "carencia_excesso_seats_iniciada_em": cls._serializar_data(carencia_seats_iniciada_em),
+                "carencia_excesso_seats_termina_em": cls._serializar_data(carencia_seats_termina_em),
+            }
+        )
+        alteracao = AlteracaoAssinatura(
+            organizacao_id=assinatura.organizacao_id,
+            assinatura=assinatura,
+            tipo=TipoAlteracaoAssinatura.FALLBACK_TRIAL,
+            momento_aplicacao=MomentoAplicacaoAlteracaoAssinatura.IMEDIATA,
+            status=StatusAlteracaoAssinatura.SOLICITADA,
+            revisao_esperada=revisao_anterior,
+            chave_idempotencia=chave,
+            pedido={
+                "assinatura_id": assinatura.pk,
+                "motivo": resultado.motivo.value,
+                "versao_plano_id": versao_plano.pk,
+                "seats_consumidos": ocupacao.consumidos,
+            },
+            snapshot_anterior=snapshot_anterior,
+            snapshot_pretendido=snapshot_pretendido,
+        )
+        alteracao.save(using=using, force_insert=True, _permitir_fallback_trial=True)
+
+        campos_termos = cls._dados_termos(termos)
+        for campo, valor in campos_termos.items():
+            setattr(assinatura, campo, valor)
+        assinatura.versao_plano = versao_plano
+        assinatura.proposta_comercial = None
+        assinatura.status = StatusAssinatura.ATIVA
+        assinatura.status_financeiro = StatusFinanceiro.ISENTO
+        assinatura.carencia_pagamento_iniciada_em = None
+        assinatura.carencia_pagamento_termina_em = None
+        assinatura.carencia_excesso_seats_iniciada_em = carencia_seats_iniciada_em
+        assinatura.carencia_excesso_seats_termina_em = carencia_seats_termina_em
+        assinatura.revisao = revisao_anterior + 1
+        assinatura.save(
+            using=using,
+            update_fields=[
+                "versao_plano",
+                "proposta_comercial",
+                "status",
+                "status_financeiro",
+                *campos_termos,
+                "carencia_pagamento_iniciada_em",
+                "carencia_pagamento_termina_em",
+                "carencia_excesso_seats_iniciada_em",
+                "carencia_excesso_seats_termina_em",
+                "revisao",
+                "last_modified_at",
+            ],
+        )
+        alteracao.status = StatusAlteracaoAssinatura.CONFIRMADA
+        alteracao.processada_em = agora
+        alteracao.aplicada_em = agora
+        alteracao.revisao_aplicada = assinatura.revisao
+        alteracao.save(
+            using=using,
+            update_fields=[
+                "status",
+                "processada_em",
+                "aplicada_em",
+                "revisao_aplicada",
+                "last_modified_at",
+            ],
+        )
+        return TrialConvertidoParaGratuito(assinatura=assinatura, alteracao=alteracao)
+
+    @staticmethod
+    def _validar_trial_pronto_para_encerramento(assinatura: AssinaturaOrganizacao, agora: datetime) -> None:
+        if assinatura.trial_termina_em is None or agora < assinatura.trial_termina_em:
+            raise ConflitoRevisaoAssinatura("O trial ainda nao chegou ao encerramento.")
+
+    @staticmethod
+    def _validar_transicao_temporal(assinatura: AssinaturaOrganizacao, agora: datetime) -> None:
+        if not isinstance(assinatura, AssinaturaOrganizacao) or assinatura.pk is None:
+            raise ValueError("Transicao contratual exige uma assinatura persistida.")
+        if not isinstance(agora, datetime) or not timezone.is_aware(agora):
+            raise ValueError("Transicao contratual exige um datetime consciente de fuso.")
 
     @staticmethod
     def _validar_organizacao_contratavel(organizacao: Organizacao) -> None:
@@ -967,6 +1458,21 @@ class Assinaturas:
             "carencia_pagamento_dias": assinatura.carencia_pagamento_dias,
             "carencia_excesso_seats_dias": assinatura.carencia_excesso_seats_dias,
         }
+
+    @staticmethod
+    def _termos_atuais(assinatura: AssinaturaOrganizacao, *, seats_contratados: int) -> TermosAssinatura:
+        return TermosAssinatura(
+            periodicidade=Periodicidade(assinatura.periodicidade),
+            moeda=assinatura.moeda,
+            valor_base_centavos=assinatura.valor_base_centavos,
+            valor_seat_centavos=assinatura.valor_seat_centavos,
+            seats_inclusos=assinatura.seats_inclusos,
+            seats_contratados=seats_contratados,
+            expansao_automatica_seats=assinatura.expansao_automatica_seats,
+            recursos=ValoresRecursos(CATALOGO_RECURSOS, assinatura.recursos),
+            carencia_pagamento_dias=assinatura.carencia_pagamento_dias,
+            carencia_excesso_seats_dias=assinatura.carencia_excesso_seats_dias,
+        )
 
     @classmethod
     def _pedido_alteracao(

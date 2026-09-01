@@ -16,7 +16,6 @@ from apps.organizacoes.context import (
     ContextoOrganizacao,
     PoliticaComercialTenant,
     definir_organizacao_atual,
-    manter_acesso_comercial_atual,
 )
 from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.models import Vinculo
@@ -54,10 +53,61 @@ def resolve_token_organization(request, token):
     return organizacao.slug
 
 
+def resolver_contexto_comercial(
+    organizacao,
+    vinculo,
+    *,
+    regularizacao_assinatura: bool,
+) -> ContextoOrganizacao:
+    """Carrega o contrato e a ocupação uma vez e aplica a política pura."""
+    from django.utils import timezone
+
+    from apps.assinaturas.access_policies import PoliticaAcessoAssinatura, StatusAcesso
+    from apps.assinaturas.errors import BillingErrorCode
+    from apps.assinaturas.models import AssinaturaOrganizacao, StatusAssinatura
+    from apps.assinaturas.subscriptions import Assinaturas
+    from apps.organizacoes.memberships import Vinculos
+    from apps.organizacoes.models import Papel
+
+    assinatura = (
+        AssinaturaOrganizacao.objects.select_related("versao_plano", "proposta_comercial")
+        .filter(
+            organizacao_id=organizacao.pk,
+            status__in=(StatusAssinatura.PENDENTE, StatusAssinatura.EM_TRIAL, StatusAssinatura.ATIVA),
+        )
+        .first()
+    )
+    if assinatura is None:
+        raise APIError(BillingErrorCode.SUBSCRIPTION_REQUIRED, status_code=503)
+
+    ocupacao = Vinculos.calcular_ocupacao(organizacao, Assinaturas.papeis_isentos_seat(assinatura))
+    utilizacao = Assinaturas.calcular_utilizacao(assinatura, ocupacao)
+    situacao = PoliticaAcessoAssinatura.avaliar(assinatura, utilizacao, timezone.now())
+    contexto = ContextoOrganizacao(
+        organizacao=organizacao,
+        vinculo=vinculo,
+        assinatura=assinatura,
+        utilizacao_seats=utilizacao,
+        situacao_acesso=situacao,
+    )
+
+    pode_regularizar = regularizacao_assinatura and vinculo is not None and vinculo.papel >= Papel.ADMINISTRADOR
+    if situacao.status == StatusAcesso.RESTRITO and not pode_regularizar:
+        raise APIError(
+            BillingErrorCode.ORGANIZATION_RESTRICTED,
+            status_code=403,
+            context={
+                "reasons": [motivo.value for motivo in situacao.motivos],
+                "regularize_by": situacao.regularizar_ate.isoformat() if situacao.regularizar_ate is not None else None,
+            },
+        )
+    return contexto
+
+
 class OrganizacaoMiddleware:
     def __init__(self, get_response, *, politica_comercial: PoliticaComercialTenant | None = None):
         self.get_response = get_response
-        self.politica_comercial = politica_comercial if politica_comercial is not None else manter_acesso_comercial_atual
+        self.politica_comercial = politica_comercial if politica_comercial is not None else resolver_contexto_comercial
 
     def __call__(self, request):
         request.tenant = None
@@ -123,7 +173,7 @@ class OrganizacaoMiddleware:
         if not vinculo.is_active:
             raise APIError(OrganizationErrorCode.MEMBERSHIP_INACTIVE, status_code=403)
 
-        self._aplicar_contexto(request, ContextoOrganizacao(organizacao=vinculo.organizacao, vinculo=vinculo))
+        self._aplicar_contexto(request, organizacao=vinculo.organizacao, vinculo=vinculo)
 
     def _resolver_api_key(self, request):
         from apps.api.autenticacao.services import ensure_api_key_still_valid
@@ -137,12 +187,13 @@ class OrganizacaoMiddleware:
         if not organizacao.is_active or organizacao.is_deleted:
             raise APIError(OrganizationErrorCode.ORGANIZATION_INACTIVE, status_code=403)
 
-        self._aplicar_contexto(request, ContextoOrganizacao(organizacao=organizacao, vinculo=None))
+        self._aplicar_contexto(request, organizacao=organizacao, vinculo=None)
 
-    def _aplicar_contexto(self, request, tenant):
-        definir_organizacao_atual(tenant.organization_id)
+    def _aplicar_contexto(self, request, *, organizacao, vinculo):
+        definir_organizacao_atual(organizacao.pk)
         tenant_comercial = self.politica_comercial(
-            tenant,
+            organizacao,
+            vinculo,
             regularizacao_assinatura=rota_tem_marcador(
                 request.path_info,
                 request.method,
@@ -151,7 +202,7 @@ class OrganizacaoMiddleware:
         )
         if not isinstance(tenant_comercial, ContextoOrganizacao):
             raise TypeError("PoliticaComercialTenant deve devolver ContextoOrganizacao.")
-        if tenant_comercial.organization_id != tenant.organization_id:
+        if tenant_comercial.organization_id != organizacao.pk:
             raise ValueError("PoliticaComercialTenant não pode trocar a organização da request.")
 
         tenant = tenant_comercial

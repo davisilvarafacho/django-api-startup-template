@@ -307,6 +307,7 @@ ASSINATURAS_ONBOARDING_MODO = get_env_var("ASSINATURAS_ONBOARDING_MODO", "gratui
 ASSINATURAS_ONBOARDING_PLANO = get_env_var("ASSINATURAS_ONBOARDING_PLANO", "gratuito")
 ASSINATURAS_ONBOARDING_PERIODICIDADE = get_env_var("ASSINATURAS_ONBOARDING_PERIODICIDADE", "mensal")
 ORGANIZATION_CLOSURE_BATCH_SIZE = get_int_from_env("ORGANIZATION_CLOSURE_BATCH_SIZE", 100)
+SUBSCRIPTION_TASK_BATCH_SIZE = get_int_from_env("SUBSCRIPTION_TASK_BATCH_SIZE", 100)
 
 AUTH_USER_MODEL = "usuarios.Usuario"
 
@@ -696,6 +697,14 @@ CELERY_BEAT_SCHEDULE = {
     "close-expired-organizations": {
         "task": "organizacoes.efetivar_encerramentos_vencidos",
         "schedule": crontab(hour=1, minute=0),
+    },
+    "finish-expired-subscription-trials": {
+        "task": "assinaturas.encerrar_trials_vencidos",
+        "schedule": crontab(minute=5),
+    },
+    "reconcile-subscription-seat-graces": {
+        "task": "assinaturas.reconciliar_carencias_seats",
+        "schedule": crontab(minute="*/15"),
     },
 }
 

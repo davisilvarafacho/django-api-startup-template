@@ -10,7 +10,6 @@ import pytest
 
 from apps.api.core.errors import APIError
 from apps.organizacoes.access import TenantAccessResolver
-from apps.organizacoes.context import ContextoOrganizacao
 from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.middleware import OrganizacaoMiddleware
 from apps.organizacoes.models import Organizacao, Papel, Time, Vinculo
@@ -18,6 +17,7 @@ from apps.organizacoes.permissions import PapelMinimoPermission, TenantPermissio
 from apps.organizacoes.rules import e_gestor
 from apps.organizacoes.serializers import ConviteCreateSerializer, VinculoSerializer
 from apps.organizacoes.tests.test_api import client_autenticado
+from apps.organizacoes.tests.test_tenant_context import _contexto_liberado
 from apps.organizacoes.views import TimeViewSet
 from internal_frameworks.permission_cache.types import TenantAccess
 from tests.support.usuarios import criar_usuario
@@ -31,7 +31,7 @@ def test_tenant_permission_consumes_prepared_context_without_database(django_ass
     raw_request = APIRequestFactory().get("/times/", HTTP_X_ORGANIZATION="acme")
     force_authenticate(raw_request, user=user)
     request = Request(raw_request)
-    request.tenant = ContextoOrganizacao(organizacao=organization, vinculo=membership)
+    request.tenant = _contexto_liberado(organization, membership)
 
     with django_assert_num_queries(0):
         assert TenantPermission().has_permission(request, TimeViewSet()) is True

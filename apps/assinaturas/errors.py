@@ -19,3 +19,7 @@ class BillingErrorCode(models.TextChoices):
         "billing.seat_limit_reached",
         _("Não há seats disponíveis. Aumente a quantidade contratada ou libere um seat."),
     )
+    ORGANIZATION_RESTRICTED = (
+        "billing.organization_restricted",
+        _("O acesso à organização está restrito. Regularize a assinatura para continuar."),
+    )

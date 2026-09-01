@@ -15,8 +15,8 @@ from knox.models import get_token_model
 
 from apps.api.autenticacao.models import TokenMetaData, TokenType
 from apps.assinaturas.catalogs import PLANOS_BOOTSTRAP, CatalogoPlanos, sincronizar_planos
-from apps.assinaturas.models import Periodicidade
-from apps.assinaturas.subscriptions import Assinaturas
+from apps.assinaturas.models import Periodicidade, StatusAssinatura, StatusFinanceiro
+from apps.assinaturas.subscriptions import Assinaturas, CriacaoAssinatura, OrigemVersaoPlano
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
 from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.models import Convite, Organizacao, Papel, Time, Vinculo
@@ -36,7 +36,28 @@ def configurar_request_de_teste(settings):
     ContextVariable.clear_context()
 
 
+def _garantir_assinaturas_correntes():
+    sincronizar_planos(PLANOS_BOOTSTRAP, aplicar=True)
+    versao, preco = CatalogoPlanos.obter_versao_inicial(codigo="profissional", periodicidade=Periodicidade.MENSAL)
+    for organizacao in Organizacao.objects.filter(is_active=True).order_by("pk"):
+        with organizacao_atual_privilegiada(organizacao.pk):
+            if Assinaturas.obter_corrente(organizacao) is None:
+                Assinaturas.criar(
+                    CriacaoAssinatura(
+                        organizacao=organizacao,
+                        origem=OrigemVersaoPlano(versao),
+                        termos=Assinaturas._termos_catalogo(versao, preco, seats_contratados=100),
+                        status=StatusAssinatura.ATIVA,
+                        status_financeiro=StatusFinanceiro.REGULAR,
+                        politica_trial=None,
+                        trial_termina_em=None,
+                        chave_idempotencia=f"fixture-http-profissional:{organizacao.pk}",
+                    )
+                )
+
+
 def client_autenticado(usuario):
+    _garantir_assinaturas_correntes()
     _, token = AuthToken.objects.create(user=usuario)
     client = APIClient()
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
@@ -44,6 +65,7 @@ def client_autenticado(usuario):
 
 
 def client_com_api_key(usuario, scopes, organizacao):
+    _garantir_assinaturas_correntes()
     instance, token = AuthToken.objects.create(
         responsavel=usuario,
         type=TokenType.API_KEY,
@@ -69,12 +91,17 @@ def contratar(organizacao, *, seats, papeis_isentos=()):
     sincronizar_planos(PLANOS_BOOTSTRAP, aplicar=True)
     versao, preco = CatalogoPlanos.obter_versao_inicial(codigo="profissional", periodicidade=Periodicidade.MENSAL)
     with organizacao_atual_privilegiada(organizacao.pk):
-        assinatura = Assinaturas.criar_paga(
-            organizacao=organizacao,
-            versao_plano=versao,
-            preco_plano=preco,
-            seats_contratados=seats,
-            chave_idempotencia=f"contrato-http-{organizacao.pk}",
+        assinatura = Assinaturas.criar(
+            CriacaoAssinatura(
+                organizacao=organizacao,
+                origem=OrigemVersaoPlano(versao),
+                termos=Assinaturas._termos_catalogo(versao, preco, seats_contratados=seats),
+                status=StatusAssinatura.ATIVA,
+                status_financeiro=StatusFinanceiro.REGULAR,
+                politica_trial=None,
+                trial_termina_em=None,
+                chave_idempotencia=f"contrato-http-{organizacao.pk}",
+            )
         )
     if papeis_isentos:
         assinatura.recursos = {

@@ -20,20 +20,21 @@ from django_rls.context import clear_rls_context, set_rls_context
 CHAVE_TENANT = "tenant_id"
 
 if TYPE_CHECKING:
+    from apps.assinaturas.access_policies import SituacaoAcesso
+    from apps.assinaturas.models import AssinaturaOrganizacao
+    from apps.assinaturas.subscriptions import UtilizacaoSeats
     from apps.organizacoes.models import Organizacao, Vinculo
 
 
 @dataclass(frozen=True, slots=True)
 class ContextoOrganizacao:
-    """Fatos de tenant validados antes da view.
-
-    Os campos comerciais serão adicionados com os tipos reais na Task 11. Até
-    lá o contexto contém somente entidades existentes e preserva os aliases do
-    antigo ``TenantAccess`` consumidos pelas views e serializers.
-    """
+    """Fatos de tenant e acesso comercial validados antes da view."""
 
     organizacao: Organizacao
     vinculo: Vinculo | None
+    assinatura: AssinaturaOrganizacao
+    utilizacao_seats: UtilizacaoSeats
+    situacao_acesso: SituacaoAcesso
 
     @property
     def organization_id(self) -> int:
@@ -56,23 +57,15 @@ class ContextoOrganizacao:
 
 
 class PoliticaComercialTenant(Protocol):
-    """Contrato fechado para a política comercial ativada na Task 11."""
+    """Contrato fechado para construir o contexto comercial final."""
 
     def __call__(
         self,
-        contexto: ContextoOrganizacao,
+        organizacao: Organizacao,
+        vinculo: Vinculo | None,
         *,
         regularizacao_assinatura: bool,
     ) -> ContextoOrganizacao: ...
-
-
-def manter_acesso_comercial_atual(
-    contexto: ContextoOrganizacao,
-    *,
-    regularizacao_assinatura: bool,
-) -> ContextoOrganizacao:
-    """Preserva o comportamento atual até existirem os tipos comerciais reais."""
-    return contexto
 
 
 def definir_organizacao_atual(organizacao_id):

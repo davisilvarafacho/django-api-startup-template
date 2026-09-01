@@ -85,7 +85,7 @@ def test_estados_persistidos_usam_smallint_e_passos_de_dez():
     assert list(StatusFinanceiro.values) == [10, 20, 30, 40, 50]
     assert list(StatusAlteracaoAssinatura.values) == [10, 20, 30, 40, 50]
     assert list(MomentoAplicacaoAlteracaoAssinatura.values) == [10, 20]
-    assert list(TipoAlteracaoAssinatura.values) == [10, 20, 30, 40, 50]
+    assert list(TipoAlteracaoAssinatura.values) == [10, 20, 30, 40, 50, 60]
 
     for model, campo in (
         (AssinaturaOrganizacao, "status"),

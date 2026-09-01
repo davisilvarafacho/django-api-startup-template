@@ -284,3 +284,59 @@ def test_migration_0009_protege_insert_e_reverse_preserva_guarda_0008():
     finally:
         executor = MigrationExecutor(connection)
         executor.migrate(alvos_finais)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_migration_0011_instala_guardas_de_acesso_e_reverse_restaura_0010():
+    executor = MigrationExecutor(connection)
+    alvos_finais = executor.loader.graph.leaf_nodes()
+
+    def triggers():
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT tgname
+                FROM pg_trigger
+                WHERE NOT tgisinternal
+                  AND tgrelid IN ('assinatura_organizacao'::regclass, 'alteracao_assinatura'::regclass)
+                """
+            )
+            return {row[0] for row in cursor.fetchall()}
+
+    def definicao_guarda_assinatura():
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_get_functiondef('validar_transicao_status_assinatura()'::regprocedure)")
+            return cursor.fetchone()[0]
+
+    try:
+        executor.migrate([("assinaturas", "0010_adicionar_fallback_trial")])
+        assert "assinatura_organizacao_transicao_status" in triggers()
+        assert "alteracao_assinatura_validar_fallback_trial" not in triggers()
+        assert "carencia_pagamento_iniciada_em" not in definicao_guarda_assinatura()
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([("assinaturas", "0011_proteger_transicoes_acesso")])
+        assert {
+            "assinatura_organizacao_transicao_status",
+            "alteracao_assinatura_validar_fallback_trial",
+        } <= triggers()
+        assert "carencia_pagamento_iniciada_em" in definicao_guarda_assinatura()
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT 1
+                FROM pg_constraint
+                WHERE conrelid = 'alteracao_assinatura'::regclass
+                  AND conname = 'alteracao_fallback_trial_reservado'
+                """
+            )
+            assert cursor.fetchone() == (1,)
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([("assinaturas", "0010_adicionar_fallback_trial")])
+        assert "assinatura_organizacao_transicao_status" in triggers()
+        assert "alteracao_assinatura_validar_fallback_trial" not in triggers()
+        assert "carencia_pagamento_iniciada_em" not in definicao_guarda_assinatura()
+    finally:
+        executor = MigrationExecutor(connection)
+        executor.migrate(alvos_finais)

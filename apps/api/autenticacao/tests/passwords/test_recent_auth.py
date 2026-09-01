@@ -178,9 +178,11 @@ def _client_com_sessao(usuario):
 
 def _client_com_api_key(usuario, organizacao=None):
     from apps.organizacoes.models import Organizacao, Papel, Vinculo
+    from tests.support.assinaturas import garantir_assinatura_corrente
 
     organizacao = organizacao or Organizacao.objects.create(nome="Org", slug="org-reauth")
     Vinculo.objects.create(usuario=usuario, organizacao=organizacao, papel=Papel.MEMBRO)
+    garantir_assinatura_corrente(organizacao)
     instance, token = AuthToken.objects.create(
         responsavel=usuario,
         type=TokenType.API_KEY,

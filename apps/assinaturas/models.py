@@ -66,6 +66,7 @@ class TipoAlteracaoAssinatura(models.IntegerChoices):
     DOWNGRADE_PLANO = 30, _("Downgrade de plano")
     REDUCAO_SEATS = 40, _("Redução de seats")
     MUDANCA_PERIODICIDADE = 50, _("Mudança de periodicidade")
+    FALLBACK_TRIAL = 60, _("Fallback de trial")
 
 
 class MomentoAplicacaoAlteracaoAssinatura(models.IntegerChoices):
@@ -425,6 +426,27 @@ class AlteracoesAssinaturaQuerySet(BaseQuerySet):
         if set(fields) - CAMPOS_PROCESSAMENTO_ALTERACAO:
             raise ValueError("Pedido e snapshots da alteração são imutáveis.")
         return super().bulk_update(tuple(objs), fields, batch_size=batch_size)
+
+    def bulk_create(
+        self,
+        objs,
+        batch_size=None,
+        ignore_conflicts=False,
+        update_conflicts=False,
+        update_fields=None,
+        unique_fields=None,
+    ):
+        objetos = tuple(objs)
+        if any(objeto.tipo == TipoAlteracaoAssinatura.FALLBACK_TRIAL for objeto in objetos):
+            raise ValueError("Fallback de trial é reservado ao encerramento nominal do trial.")
+        return super().bulk_create(
+            objetos,
+            batch_size=batch_size,
+            ignore_conflicts=ignore_conflicts,
+            update_conflicts=update_conflicts,
+            update_fields=update_fields,
+            unique_fields=unique_fields,
+        )
 
 
 AssinaturasOrganizacaoQuerySetManager = models.Manager.from_queryset(AssinaturasOrganizacaoQuerySet)
@@ -1135,6 +1157,9 @@ class AlteracaoAssinatura(Base):
     ativos = AlteracoesAssinaturaAtivasManager()  # type: ignore[misc, assignment]
 
     def save(self, *args, **kwargs):
+        permitir_fallback_trial = kwargs.pop("_permitir_fallback_trial", False)
+        if self._state.adding and self.tipo == TipoAlteracaoAssinatura.FALLBACK_TRIAL and not permitir_fallback_trial:
+            raise ValueError("Fallback de trial é reservado ao encerramento nominal do trial.")
         if self.pk is not None:
             anterior = dict(type(self)._base_manager.using(self._state.db).filter(pk=self.pk).values().first() or {})
             if anterior:
@@ -1202,6 +1227,16 @@ class AlteracaoAssinatura(Base):
                 name="alteracao_evento_ignorado_coerente",
             ),
             models.CheckConstraint(condition=models.Q(tipo__in=TipoAlteracaoAssinatura.values), name="alteracao_tipo_dominio"),
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(tipo=TipoAlteracaoAssinatura.FALLBACK_TRIAL)
+                    | models.Q(
+                        momento_aplicacao=MomentoAplicacaoAlteracaoAssinatura.IMEDIATA,
+                        solicitada_por__isnull=True,
+                    )
+                ),
+                name="alteracao_fallback_trial_reservado",
+            ),
             models.CheckConstraint(
                 condition=models.Q(momento_aplicacao__in=MomentoAplicacaoAlteracaoAssinatura.values),
                 name="alteracao_momento_dominio",

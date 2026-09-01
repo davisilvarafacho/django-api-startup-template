@@ -121,6 +121,29 @@ Erros comuns desses endpoints: `auth.invalid_credentials`,
 `organizations.tenant_mismatch`,
 `organizations.membership_required`.
 
+## Assinatura
+
+Todas as rotas exigem uma sessão humana e o header `X-Organization`; API keys
+não recebem acesso financeiro por padrão. Alteração e cancelamento exigem
+reautenticação recente e MFA quando o usuário o tiver habilitado.
+
+| Rota | Contrato |
+| --- | --- |
+| `GET /assinatura/` | Proprietário ou administrador; devolve o snapshot corrente e sua revisão. |
+| `GET /assinatura/recursos/` | Qualquer vínculo ativo; devolve todos os recursos efetivos em tipos JSON. |
+| `GET /assinatura/utilizacao-seats/` | Proprietário ou administrador; devolve contratados, consumo, reservas, disponibilidade e excessos. |
+| `POST /assinatura/alteracoes/` | Proprietário; solicita plano, periodicidade ou quantidade absoluta de seats com revisão e chave de idempotência. |
+| `POST /assinatura/cancelamento/` | Proprietário; agenda o cancelamento com revisão otimista. |
+| `DELETE /assinatura/cancelamento/` | Proprietário; remove o agendamento antes da efetivação, também com revisão. |
+| `POST /assinatura/propostas/{id}/aceitar/` | Proprietário; aceita uma proposta do próprio tenant sem enumerar propostas alheias. |
+
+Conflitos de revisão ou idempotência usam
+`409 billing.subscription_conflict`. Uma organização ativa ainda não
+inicializada usa `503 billing.subscription_required`. Após expirar uma carência,
+rotas comuns usam `403 billing.organization_restricted`; as rotas acima são
+marcadas para permitir somente a consulta ou regularização por proprietário e
+administrador, sem ampliar o papel do usuário.
+
 ## MFA
 
 | Rota | Contrato |

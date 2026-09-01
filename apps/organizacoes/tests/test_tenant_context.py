@@ -14,6 +14,9 @@ from knox.models import get_token_model
 
 from apps.api.autenticacao.models import TokenType
 from apps.api.core.errors import APIError
+from apps.assinaturas.access_policies import SituacaoAcesso, StatusAcesso
+from apps.assinaturas.models import AssinaturaOrganizacao, StatusAssinatura, StatusFinanceiro
+from apps.assinaturas.subscriptions import UtilizacaoSeats
 from apps.organizacoes import context
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
 from apps.organizacoes.errors import OrganizationErrorCode
@@ -27,11 +30,42 @@ def _error_code(response):
     return json.loads(response.content)["errors"][0]["code"]
 
 
+def _contexto_liberado(organizacao, vinculo):
+    assinatura = AssinaturaOrganizacao(
+        id=organizacao.pk,
+        organizacao=organizacao,
+        organizacao_id=organizacao.pk,
+        status=StatusAssinatura.ATIVA,
+        status_financeiro=StatusFinanceiro.ISENTO,
+        seats_contratados=1,
+    )
+    utilizacao = UtilizacaoSeats(
+        contratados=1,
+        consumidos=0,
+        reservados=0,
+        comprometidos=0,
+        disponiveis=1,
+        excesso_real=0,
+        excesso_comprometido=0,
+    )
+    return context.ContextoOrganizacao(
+        organizacao=organizacao,
+        vinculo=vinculo,
+        assinatura=assinatura,
+        utilizacao_seats=utilizacao,
+        situacao_acesso=SituacaoAcesso(status=StatusAcesso.LIBERADO, motivos=(), regularizar_ate=None),
+    )
+
+
+def _politica_liberada(organizacao, vinculo, *, regularizacao_assinatura):
+    return _contexto_liberado(organizacao, vinculo)
+
+
 def test_contexto_organizacao_e_imutavel_e_preserva_compatibilidade():
     organizacao = Organizacao(id=7, nome="Acme", slug="acme")
     vinculo = Vinculo(id=11, organizacao=organizacao, organizacao_id=organizacao.pk, papel=Papel.ADMINISTRADOR)
 
-    tenant = context.ContextoOrganizacao(organizacao=organizacao, vinculo=vinculo)
+    tenant = _contexto_liberado(organizacao, vinculo)
 
     assert tenant.organization_id == 7
     assert tenant.organization_slug == "acme"
@@ -45,7 +79,7 @@ def test_contexto_organizacao_e_imutavel_e_preserva_compatibilidade():
 def test_contexto_de_api_key_nao_inventa_vinculo_ou_papel():
     organizacao = Organizacao(id=7, nome="Acme", slug="acme")
 
-    tenant = context.ContextoOrganizacao(organizacao=organizacao, vinculo=None)
+    tenant = _contexto_liberado(organizacao, None)
 
     assert tenant.membership_id is None
     assert tenant.role is None
@@ -77,11 +111,11 @@ def test_middleware_resolve_sessao_em_uma_query_e_mantem_transacao_ate_a_respost
     request.user = usuario
 
     with CaptureQueriesContext(connection) as queries:
-        response = OrganizacaoMiddleware(responder)(request)
+        response = OrganizacaoMiddleware(responder, politica_comercial=_politica_liberada)(request)
 
     assert response.status_code == 200
     assert observado == {
-        "tenant": context.ContextoOrganizacao(organizacao=organizacao, vinculo=vinculo),
+        "tenant": _contexto_liberado(organizacao, vinculo),
         "organizacao": organizacao,
         "vinculo": vinculo,
         "atomic": True,
@@ -124,11 +158,11 @@ def test_middleware_prioriza_vinculo_da_organizacao_atual_quando_slug_foi_reutil
     request.user = usuario
 
     with CaptureQueriesContext(connection) as queries:
-        response = OrganizacaoMiddleware(responder)(request)
+        response = OrganizacaoMiddleware(responder, politica_comercial=_politica_liberada)(request)
 
     assert response.status_code == 200
     assert observado == {
-        "tenant": context.ContextoOrganizacao(organizacao=organizacao_atual, vinculo=vinculo_atual),
+        "tenant": _contexto_liberado(organizacao_atual, vinculo_atual),
         "rls": str(organizacao_atual.pk),
     }
     selects_de_vinculo = [query for query in queries if 'FROM "vinculo"' in query["sql"]]
@@ -270,7 +304,7 @@ def test_contexto_rls_e_limpo_quando_a_resposta_interna_falha():
     request.user = usuario
 
     with pytest.raises(RuntimeError, match="falha da view"):
-        OrganizacaoMiddleware(falhar)(request)
+        OrganizacaoMiddleware(falhar, politica_comercial=_politica_liberada)(request)
 
     assert context.CHAVE_TENANT not in get_active_rls_context()
 
@@ -289,7 +323,7 @@ def test_contexto_rls_e_limpo_sem_mascarar_erro_de_transacao_quebrada():
 
     try:
         with pytest.raises(IntegrityError):
-            OrganizacaoMiddleware(quebrar_transacao)(request)
+            OrganizacaoMiddleware(quebrar_transacao, politica_comercial=_politica_liberada)(request)
         assert context.CHAVE_TENANT not in get_active_rls_context()
     finally:
         clear_rls_context({context.CHAVE_TENANT})
@@ -320,11 +354,11 @@ def test_middleware_deriva_contexto_de_api_key_sem_inventar_vinculo():
     request = APIRequestFactory().get("/times/")
     request.user = usuario
     request.auth = token
-    response = OrganizacaoMiddleware(responder)(request)
+    response = OrganizacaoMiddleware(responder, politica_comercial=_politica_liberada)(request)
 
     assert response.status_code == 200
     assert observado == {
-        "tenant": context.ContextoOrganizacao(organizacao=organizacao, vinculo=None),
+        "tenant": _contexto_liberado(organizacao, None),
         "vinculo": None,
         "atomic": True,
         "rls": str(organizacao.pk),
@@ -361,7 +395,8 @@ def test_middleware_chama_integration_point_comercial_dentro_do_rls(path, method
     vinculo = Vinculo.objects.create(usuario=usuario, organizacao=organizacao, papel=Papel.ADMINISTRADOR)
     chamadas = []
 
-    def politica_comercial(tenant, *, regularizacao_assinatura):
+    def politica_comercial(organizacao_resolvida, vinculo_resolvido, *, regularizacao_assinatura):
+        tenant = _contexto_liberado(organizacao_resolvida, vinculo_resolvido)
         chamadas.append(
             {
                 "tenant": tenant,
@@ -379,7 +414,7 @@ def test_middleware_chama_integration_point_comercial_dentro_do_rls(path, method
     assert response.status_code == 200
     assert chamadas == [
         {
-            "tenant": context.ContextoOrganizacao(organizacao=organizacao, vinculo=vinculo),
+            "tenant": _contexto_liberado(organizacao, vinculo),
             "regularizacao": regularizacao_esperada,
             "atomic": True,
             "rls": str(organizacao.pk),
@@ -387,7 +422,8 @@ def test_middleware_chama_integration_point_comercial_dentro_do_rls(path, method
     ]
 
 
-def _politica_comercial_restrita(tenant, *, regularizacao_assinatura):
+def _politica_comercial_restrita(organizacao, vinculo, *, regularizacao_assinatura):
+    tenant = _contexto_liberado(organizacao, vinculo)
     if not regularizacao_assinatura or not tenant.has_minimum_role(Papel.ADMINISTRADOR):
         raise APIError(OrganizationErrorCode.ROLE_INSUFFICIENT, status_code=403)
     return tenant
@@ -438,7 +474,7 @@ def test_integration_point_rejeita_retorno_fora_do_contexto_fechado():
     request.user = usuario
 
     with pytest.raises(TypeError, match="ContextoOrganizacao"):
-        OrganizacaoMiddleware(lambda request: HttpResponse(), politica_comercial=lambda tenant, **kwargs: object())(request)
+        OrganizacaoMiddleware(lambda request: HttpResponse(), politica_comercial=lambda organizacao, vinculo, **kwargs: object())(request)
 
 
 @pytest.mark.django_db
@@ -450,8 +486,8 @@ def test_integration_point_nao_pode_trocar_o_tenant_resolvido():
     request = APIRequestFactory().get("/times/", **{META_HEADER_ORGANIZACAO: organizacao.slug})
     request.user = usuario
 
-    def trocar_tenant(tenant, **kwargs):
-        return context.ContextoOrganizacao(organizacao=outra, vinculo=None)
+    def trocar_tenant(organizacao, vinculo, **kwargs):
+        return _contexto_liberado(outra, None)
 
     with pytest.raises(ValueError, match="trocar a organização"):
         OrganizacaoMiddleware(lambda request: HttpResponse(), politica_comercial=trocar_tenant)(request)

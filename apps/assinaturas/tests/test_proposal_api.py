@@ -12,10 +12,11 @@ from drf_spectacular.generators import SchemaGenerator
 from apps.api.autenticacao.models import AuthToken, TokenMetaData, TokenType
 from apps.api.core.errors import discover_error_codes
 from apps.assinaturas import urls as assinaturas_urls
+from apps.assinaturas.catalogs import PLANOS_BOOTSTRAP, CatalogoPlanos, sincronizar_planos
 from apps.assinaturas.features import CATALOGO_RECURSOS, ValoresRecursos
 from apps.assinaturas.models import ModoAtivacaoProposta, Periodicidade, StatusPropostaComercial
 from apps.assinaturas.proposals import CriacaoPropostaComercial, Propostas
-from apps.assinaturas.subscriptions import TermosAssinatura
+from apps.assinaturas.subscriptions import Assinaturas, TermosAssinatura
 from apps.assinaturas.views import AceitarPropostaView
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
 from apps.organizacoes.context import organizacao_atual_privilegiada
@@ -63,8 +64,12 @@ def _client(usuario, organizacao: Organizacao, *, recente: bool = True) -> APICl
 
 
 def _organizacao_do(usuario, *, nome: str, slug: str, papel=Papel.PROPRIETARIO) -> Organizacao:
+    sincronizar_planos(PLANOS_BOOTSTRAP, aplicar=True)
     organizacao = Organizacao.objects.create(nome=nome, slug=slug)
     Vinculo.objects.create(organizacao=organizacao, usuario=usuario, papel=papel)
+    versao, preco = CatalogoPlanos.obter_versao_inicial(codigo="gratuito", periodicidade=Periodicidade.MENSAL)
+    with organizacao_atual_privilegiada(organizacao.pk):
+        Assinaturas.criar_gratuita(organizacao=organizacao, versao_plano=versao, preco_plano=preco)
     return organizacao
 
 
