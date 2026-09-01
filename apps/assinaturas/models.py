@@ -266,15 +266,16 @@ CAMPOS_TRANSICAO_ASSINATURA = frozenset(
         "motivo_encerramento",
     }
 )
+CAMPOS_UPSERT_OPERACIONAL_ASSINATURA = frozenset({"is_active"})
 
 
-def _nomes_campos(campos):
-    nomes: set[str] = set()
+def _normalizar_nomes_campos(campos):
+    nomes: list[str] = []
     for campo in campos or ():
         if isinstance(campo, models.Field):
-            nomes.update((campo.name, campo.attname))
+            nomes.append(campo.name)
         else:
-            nomes.add(campo)
+            nomes.append(campo)
     return nomes
 
 
@@ -297,8 +298,9 @@ class AssinaturasOrganizacaoQuerySet(BaseQuerySet):
         update_fields=None,
         unique_fields=None,
     ):
-        if update_conflicts and _nomes_campos(update_fields) & CAMPOS_TRANSICAO_ASSINATURA:
-            raise ValueError("Termos da assinatura só podem mudar por uma transição nominal.")
+        nomes_update_fields = _normalizar_nomes_campos(update_fields)
+        if update_conflicts and set(nomes_update_fields) - CAMPOS_UPSERT_OPERACIONAL_ASSINATURA:
+            raise ValueError("Upsert de assinatura aceita somente campos operacionais seguros.")
         objetos = tuple(objs)
         for objeto in objetos:
             objeto.recursos = _materializar_recursos(objeto.recursos)
@@ -307,7 +309,7 @@ class AssinaturasOrganizacaoQuerySet(BaseQuerySet):
             batch_size=batch_size,
             ignore_conflicts=ignore_conflicts,
             update_conflicts=update_conflicts,
-            update_fields=update_fields,
+            update_fields=nomes_update_fields if update_fields is not None else None,
             unique_fields=unique_fields,
         )
 

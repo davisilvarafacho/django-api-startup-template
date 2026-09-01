@@ -575,7 +575,7 @@ def test_bulk_create_com_conflito_nao_pode_encerrar_assinatura_genericamente(usa
     nomes = ["status", "encerrada_em", "motivo_encerramento", "revisao"]
     update_fields = [AssinaturaOrganizacao._meta.get_field(nome) for nome in nomes] if usar_fields else nomes
 
-    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(ValueError, match="transição nominal"):
+    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(ValueError, match="(?i)upsert.*operacionais"):
         AssinaturaOrganizacao.objects.bulk_create(
             [assinatura],
             update_conflicts=True,
@@ -584,21 +584,74 @@ def test_bulk_create_com_conflito_nao_pode_encerrar_assinatura_genericamente(usa
         )
 
 
-def test_bulk_create_com_conflito_permite_atualizacao_operacional():
-    organizacao, assinatura = _assinatura_ativa(slug="upsert-operacional")
+@pytest.mark.parametrize("manager_name", ["objects", "all_objects", "ativos"])
+@pytest.mark.parametrize("como_field", [False, True])
+def test_bulk_create_com_conflito_permite_campo_operacional(manager_name, como_field):
+    organizacao, assinatura = _assinatura_ativa(slug=f"upsert-operacional-{manager_name}-{como_field}")
     assinatura.is_active = False
+    manager = getattr(AssinaturaOrganizacao, manager_name)
+    update_fields = [AssinaturaOrganizacao._meta.get_field("is_active")] if como_field else ["is_active"]
 
     with organizacao_atual_privilegiada(organizacao.pk):
-        AssinaturaOrganizacao.objects.bulk_create(
+        manager.bulk_create(
             [assinatura],
             update_conflicts=True,
-            update_fields=["is_active"],
+            update_fields=update_fields,
             unique_fields=["id"],
         )
         persistida = AssinaturaOrganizacao.all_objects.get(pk=assinatura.pk)
 
     assert persistida.is_active is False
     assert persistida.revisao == 1
+
+
+@pytest.mark.parametrize("manager_name", ["objects", "all_objects", "ativos"])
+def test_bulk_create_com_conflito_nao_pode_alterar_chave_idempotencia(manager_name, django_assert_num_queries):
+    organizacao, assinatura = _assinatura_ativa(slug=f"upsert-identidade-{manager_name}")
+    assinatura.chave_idempotencia = f"identidade-alterada-{manager_name}"
+    manager = getattr(AssinaturaOrganizacao, manager_name)
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        with django_assert_num_queries(0), pytest.raises(ValueError, match="(?i)upsert.*operacionais"):
+            manager.bulk_create(
+                [assinatura],
+                update_conflicts=True,
+                update_fields=["chave_idempotencia"],
+                unique_fields=["id"],
+            )
+
+
+@pytest.mark.django_db(databases={"default", "logging"})
+@pytest.mark.parametrize("alias", ["default", "logging"])
+@pytest.mark.parametrize("manager_name", ["objects", "all_objects", "ativos"])
+@pytest.mark.parametrize(
+    "campo",
+    [
+        "id",
+        "pk",
+        "organizacao",
+        "organizacao_id",
+        "chave_idempotencia",
+        "created_at",
+        "created_by",
+        "created_by_id",
+        "last_modified_at",
+        "is_deleted",
+        "revisao",
+        "status",
+        AssinaturaOrganizacao._meta.get_field("organizacao"),
+    ],
+)
+def test_bulk_create_com_conflito_rejeita_campos_nao_operacionais_antes_do_sql(alias, manager_name, campo, django_assert_num_queries):
+    manager = getattr(AssinaturaOrganizacao, manager_name).using(alias)
+
+    with django_assert_num_queries(0, using=alias), pytest.raises(ValueError, match="(?i)upsert.*operacionais"):
+        manager.bulk_create(
+            [AssinaturaOrganizacao(recursos={})],
+            update_conflicts=True,
+            update_fields=[campo],
+            unique_fields=["id"],
+        )
 
 
 def test_sql_nao_pode_reaproveitar_alteracao_compativel_para_mascarar_preco():
