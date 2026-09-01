@@ -2,7 +2,7 @@
 name = "drf-base-api-project"
 version = "0.1.0"
 description = "Projeto base para APIs Django REST Framework."
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "annotated-types==0.7.0",
     "anyio==4.11.0",
@@ -20,6 +20,7 @@ dependencies = [
     "django-axes==8.0.0",
     "django-cachalot==2.8.0",
     "django-celery-beat>=2.9.0",
+    "django-checkouts[stripe]",
     "django-cors-headers==4.9.0",
     "django-dbbackup==5.0.1",
     "django-filter==25.2",
@@ -270,3 +271,6 @@ changelog_incremental = true
 version_files = [
     "api/settings.py:\"VERSION\"",
 ]
+
+[tool.uv.sources]
+django-checkouts = { path = "/home/rafacho/dev/django-checkouts", editable = true }

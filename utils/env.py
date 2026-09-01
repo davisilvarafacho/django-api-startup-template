@@ -66,6 +66,10 @@ EnviromentVar = Literal[
     "CELERY_BROKER_URL",
     "CELERY_RESULT_BACKEND",
     "SUBSCRIPTION_TASK_BATCH_SIZE",
+    # faturamento
+    "STRIPE_API_KEY",
+    "STRIPE_WEBHOOK_SECRET",
+    "STRIPE_SANDBOX",
     # sentry
     "SENTRY_DSN",
     "SENSITIVE_FIELD_KEYS",

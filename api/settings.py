@@ -132,6 +132,7 @@ LIBS_APPS = [
     "django_filters",
     "django_prometheus",
     "django_rls",
+    "django_checkouts",
     "drf_spectacular",
     "django_scalar",
     "guardian",
@@ -148,6 +149,7 @@ BUSINESS_APPS = [
     "apps.api.mcp_server",
     "apps.api.metadata",
     "apps.assinaturas",
+    "apps.assinaturas.subapps.faturamento",
     "apps.logs",
     "apps.organizacoes",
     "apps.usuarios",
@@ -374,6 +376,18 @@ DJANGO_RLS = {
     "AUDIT_LOG": IN_PRODUCTION,
     # Evita reabrir a conexão de teste durante o teardown; em produção permanece ativo.
     "RESET_CONTEXT_ON_CONNECT": not TESTING,
+    "REGISTERED_CONTEXT_KEYS": ("billing_ingress",),
+}
+
+CHECKOUT_VARIANTS = {
+    "stripe": (
+        "django_checkouts.gateways.stripe.StripeGateway",
+        {
+            "api_key": get_env_var("STRIPE_API_KEY"),
+            "webhook_secret": get_env_var("STRIPE_WEBHOOK_SECRET"),
+            "sandbox": get_bool_from_env("STRIPE_SANDBOX", not IN_PRODUCTION),
+        },
+    )
 }
 
 
