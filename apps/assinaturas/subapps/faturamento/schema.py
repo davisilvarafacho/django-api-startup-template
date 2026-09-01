@@ -3,8 +3,10 @@
 from drf_spectacular.utils import extend_schema
 
 from apps.api.autenticacao.errors import AuthErrorCode
-from apps.api.core.errors import ValidationErrorCode
+from apps.api.core.errors import CoreErrorCode, ValidationErrorCode
 from apps.api.core.schema import document_error_codes
+from apps.assinaturas.errors import BillingErrorCode
+from apps.assinaturas.serializers import AceitarPropostaRequestSerializer, AceitarPropostaResponseSerializer
 from apps.assinaturas.subapps.faturamento.errors import ErrosFaturamento
 from apps.assinaturas.subapps.faturamento.serializers import (
     CheckoutResponseSerializer,
@@ -21,6 +23,40 @@ TENANT = document_error_codes(
 )
 CONFLICT = document_error_codes(ErrosFaturamento.CHECKOUT_CONFLITO, ErrosFaturamento.CHECKOUT_PENDENTE)
 UNCERTAIN = document_error_codes(ErrosFaturamento.CHECKOUT_INCERTO)
+
+document_proposal_accept = extend_schema(
+    request=AceitarPropostaRequestSerializer,
+    responses={
+        200: AceitarPropostaResponseSerializer,
+        400: document_error_codes(ValidationErrorCode.INVALID, ValidationErrorCode.MALFORMED),
+        401: document_error_codes(
+            AuthErrorCode.TOKEN_NOT_PROVIDED,
+            AuthErrorCode.INVALID_TOKEN,
+            AuthErrorCode.EXPIRED_TOKEN,
+            AuthErrorCode.REVOKED_TOKEN,
+            AuthErrorCode.API_KEY_SUSPENDED,
+            AuthErrorCode.RESPONSIBLE_INACTIVE,
+            AuthErrorCode.REAUTHENTICATION_REQUIRED,
+        ),
+        403: document_error_codes(
+            AuthErrorCode.PERMISSION_DENIED,
+            OrganizationErrorCode.MEMBERSHIP_REQUIRED,
+            OrganizationErrorCode.MEMBERSHIP_INACTIVE,
+            OrganizationErrorCode.ORGANIZATION_INACTIVE,
+            OrganizationErrorCode.ROLE_INSUFFICIENT,
+            BillingErrorCode.ORGANIZATION_RESTRICTED,
+        ),
+        404: document_error_codes(CoreErrorCode.NOT_FOUND),
+        409: document_error_codes(
+            BillingErrorCode.PROPOSAL_INVALID,
+            OrganizationErrorCode.TENANT_MISMATCH,
+            ErrosFaturamento.CHECKOUT_PENDENTE,
+            ErrosFaturamento.CHECKOUT_CONFLITO,
+        ),
+        422: document_error_codes(OrganizationErrorCode.HEADER_REQUIRED, ErrosFaturamento.CHECKOUT_INDISPONIVEL),
+        503: document_error_codes(BillingErrorCode.SUBSCRIPTION_REQUIRED, ErrosFaturamento.CHECKOUT_INCERTO),
+    },
+)
 
 
 def _create(request):

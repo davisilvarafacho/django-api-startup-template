@@ -41,8 +41,12 @@ def test_aceite_documenta_body_resposta_e_erros_reais():
     assert "core.not_found" in post["responses"]["404"]["description"]
     assert "billing.proposal_invalid" in post["responses"]["409"]["description"]
     assert "organizations.tenant_mismatch" in post["responses"]["409"]["description"]
+    assert "billing.checkout_pending" in post["responses"]["409"]["description"]
+    assert "billing.checkout_conflict" in post["responses"]["409"]["description"]
     assert "organizations.header_required" in post["responses"]["422"]["description"]
+    assert "billing.checkout_unavailable" in post["responses"]["422"]["description"]
     assert "billing.subscription_required" in post["responses"]["503"]["description"]
+    assert "billing.checkout_uncertain" in post["responses"]["503"]["description"]
 
 
 def test_rota_de_aceite_e_owned_pelo_subapp_faturamento():

@@ -48,10 +48,12 @@ pytestmark = pytest.mark.django_db(transaction=True)
     ("erro", "codigo", "status_code"),
     [
         (CheckoutPendente("pending"), ErrosFaturamento.CHECKOUT_PENDENTE, 409),
+        (ConflitoCheckout("conflict"), ErrosFaturamento.CHECKOUT_CONFLITO, 409),
         (CheckoutIndisponivel("unavailable"), ErrosFaturamento.CHECKOUT_INDISPONIVEL, 422),
+        (FalhaCheckoutIncerta("uncertain"), ErrosFaturamento.CHECKOUT_INCERTO, 503),
     ],
 )
-def test_traducao_http_preserva_pending_e_unavailable(monkeypatch, erro, codigo, status_code):
+def test_traducao_http_preserva_erros_publicos_de_checkout(monkeypatch, erro, codigo, status_code):
     monkeypatch.setattr(faturamento_views, "criar_checkout", lambda criacao: (_ for _ in ()).throw(erro))
     with pytest.raises(APIError) as caught:
         faturamento_views._executar(object())

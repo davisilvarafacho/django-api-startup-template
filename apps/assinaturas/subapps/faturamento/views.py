@@ -12,7 +12,6 @@ from apps.api.core.route_markers import io_externo_sem_transacao, regularizacao_
 from apps.assinaturas.errors import BillingErrorCode
 from apps.assinaturas.models import AlteracaoAssinatura, AssinaturaOrganizacao, ModoAtivacaoProposta, PropostaComercial
 from apps.assinaturas.proposals import ConflitoPropostaComercial, Propostas
-from apps.assinaturas.schema import document_proposal_accept
 from apps.assinaturas.serializers import AceitarPropostaRequestSerializer, AceitarPropostaResponseSerializer
 from apps.assinaturas.subapps.faturamento.checkouts import (
     CheckoutIndisponivel,
@@ -24,7 +23,12 @@ from apps.assinaturas.subapps.faturamento.checkouts import (
 )
 from apps.assinaturas.subapps.faturamento.errors import ErrosFaturamento
 from apps.assinaturas.subapps.faturamento.models import CheckoutCobranca, FinalidadeCheckout
-from apps.assinaturas.subapps.faturamento.schema import document_checkout_create, document_checkout_list, document_setup_create
+from apps.assinaturas.subapps.faturamento.schema import (
+    document_checkout_create,
+    document_checkout_list,
+    document_proposal_accept,
+    document_setup_create,
+)
 from apps.assinaturas.subapps.faturamento.serializers import (
     CheckoutResponseSerializer,
     CriarCheckoutRequestSerializer,
