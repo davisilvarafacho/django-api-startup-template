@@ -741,6 +741,38 @@ class Assinaturas:
             )
 
     @classmethod
+    def encerrar_por_gateway_bloqueado(cls, assinatura: AssinaturaOrganizacao, *, encerrada_em: datetime) -> AssinaturaOrganizacao:
+        """Encerra o contrato exato quando organização e assinatura já estão bloqueadas.
+
+        Este seam é exclusivo do finalizador financeiro, cuja ordem canônica é
+        organização -> assinatura -> recurso do gateway -> alterações. Ele não
+        procura o contrato corrente e, portanto, é seguro para eventos tardios.
+        """
+        using = assinatura._state.db or "default"
+        if not transaction.get_connection(using).in_atomic_block:
+            raise RuntimeError("A transição de gateway exige uma seção crítica já aberta.")
+        if assinatura.status == StatusAssinatura.ENCERRADA:
+            return assinatura
+        cls._cancelar_alteracoes_pendentes_por_encerramento(assinatura, agora=encerrada_em, using=using)
+        assinatura.status = StatusAssinatura.ENCERRADA
+        assinatura.revisao += 1
+        assinatura.cancelamento_agendado_para = None
+        assinatura.encerrada_em = encerrada_em
+        assinatura.motivo_encerramento = "gateway_cancelled"
+        assinatura._salvar_transicao(
+            using=using,
+            update_fields=[
+                "status",
+                "revisao",
+                "cancelamento_agendado_para",
+                "encerrada_em",
+                "motivo_encerramento",
+                "last_modified_at",
+            ],
+        )
+        return assinatura
+
+    @classmethod
     def criar(cls, comando: CriacaoAssinatura, *, agora: datetime | None = None) -> AssinaturaOrganizacao:
         """Único caminho base que instancia ``AssinaturaOrganizacao``."""
         if not isinstance(comando, CriacaoAssinatura):

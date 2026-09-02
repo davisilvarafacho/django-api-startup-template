@@ -1,6 +1,8 @@
 """Contrato OpenAPI dos checkouts de faturamento."""
 
-from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
+from rest_framework import serializers
+
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema, inline_serializer
 
 from apps.api.autenticacao.errors import AuthErrorCode
 from apps.api.core.errors import CoreErrorCode, ValidationErrorCode
@@ -12,6 +14,7 @@ from apps.assinaturas.subapps.faturamento.serializers import (
     CheckoutResponseSerializer,
     CriarCheckoutRequestSerializer,
     CriarFormaPagamentoCheckoutRequestSerializer,
+    FaturaResponseSerializer,
 )
 from apps.organizacoes.errors import OrganizationErrorCode
 
@@ -76,8 +79,35 @@ def _create(request):
 
 document_checkout_create = _create(CriarCheckoutRequestSerializer)
 document_setup_create = _create(CriarFormaPagamentoCheckoutRequestSerializer)
+
+
+def _paginated(name, item):
+    return inline_serializer(
+        name=name,
+        fields={
+            "total": serializers.IntegerField(),
+            "proxima": serializers.URLField(allow_null=True),
+            "anterior": serializers.URLField(allow_null=True),
+            "resultados": item(many=True),
+        },
+    )
+
+
 document_checkout_list = extend_schema(
-    responses={200: CheckoutResponseSerializer(many=True), 401: AUTH, 403: TENANT, 422: document_error_codes(OrganizationErrorCode.HEADER_REQUIRED)}
+    responses={
+        200: _paginated("PaginaCheckouts", CheckoutResponseSerializer),
+        401: AUTH,
+        403: TENANT,
+        422: document_error_codes(OrganizationErrorCode.HEADER_REQUIRED),
+    }
+)
+document_invoice_list = extend_schema(
+    responses={
+        200: _paginated("PaginaFaturas", FaturaResponseSerializer),
+        401: AUTH,
+        403: TENANT,
+        422: document_error_codes(OrganizationErrorCode.HEADER_REQUIRED),
+    }
 )
 
 document_webhook = extend_schema(

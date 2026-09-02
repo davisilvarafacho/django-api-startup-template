@@ -210,6 +210,7 @@ class EventoCobranca(BaseTenantless, RLSModel):
     exige_tenant = models.BooleanField(default=True)
     tentativas_roteamento = models.PositiveSmallIntegerField(default=0)
     tentativas_processamento = models.PositiveSmallIntegerField(default=0)
+    tentativas_automaticas_ciclo = models.PositiveSmallIntegerField(default=0, db_default=0)
     payload_normalizado = models.JSONField(default=dict, validators=[validar_payload_evento])
     hash_payload = models.CharField(max_length=64)
     erro = models.CharField(max_length=500, blank=True)
@@ -239,4 +240,39 @@ class EventoCobranca(BaseTenantless, RLSModel):
                 condition=models.Q(tipo__regex=r"^[a-z][a-z0-9]*([._][a-z0-9]+)*$") & ~models.Q(tipo__regex=r"[^a-z0-9._]"),
                 name="evento_tipo_normalizado",
             ),
+        ]
+
+
+class CheckpointReconciliacao(BaseTenantless):
+    """Checkpoint global durável de uma variante, com lease otimista."""
+
+    variante = models.CharField(max_length=50, unique=True)
+    janela_inicio = models.DateTimeField()
+    janela_fim = models.DateTimeField()
+    cursor = models.CharField(max_length=500, blank=True)
+    ultimo_limite_concluido = models.DateTimeField(null=True, blank=True)
+    lease_ate = models.DateTimeField(null=True, blank=True)
+    revisao = models.PositiveBigIntegerField(default=1)
+
+    class Meta:
+        db_table = "checkpoint_reconciliacao_cobranca"
+        constraints = [
+            models.CheckConstraint(condition=models.Q(janela_inicio__lt=models.F("janela_fim")), name="reconciliacao_janela_valida"),
+            models.CheckConstraint(condition=models.Q(revisao__gte=1), name="reconciliacao_revisao_positiva"),
+        ]
+
+
+class ReaberturaEventoCobranca(Base):
+    """Auditoria imutável de retries operacionais explícitos."""
+
+    evento = models.ForeignKey(EventoCobranca, on_delete=models.PROTECT, related_name="reaberturas")
+    motivo = models.CharField(max_length=500)
+    ator = models.ForeignKey("usuarios.Usuario", on_delete=models.PROTECT, related_name="reaberturas_eventos_cobranca")
+    chave_idempotencia = models.CharField(max_length=120)
+    tentativas_anteriores = models.PositiveSmallIntegerField()
+
+    class Meta(Base.Meta):
+        db_table = "reabertura_evento_cobranca"
+        constraints = [
+            models.UniqueConstraint(fields=("organizacao", "chave_idempotencia"), name="reabertura_evento_chave_org_unica"),
         ]

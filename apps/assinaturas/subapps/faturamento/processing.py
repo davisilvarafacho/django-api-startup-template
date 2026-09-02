@@ -10,9 +10,10 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from django.db import connection
+from django.db import connection, transaction
 from django.utils import timezone
 
+from celery import current_app
 from django_checkouts.enums import InvoiceStatus, ResourceKind, RetryDisposition, SetupStatus, SubscriptionStatus
 from django_checkouts.exceptions import CheckoutError
 from prometheus_client import Counter, Histogram
@@ -24,8 +25,13 @@ from apps.assinaturas.subapps.faturamento.events import EventosCobranca
 from apps.assinaturas.subapps.faturamento.models import (
     AssinaturaGateway,
     CheckoutCobranca,
+    CheckpointReconciliacao,
+    ComponentePreco,
     EventoCobranca,
     FaturaAssinatura,
+    FinalidadeCheckout,
+    ReaberturaEventoCobranca,
+    ReferenciaPrecoGateway,
     StatusCheckout,
     StatusEventoCobranca,
     StatusFatura,
@@ -49,6 +55,10 @@ MAX_TENTATIVAS = 8
 LEASE = timedelta(minutes=15)
 PROCESSAMENTOS = Counter("billing_event_processing_total", "Resultado finito do worker financeiro.", ("variante", "familia", "resultado"))
 DURACAO_IO = Histogram("billing_gateway_operation_seconds", "Duração de I/O financeiro.", ("variante", "operacao"))
+CLAIMS = Counter("billing_event_claim_total", "Resultado do claim financeiro.", ("variante", "resultado"))
+RETRIES = Counter("billing_event_retry_total", "Destino do retry financeiro.", ("variante", "disposicao", "resultado"))
+IDADE_FILA = Histogram("billing_event_queue_age_seconds", "Idade do evento ao ser reivindicado.", ("variante",))
+RECONCILIACAO = Counter("billing_reconciliation_total", "Resultado finito da reconciliação.", ("variante", "resultado"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +71,10 @@ class ClaimEvento:
     assinatura_id: str
     fatura_id: str
     tentativa: int
+    assinatura_pk: int
+    assinatura_revisao: int
+    checkout_pk: int | None
+    mapping_pk: int | None
 
 
 def calcular_backoff(tentativa: int, *, jitter: float = 0.0) -> timedelta:
@@ -73,7 +87,40 @@ def calcular_backoff(tentativa: int, *, jitter: float = 0.0) -> timedelta:
 def claim_evento(evento_id: int, organizacao_id: int, *, agora: datetime | None = None) -> ClaimEvento | None:
     agora = agora or timezone.now()
     with organizacao_atual_privilegiada(organizacao_id):
-        evento = EventoCobranca.objects.select_for_update().filter(pk=evento_id).first()
+        from apps.organizacoes.models import Organizacao
+
+        Organizacao.all_objects.select_for_update().get(pk=organizacao_id)
+        evento_base = EventoCobranca.objects.filter(pk=evento_id).first()
+        if evento_base is None or evento_base.organizacao_id != organizacao_id:
+            return None
+        familia = evento_base.tipo.split(".", 1)[0]
+        checkout = None
+        mapping = None
+        if familia in {"checkout", "setup"}:
+            checkout_ref = (
+                CheckoutCobranca.objects.filter(variante=evento_base.variante, identificador_externo=evento_base.identificador_checkout)
+                .only("pk", "assinatura_id")
+                .first()
+            )
+            if checkout_ref is None:
+                return None
+            assinatura = AssinaturaOrganizacao.all_objects.select_for_update().get(pk=checkout_ref.assinatura_id)
+            checkout = CheckoutCobranca.objects.select_for_update().get(pk=checkout_ref.pk, assinatura_id=assinatura.pk)
+        else:
+            mapping_ref = (
+                AssinaturaGateway.objects.filter(
+                    variante=evento_base.variante,
+                    identificador_externo=evento_base.identificador_assinatura,
+                    organizacao_id=organizacao_id,
+                )
+                .only("pk", "assinatura_id")
+                .first()
+            )
+            if mapping_ref is None:
+                return None
+            assinatura = AssinaturaOrganizacao.all_objects.select_for_update().get(pk=mapping_ref.assinatura_id)
+            mapping = AssinaturaGateway.objects.select_for_update().get(pk=mapping_ref.pk, assinatura_id=assinatura.pk)
+        evento = EventoCobranca.objects.select_for_update().get(pk=evento_id)
         if evento is None or evento.status in (StatusEventoCobranca.PROCESSADO, StatusEventoCobranca.IGNORADO):
             return None
         if evento.organizacao_id is None or evento.status == StatusEventoCobranca.RECEBIDO:
@@ -82,7 +129,7 @@ def claim_evento(evento_id: int, organizacao_id: int, *, agora: datetime | None 
             return None
         if evento.proxima_tentativa_em and evento.proxima_tentativa_em > agora:
             return None
-        if evento.tentativas_processamento >= MAX_TENTATIVAS:
+        if evento.tentativas_automaticas_ciclo >= MAX_TENTATIVAS:
             if evento.status != StatusEventoCobranca.FALHOU:
                 evento.status = StatusEventoCobranca.FALHOU
                 evento.erro = "retry_exhausted"
@@ -90,9 +137,21 @@ def claim_evento(evento_id: int, organizacao_id: int, *, agora: datetime | None 
             return None
         evento.status = StatusEventoCobranca.PROCESSANDO
         evento.tentativas_processamento += 1
+        evento.tentativas_automaticas_ciclo += 1
         evento.proxima_tentativa_em = agora + LEASE
         evento.erro = ""
-        evento.save(update_fields=["status", "tentativas_processamento", "proxima_tentativa_em", "erro", "last_modified_at"])
+        evento.save(
+            update_fields=[
+                "status",
+                "tentativas_processamento",
+                "tentativas_automaticas_ciclo",
+                "proxima_tentativa_em",
+                "erro",
+                "last_modified_at",
+            ]
+        )
+        CLAIMS.labels(evento.variante, "claimed").inc()
+        IDADE_FILA.labels(evento.variante).observe(max((agora - evento.ocorrido_em).total_seconds(), 0))
         return ClaimEvento(
             evento.pk,
             organizacao_id,
@@ -102,6 +161,10 @@ def claim_evento(evento_id: int, organizacao_id: int, *, agora: datetime | None 
             evento.identificador_assinatura,
             evento.identificador_fatura,
             evento.tentativas_processamento,
+            assinatura.pk,
+            assinatura.revisao,
+            checkout.pk if checkout else None,
+            mapping.pk if mapping else None,
         )
 
 
@@ -124,6 +187,15 @@ def recuperar_remoto(claim: ClaimEvento, client: CheckoutClient):
 
 
 def _validar_identidade(claim: ClaimEvento, kind, remoto) -> None:
+    familia = claim.tipo.split(".", 1)[0]
+    esperado_kind = {
+        "checkout": ResourceKind.CHECKOUT,
+        "setup": ResourceKind.SETUP,
+        "subscription": ResourceKind.SUBSCRIPTION,
+        "invoice": ResourceKind.INVOICE,
+    }.get(familia)
+    if kind != esperado_kind:
+        raise ValueError("remote_kind_mismatch")
     recurso = remoto[0] if kind == ResourceKind.INVOICE else remoto
     esperado = {
         ResourceKind.CHECKOUT: claim.checkout_id,
@@ -133,27 +205,47 @@ def _validar_identidade(claim: ClaimEvento, kind, remoto) -> None:
     }[kind]
     if recurso.variant != claim.variante or recurso.external_id != esperado:
         raise ValueError("remote_identity_mismatch")
+    if kind == ResourceKind.INVOICE:
+        invoice, subscription = remoto
+        if invoice.subscription_id != claim.assinatura_id:
+            raise ValueError("remote_invoice_subscription_mismatch")
+        if subscription is not None and (subscription.variant != claim.variante or subscription.external_id != claim.assinatura_id):
+            raise ValueError("remote_invoice_subscription_mismatch")
 
 
 def finalizar_evento(claim: ClaimEvento, kind, remoto, *, agora: datetime | None = None) -> bool:
     agora = agora or timezone.now()
     _validar_identidade(claim, kind, remoto)
     with organizacao_atual_privilegiada(claim.organizacao_id):
+        from apps.organizacoes.models import Organizacao
+
+        Organizacao.all_objects.select_for_update().get(pk=claim.organizacao_id)
+        assinatura = AssinaturaOrganizacao.all_objects.select_for_update().get(pk=claim.assinatura_pk, organizacao_id=claim.organizacao_id)
+        checkout = None
+        if claim.checkout_pk is not None:
+            checkout = CheckoutCobranca.objects.select_for_update().get(pk=claim.checkout_pk, assinatura_id=assinatura.pk)
+        mapping = None
+        if claim.mapping_pk is not None:
+            mapping = AssinaturaGateway.objects.select_for_update().get(pk=claim.mapping_pk, assinatura_id=assinatura.pk)
+            if mapping.variante != claim.variante or mapping.identificador_externo != claim.assinatura_id:
+                return False
         evento = EventoCobranca.objects.select_for_update().get(pk=claim.evento_id)
         if evento.status != StatusEventoCobranca.PROCESSANDO or evento.tentativas_processamento != claim.tentativa:
             return False
-        assinatura = AssinaturaOrganizacao.all_objects.select_for_update().get(
-            organizacao_id=claim.organizacao_id, status__in=(StatusAssinatura.PENDENTE, StatusAssinatura.EM_TRIAL, StatusAssinatura.ATIVA)
-        )
+        if assinatura.revisao != claim.assinatura_revisao and claim.tipo.split(".", 1)[0] in {"checkout", "setup"}:
+            return False
         if kind in (ResourceKind.CHECKOUT, ResourceKind.SETUP):
-            assinatura = _aplicar_checkout(evento, assinatura, remoto, setup=kind == ResourceKind.SETUP, agora=agora)
+            assert checkout is not None
+            assinatura = _aplicar_checkout(evento, assinatura, checkout, remoto, setup=kind == ResourceKind.SETUP, agora=agora)
         elif kind == ResourceKind.SUBSCRIPTION:
-            _aplicar_assinatura(assinatura, remoto, agora=agora)
+            assert mapping is not None
+            _aplicar_assinatura(assinatura, mapping, remoto, agora=agora)
         elif kind == ResourceKind.INVOICE:
             invoice, subscription = remoto
             _aplicar_fatura(assinatura, invoice, agora=agora)
             if subscription is not None:
-                _aplicar_assinatura(assinatura, subscription, agora=agora)
+                assert mapping is not None
+                _aplicar_assinatura(assinatura, mapping, subscription, agora=agora)
         evento.status = StatusEventoCobranca.PROCESSADO
         evento.processado_em = agora
         evento.proxima_tentativa_em = None
@@ -162,12 +254,23 @@ def finalizar_evento(claim: ClaimEvento, kind, remoto, *, agora: datetime | None
     return True
 
 
-def _aplicar_checkout(evento, assinatura, remoto, *, setup: bool, agora):
-    checkout = CheckoutCobranca.objects.select_for_update().get(variante=evento.variante, identificador_externo=remoto.external_id)
-    if remoto.reference_id:
-        local_id = decodificar_referencia_checkout(remoto.reference_id, organizacao_id=checkout.organizacao_id)
-        if local_id != checkout.pk:
-            raise ValueError("remote_reference_mismatch")
+def _aplicar_checkout(evento, assinatura, checkout, remoto, *, setup: bool, agora):
+    finalidade_esperada = (
+        FinalidadeCheckout.FORMA_PAGAMENTO
+        if setup
+        else {
+            FinalidadeCheckout.CONTRATACAO,
+            FinalidadeCheckout.ALTERACAO,
+            FinalidadeCheckout.PROPOSTA,
+        }
+    )
+    if (setup and checkout.finalidade != finalidade_esperada) or (not setup and checkout.finalidade not in finalidade_esperada):
+        raise ValueError("remote_checkout_purpose_mismatch")
+    if not remoto.reference_id:
+        raise ValueError("remote_reference_missing")
+    local_id = decodificar_referencia_checkout(remoto.reference_id, organizacao_id=checkout.organizacao_id)
+    if local_id != checkout.pk:
+        raise ValueError("remote_reference_mismatch")
     if setup:
         if remoto.status == SetupStatus.COMPLETE:
             checkout.status, checkout.concluido_em = StatusCheckout.CONCLUIDO, agora
@@ -180,7 +283,10 @@ def _aplicar_checkout(evento, assinatura, remoto, *, setup: bool, agora):
             raise ValueError("remote_mode_mismatch")
         if str(remoto.status) == "paid":
             checkout.status, checkout.concluido_em = StatusCheckout.CONCLUIDO, agora
-            if checkout.alteracao_id:
+            historico = assinatura.status == StatusAssinatura.ENCERRADA
+            if historico:
+                pass
+            elif checkout.alteracao_id:
                 Assinaturas.confirmar_alteracao(
                     checkout.alteracao,
                     evento_gateway=evento.identificador_evento,
@@ -196,7 +302,7 @@ def _aplicar_checkout(evento, assinatura, remoto, *, setup: bool, agora):
                 )
             elif assinatura.status == StatusAssinatura.PENDENTE:
                 assinatura = Assinaturas.confirmar_contratacao_paga(assinatura, agora=agora)
-            if remoto.subscription_id:
+            if remoto.subscription_id and not historico:
                 AssinaturaGateway.objects.update_or_create(
                     assinatura=assinatura,
                     defaults={
@@ -217,15 +323,17 @@ def _aplicar_checkout(evento, assinatura, remoto, *, setup: bool, agora):
     return assinatura
 
 
-def _aplicar_assinatura(assinatura, remoto: Subscription, *, agora):
-    mapping, _ = AssinaturaGateway.objects.update_or_create(
-        assinatura=assinatura,
-        defaults={"organizacao_id": assinatura.organizacao_id, "variante": remoto.variant, "identificador_externo": remoto.external_id},
-    )
+def _aplicar_assinatura(assinatura, mapping, remoto: Subscription, *, agora):
+    if mapping.identificador_externo != remoto.external_id or mapping.variante != remoto.variant:
+        raise ValueError("remote_subscription_mapping_mismatch")
     if remoto.status in (SubscriptionStatus.CANCELED, SubscriptionStatus.EXPIRED):
         mapping.is_active = False
         mapping.save(update_fields=["is_active", "last_modified_at"])
+        Assinaturas.encerrar_por_gateway_bloqueado(assinatura, encerrada_em=agora)
         return
+    if assinatura.status == StatusAssinatura.ENCERRADA:
+        return
+    _validar_itens_assinatura(assinatura, remoto)
     if (
         assinatura.status == StatusAssinatura.EM_TRIAL
         and remoto.status == SubscriptionStatus.ACTIVE
@@ -256,7 +364,47 @@ def _aplicar_assinatura(assinatura, remoto: Subscription, *, agora):
     )
 
 
+def _validar_itens_assinatura(assinatura: AssinaturaOrganizacao, remoto: Subscription) -> None:
+    preco = assinatura.versao_plano.precos.filter(periodicidade=assinatura.periodicidade, moeda=assinatura.moeda).first()
+    esperados = {}
+    if assinatura.valor_base_centavos > 0:
+        esperados[ComponentePreco.BASE] = (1, assinatura.valor_base_centavos)
+    seats = max(assinatura.seats_contratados - assinatura.seats_inclusos, 0)
+    if assinatura.valor_seat_centavos > 0 and seats > 0:
+        esperados[ComponentePreco.SEAT] = (seats, assinatura.valor_seat_centavos)
+    observados = {}
+    for item in remoto.items:
+        componente = None
+        if item.price_id:
+            referencia = ReferenciaPrecoGateway.objects.filter(
+                variante=remoto.variant,
+                identificador_externo=item.price_id,
+                preco_plano=preco,
+                is_active=True,
+                is_deleted=False,
+            ).first()
+            componente = referencia.componente if referencia else None
+        else:
+            candidatos = [c for c, (_, valor) in esperados.items() if valor == item.unit_amount and item.currency == assinatura.moeda]
+            componente = candidatos[0] if len(candidatos) == 1 else None
+        if componente is None or componente in observados:
+            raise ValueError("remote_subscription_price_mismatch")
+        observados[componente] = (item.quantity, item.unit_amount)
+    if set(observados) != set(esperados):
+        raise ValueError("remote_subscription_items_mismatch")
+    for componente, (quantidade, valor) in esperados.items():
+        item_quantidade, item_valor = observados[componente]
+        if item_quantidade != quantidade or (item_valor is not None and item_valor != valor):
+            raise ValueError("remote_subscription_quantity_mismatch")
+
+
 def _aplicar_fatura(assinatura, invoice: Invoice, *, agora):
+    if invoice.currency != assinatura.moeda or any(linha.currency != invoice.currency for linha in invoice.lines):
+        raise ValueError("remote_invoice_currency_mismatch")
+    if min(invoice.amount_due, invoice.amount_paid, invoice.amount_remaining) < 0:
+        raise ValueError("remote_invoice_amount_invalid")
+    if invoice.amount_paid + invoice.amount_remaining != invoice.amount_due:
+        raise ValueError("remote_invoice_amount_inconsistent")
     mapa = {
         InvoiceStatus.DRAFT: StatusFatura.ABERTA,
         InvoiceStatus.OPEN: StatusFatura.VENCIDA if invoice.due_at and invoice.due_at < agora else StatusFatura.ABERTA,
@@ -275,10 +423,17 @@ def _aplicar_fatura(assinatura, invoice: Invoice, *, agora):
         return
     fatura.status = mapa[invoice.status]
     fatura.motivo = str(invoice.reason)
+    subtotal = sum(linha.amount for linha in invoice.lines)
+    fatura.subtotal_centavos = subtotal
+    fatura.desconto_centavos = max(subtotal - invoice.amount_due, 0)
+    fatura.imposto_centavos = max(invoice.amount_due - subtotal, 0)
     fatura.total_centavos = invoice.amount_due
-    fatura.subtotal_centavos = invoice.amount_due
     fatura.moeda = invoice.currency
     fatura.vencimento_em, fatura.paga_em = invoice.due_at, invoice.paid_at
+    inicios = [linha.period_start for linha in invoice.lines if linha.period_start is not None]
+    fins = [linha.period_end for linha in invoice.lines if linha.period_end is not None]
+    fatura.periodo_iniciado_em = min(inicios) if inicios else None
+    fatura.periodo_termina_em = max(fins) if fins else None
     fatura.proxima_tentativa_em, fatura.tentativas = invoice.next_payment_attempt_at, invoice.attempt_count
     fatura.url_hospedada = invoice.hosted_url or ""
     fatura.save()
@@ -297,16 +452,60 @@ def _aplicar_fatura(assinatura, invoice: Invoice, *, agora):
 
 def registrar_falha(claim: ClaimEvento, exc: Exception, *, agora: datetime | None = None) -> None:
     agora = agora or timezone.now()
-    retry = isinstance(exc, CheckoutError) and exc.retry_advice.disposition != RetryDisposition.NEVER
+    advice = exc.retry_advice if isinstance(exc, CheckoutError) else None
+    retry = advice is not None and advice.disposition in {RetryDisposition.RETRY, RetryDisposition.RETRY_SAME_KEY}
     with organizacao_atual_privilegiada(claim.organizacao_id):
         evento = EventoCobranca.objects.select_for_update().get(pk=claim.evento_id)
         if evento.status != StatusEventoCobranca.PROCESSANDO or evento.tentativas_processamento != claim.tentativa:
             return
-        esgotou = claim.tentativa >= MAX_TENTATIVAS
+        esgotou = evento.tentativas_automaticas_ciclo >= MAX_TENTATIVAS
         evento.status = StatusEventoCobranca.ROTEADO if retry and not esgotou else StatusEventoCobranca.FALHOU
-        evento.proxima_tentativa_em = agora + calcular_backoff(claim.tentativa) if retry and not esgotou else None
+        espera = (
+            advice.retry_after if advice is not None and advice.retry_after is not None else calcular_backoff(evento.tentativas_automaticas_ciclo)
+        )
+        evento.proxima_tentativa_em = agora + espera if retry and not esgotou else None
         evento.erro = "gateway_temporary" if retry else "processing_permanent"
         evento.save(update_fields=["status", "proxima_tentativa_em", "erro", "last_modified_at"])
+        disposicao = advice.disposition.value if advice is not None else "unknown"
+        RETRIES.labels(evento.variante, disposicao, "scheduled" if evento.status == StatusEventoCobranca.ROTEADO else "terminal").inc()
+        if advice is not None and advice.disposition == RetryDisposition.RECONCILE_FIRST:
+            transaction.on_commit(lambda: current_app.send_task("faturamento.reconciliar_eventos_stripe"))
+
+
+def reabrir_evento_operacional(*, evento: EventoCobranca, ator, motivo: str, chave_idempotencia: str) -> EventoCobranca:
+    """Reabre terminal explicitamente sem apagar o total histórico de tentativas."""
+    motivo = motivo.strip()
+    if not motivo or not chave_idempotencia.strip() or not getattr(ator, "pk", None) or evento.organizacao_id is None:
+        raise ValueError("Retry operacional exige tenant, ator, motivo e chave idempotente.")
+    with organizacao_atual_privilegiada(evento.organizacao_id):
+        from apps.organizacoes.models import Organizacao
+
+        Organizacao.all_objects.select_for_update().get(pk=evento.organizacao_id)
+        bloqueado = EventoCobranca.objects.select_for_update().get(pk=evento.pk)
+        existente = ReaberturaEventoCobranca.objects.filter(chave_idempotencia=chave_idempotencia).first()
+        if existente is not None:
+            if existente.evento_id != bloqueado.pk:
+                raise ValueError("Chave operacional já usada em outro evento.")
+            return bloqueado
+        if bloqueado.status != StatusEventoCobranca.FALHOU:
+            raise ValueError("Somente evento terminal falho pode ser reaberto.")
+        ReaberturaEventoCobranca.objects.create(
+            organizacao_id=bloqueado.organizacao_id,
+            evento=bloqueado,
+            motivo=motivo,
+            ator=ator,
+            chave_idempotencia=chave_idempotencia,
+            tentativas_anteriores=bloqueado.tentativas_processamento,
+        )
+        bloqueado.status = StatusEventoCobranca.ROTEADO
+        bloqueado.tentativas_automaticas_ciclo = 0
+        bloqueado.proxima_tentativa_em = timezone.now()
+        bloqueado.erro = ""
+        bloqueado.save(update_fields=["status", "tentativas_automaticas_ciclo", "proxima_tentativa_em", "erro", "last_modified_at"])
+        transaction.on_commit(
+            lambda: current_app.send_task("faturamento.processar_evento_cobranca", args=(bloqueado.pk, bloqueado.variante, bloqueado.organizacao_id))
+        )
+        return bloqueado
 
 
 def processar_evento(evento_id: int, organizacao_id: int, variante: str, *, client: CheckoutClient) -> bool:
@@ -324,8 +523,9 @@ def processar_evento(evento_id: int, organizacao_id: int, variante: str, *, clie
         resultado = finalizar_evento(claim, kind, remoto)
     except Exception as exc:
         registrar_falha(claim, exc)
+        PROCESSAMENTOS.labels(variante, claim.tipo.split(".", 1)[0], "falhou").inc()
         raise
-    PROCESSAMENTOS.labels(variante, claim.tipo.split(".", 1)[0], "processado").inc()
+    PROCESSAMENTOS.labels(variante, claim.tipo.split(".", 1)[0], "processado" if resultado else "ignorado").inc()
     return resultado
 
 
@@ -345,3 +545,56 @@ def reconciliar_janela(*, variante: str, inicio: datetime, fim: datetime, client
         cursor = pagina.next_cursor
         if cursor is None:
             return total
+
+
+def reconciliar_duravel(
+    *,
+    variante: str,
+    client: CheckoutClient,
+    agora: datetime | None = None,
+    janela: timedelta = timedelta(minutes=20),
+    overlap: timedelta = timedelta(minutes=5),
+    limite: int = 100,
+    receber=None,
+) -> int:
+    """Processa páginas com checkpoint após a ingestão idempotente de cada página."""
+    agora = agora or timezone.now()
+    receber = receber or EventosCobranca().receber
+    with transaction.atomic():
+        checkpoint, _ = CheckpointReconciliacao.objects.select_for_update().get_or_create(
+            variante=variante,
+            defaults={"janela_inicio": agora - janela, "janela_fim": agora},
+        )
+        if checkpoint.lease_ate and checkpoint.lease_ate > agora:
+            return 0
+        checkpoint.lease_ate = agora + LEASE
+        checkpoint.revisao += 1
+        checkpoint.save(update_fields=["lease_ate", "revisao", "last_modified_at"])
+        inicio, fim, cursor = checkpoint.janela_inicio, checkpoint.janela_fim, checkpoint.cursor or None
+    if connection.in_atomic_block:
+        raise RuntimeError("Reconciliação remota não pode executar dentro de transação.")
+    pagina = client.events.list(occurred_since=inicio, occurred_before=fim, cursor=cursor, limit=limite)
+    total = 0
+    for evento in pagina.items:
+        try:
+            receber(variante, evento, client=client)
+        except Exception:
+            RECONCILIACAO.labels(variante, "falhou").inc()
+            raise
+        total += 1
+    with transaction.atomic():
+        checkpoint = CheckpointReconciliacao.objects.select_for_update().get(variante=variante)
+        if checkpoint.janela_inicio != inicio or checkpoint.janela_fim != fim or (checkpoint.cursor or None) != cursor:
+            return total
+        if pagina.next_cursor:
+            checkpoint.cursor = pagina.next_cursor
+        else:
+            checkpoint.ultimo_limite_concluido = fim
+            checkpoint.janela_inicio = fim - overlap
+            checkpoint.janela_fim = max(agora, fim + timedelta(microseconds=1))
+            checkpoint.cursor = ""
+        checkpoint.lease_ate = None
+        checkpoint.revisao += 1
+        checkpoint.save()
+    RECONCILIACAO.labels(variante, "pagina" if pagina.next_cursor else "janela_concluida").inc()
+    return total

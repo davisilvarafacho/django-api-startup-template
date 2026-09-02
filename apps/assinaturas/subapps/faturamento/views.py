@@ -1,7 +1,6 @@
 from dataclasses import asdict
 
 from rest_framework import status
-from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -9,6 +8,7 @@ from rest_framework.views import APIView
 from apps.api.autenticacao.permissions import TokenScopePermission
 from apps.api.autenticacao.recent_auth import RecentAuthenticationPermission, require_recent_auth
 from apps.api.core.errors import APIError, CoreErrorCode, ValidationErrorCode
+from apps.api.core.pagination import CustomPagination
 from apps.api.core.route_markers import io_externo_sem_transacao, public, regularizacao_assinatura
 from apps.assinaturas.errors import BillingErrorCode
 from apps.assinaturas.models import AlteracaoAssinatura, AssinaturaOrganizacao, ModoAtivacaoProposta, PropostaComercial
@@ -34,6 +34,7 @@ from apps.assinaturas.subapps.faturamento.models import CheckoutCobranca, Fatura
 from apps.assinaturas.subapps.faturamento.schema import (
     document_checkout_create,
     document_checkout_list,
+    document_invoice_list,
     document_proposal_accept,
     document_setup_create,
     document_webhook,
@@ -178,11 +179,13 @@ class CriarCheckoutAssinaturaView(_FaturamentoSessionView):
 
 @regularizacao_assinatura
 class ListarCheckoutsView(_FaturamentoSessionView):
+    pagination_class = CustomPagination
+
     @document_checkout_list
     def get(self, request):
         self.exigir_papel(request, Papel.ADMINISTRADOR)
         checkouts = CheckoutCobranca.objects.order_by("-created_at", "-pk")
-        paginator = PageNumberPagination()
+        paginator = self.pagination_class()
         paginator.page_size = 50
         page = paginator.paginate_queryset(checkouts, request, view=self)
         return paginator.get_paginated_response(CheckoutResponseSerializer(page, many=True).data)
@@ -190,10 +193,13 @@ class ListarCheckoutsView(_FaturamentoSessionView):
 
 @regularizacao_assinatura
 class ListarFaturasView(_FaturamentoSessionView):
+    pagination_class = CustomPagination
+
+    @document_invoice_list
     def get(self, request):
         self.exigir_papel(request, Papel.ADMINISTRADOR)
         faturas = FaturaAssinatura.objects.order_by("-created_at", "-pk")
-        paginator = PageNumberPagination()
+        paginator = self.pagination_class()
         paginator.page_size = 50
         page = paginator.paginate_queryset(faturas, request, view=self)
         return paginator.get_paginated_response(FaturaResponseSerializer(page, many=True).data)
