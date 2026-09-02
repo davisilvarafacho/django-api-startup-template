@@ -16,13 +16,7 @@ from .processing import processar_evento, reconciliar_duravel
 def processar_evento_cobranca(evento_id: int, variante: str, organizacao_id: int | None = None):
     """Processa um evento já roteado; o tenant explícito evita contexto ambíguo."""
     if organizacao_id is None:
-        with transaction.atomic(), connection.cursor() as cursor:
-            cursor.execute("SET LOCAL ROLE billing_functions_owner")
-            cursor.execute("SELECT organizacao_id FROM evento_cobranca WHERE id=%s AND organizacao_id IS NOT NULL", [evento_id])
-            linha = cursor.fetchone()
-        if linha is None:
-            return False
-        organizacao_id = linha[0]
+        return False
     return processar_evento(evento_id, organizacao_id, variante, client=get_checkout_gateway(variante))
 
 
@@ -31,39 +25,16 @@ def recuperar_eventos_cobranca(limite: int = 100):
     """Pagina eventos abandonados/vencidos pelo caminho operacional global."""
     agora = timezone.now()
     with transaction.atomic(), connection.cursor() as cursor:
-        cursor.execute("SET LOCAL ROLE billing_functions_owner")
+        cursor.execute("SET LOCAL ROLE billing_ingress_runtime")
+        cursor.execute("SELECT set_config('rls.tenant_id','0',true)")
+        cursor.execute("SELECT set_config('rls.billing_ingress','1',true)")
         cursor.execute(
-            """SELECT id,variante,organizacao_id,identificador_assinatura,identificador_checkout
-               FROM evento_cobranca
-               WHERE status IN (10,20,30)
-                 AND (proxima_tentativa_em IS NULL OR proxima_tentativa_em <= %s)
-               ORDER BY id FOR UPDATE SKIP LOCKED LIMIT %s""",
-            [agora, limite],
+            "SELECT evento_id,variante,organizacao_id FROM faturamento_claim_recovery(%s,%s)",
+            [limite, agora],
         )
         eventos = cursor.fetchall()
-    for evento_id, variante, organizacao_id, assinatura_externa, checkout_externo in eventos:
-        if organizacao_id is None:
-            with transaction.atomic(), connection.cursor() as cursor:
-                cursor.execute("SET LOCAL ROLE billing_functions_owner")
-                cursor.execute(
-                    """SELECT organizacao_id FROM assinatura_gateway
-                       WHERE variante=%s AND identificador_externo=%s AND is_deleted=false
-                       UNION ALL
-                       SELECT organizacao_id FROM checkout_cobranca
-                       WHERE variante=%s AND identificador_externo=%s AND is_deleted=false LIMIT 2""",
-                    [variante, assinatura_externa, variante, checkout_externo],
-                )
-                destinos = {linha[0] for linha in cursor.fetchall()}
-            if len(destinos) == 1:
-                destino = destinos.pop()
-                with transaction.atomic(), connection.cursor() as cursor:
-                    cursor.execute("SET LOCAL ROLE billing_ingress_runtime")
-                    cursor.execute("SELECT set_config('rls.tenant_id','0',true)")
-                    cursor.execute("SELECT set_config('rls.billing_ingress','1',true)")
-                    cursor.execute("SELECT faturamento_rotear_evento_destino(%s,%s)", [evento_id, destino])
-                processar_evento_cobranca.delay(evento_id, variante, destino)
-        else:
-            processar_evento_cobranca.delay(evento_id, variante, organizacao_id)
+    for evento_id, variante, organizacao_id in eventos:
+        processar_evento_cobranca.delay(evento_id, variante, organizacao_id)
     return len(eventos)
 
 

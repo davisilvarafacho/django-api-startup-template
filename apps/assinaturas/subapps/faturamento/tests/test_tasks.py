@@ -1,10 +1,12 @@
+import inspect
+
 from django.db import connection, transaction
 from django.utils import timezone
 
 import pytest
 
 from apps.assinaturas.subapps.faturamento.models import AssinaturaGateway, EventoCobranca, StatusEventoCobranca
-from apps.assinaturas.subapps.faturamento.tasks import recuperar_eventos_cobranca
+from apps.assinaturas.subapps.faturamento.tasks import processar_evento_cobranca, recuperar_eventos_cobranca
 from apps.assinaturas.tests.test_subscription_models import _criar_assinatura, _criar_versao
 from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.models import Organizacao
@@ -24,6 +26,12 @@ def _evento_recebido_sem_tenant(*, identificador_assinatura: str) -> int:
             [timezone.now(), timezone.now(), f"evt_recovery_{identificador_assinatura}", identificador_assinatura, "e" * 64, timezone.now()],
         )
         return cursor.fetchone()[0]
+
+
+def test_worker_financeiro_nunca_assume_role_owner_e_exige_tenant_na_mensagem():
+    fonte = inspect.getsource(processar_evento_cobranca.run)
+    assert "billing_functions_owner" not in fonte
+    assert processar_evento_cobranca.run(1, "stripe", None) is False
 
 
 @pytest.mark.django_db(transaction=True)
@@ -68,9 +76,11 @@ def test_recovery_sem_destino_mantem_recebido_sem_efeitos(monkeypatch):
         lambda *args: enviados.append(args),
     )
 
-    assert recuperar_eventos_cobranca.run(limite=10) == 1
+    assert recuperar_eventos_cobranca.run(limite=10) == 0
     assert enviados == []
     with transaction.atomic(), connection.cursor() as cursor:
         cursor.execute("SET LOCAL ROLE billing_functions_owner")
-        cursor.execute("SELECT status,organizacao_id FROM evento_cobranca WHERE id=%s", [evento_id])
-        assert cursor.fetchone() == (StatusEventoCobranca.RECEBIDO, None)
+        cursor.execute("SELECT status,organizacao_id,tentativas_roteamento,proxima_tentativa_em FROM evento_cobranca WHERE id=%s", [evento_id])
+        status, organizacao_id, tentativas, proxima = cursor.fetchone()
+        assert (status, organizacao_id, tentativas) == (StatusEventoCobranca.RECEBIDO, None, 1)
+        assert proxima is not None

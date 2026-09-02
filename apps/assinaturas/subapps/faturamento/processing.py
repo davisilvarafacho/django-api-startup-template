@@ -10,8 +10,10 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
+from django.conf import settings
 from django.db import connection, transaction
 from django.utils import timezone
+from django.utils.module_loading import import_string
 
 from celery import current_app
 from django_checkouts.enums import InvoiceStatus, ResourceKind, RetryDisposition, SetupStatus, SubscriptionStatus
@@ -32,6 +34,7 @@ from apps.assinaturas.subapps.faturamento.models import (
     FinalidadeCheckout,
     ReaberturaEventoCobranca,
     ReferenciaPrecoGateway,
+    SolicitacaoReconciliacaoCobranca,
     StatusCheckout,
     StatusEventoCobranca,
     StatusFatura,
@@ -75,6 +78,7 @@ class ClaimEvento:
     assinatura_revisao: int
     checkout_pk: int | None
     mapping_pk: int | None
+    gateway: str = ""
 
 
 def calcular_backoff(tentativa: int, *, jitter: float = 0.0) -> timedelta:
@@ -84,14 +88,19 @@ def calcular_backoff(tentativa: int, *, jitter: float = 0.0) -> timedelta:
     return timedelta(seconds=max(segundos, 1))
 
 
-def claim_evento(evento_id: int, organizacao_id: int, *, agora: datetime | None = None) -> ClaimEvento | None:
+def claim_evento(evento_id: int, organizacao_id: int, *, variante: str, agora: datetime | None = None) -> ClaimEvento | None:
     agora = agora or timezone.now()
     with organizacao_atual_privilegiada(organizacao_id):
         from apps.organizacoes.models import Organizacao
 
         Organizacao.all_objects.select_for_update().get(pk=organizacao_id)
         evento_base = EventoCobranca.objects.filter(pk=evento_id).first()
-        if evento_base is None or evento_base.organizacao_id != organizacao_id:
+        if (
+            evento_base is None
+            or evento_base.organizacao_id != organizacao_id
+            or evento_base.variante != variante
+            or evento_base.status not in {StatusEventoCobranca.ROTEADO, StatusEventoCobranca.PROCESSANDO}
+        ):
             return None
         familia = evento_base.tipo.split(".", 1)[0]
         checkout = None
@@ -151,7 +160,8 @@ def claim_evento(evento_id: int, organizacao_id: int, *, agora: datetime | None 
             ]
         )
         CLAIMS.labels(evento.variante, "claimed").inc()
-        IDADE_FILA.labels(evento.variante).observe(max((agora - evento.ocorrido_em).total_seconds(), 0))
+        if evento.ocorrido_em is not None:
+            IDADE_FILA.labels(evento.variante).observe(max((agora - evento.ocorrido_em).total_seconds(), 0))
         return ClaimEvento(
             evento.pk,
             organizacao_id,
@@ -165,12 +175,15 @@ def claim_evento(evento_id: int, organizacao_id: int, *, agora: datetime | None 
             assinatura.revisao,
             checkout.pk if checkout else None,
             mapping.pk if mapping else None,
+            str(import_string(settings.CHECKOUT_VARIANTS[evento.variante][0]).name),
         )
 
 
 def recuperar_remoto(claim: ClaimEvento, client: CheckoutClient):
     if connection.in_atomic_block:
         raise RuntimeError("I/O de faturamento não pode ocorrer dentro de transação.")
+    if client.variant != claim.variante or str(client.gateway) != claim.gateway:
+        raise ValueError("remote_client_identity_mismatch")
     familia = claim.tipo.split(".", 1)[0]
     with DURACAO_IO.labels(claim.variante, f"{familia}.retrieve").time():
         if familia == "checkout":
@@ -203,7 +216,7 @@ def _validar_identidade(claim: ClaimEvento, kind, remoto) -> None:
         ResourceKind.SUBSCRIPTION: claim.assinatura_id,
         ResourceKind.INVOICE: claim.fatura_id,
     }[kind]
-    if recurso.variant != claim.variante or recurso.external_id != esperado:
+    if recurso.variant != claim.variante or recurso.external_id != esperado or (claim.gateway and str(recurso.gateway) != claim.gateway):
         raise ValueError("remote_identity_mismatch")
     if kind == ResourceKind.INVOICE:
         invoice, subscription = remoto
@@ -255,16 +268,8 @@ def finalizar_evento(claim: ClaimEvento, kind, remoto, *, agora: datetime | None
 
 
 def _aplicar_checkout(evento, assinatura, checkout, remoto, *, setup: bool, agora):
-    finalidade_esperada = (
-        FinalidadeCheckout.FORMA_PAGAMENTO
-        if setup
-        else {
-            FinalidadeCheckout.CONTRATACAO,
-            FinalidadeCheckout.ALTERACAO,
-            FinalidadeCheckout.PROPOSTA,
-        }
-    )
-    if (setup and checkout.finalidade != finalidade_esperada) or (not setup and checkout.finalidade not in finalidade_esperada):
+    finalidades_checkout = {FinalidadeCheckout.CONTRATACAO, FinalidadeCheckout.ALTERACAO, FinalidadeCheckout.PROPOSTA}
+    if (setup and checkout.finalidade != FinalidadeCheckout.FORMA_PAGAMENTO) or (not setup and checkout.finalidade not in finalidades_checkout):
         raise ValueError("remote_checkout_purpose_mismatch")
     if not remoto.reference_id:
         raise ValueError("remote_reference_missing")
@@ -365,7 +370,8 @@ def _aplicar_assinatura(assinatura, mapping, remoto: Subscription, *, agora):
 
 
 def _validar_itens_assinatura(assinatura: AssinaturaOrganizacao, remoto: Subscription) -> None:
-    preco = assinatura.versao_plano.precos.filter(periodicidade=assinatura.periodicidade, moeda=assinatura.moeda).first()
+    versao_plano = assinatura.versao_plano
+    preco = versao_plano.precos.filter(periodicidade=assinatura.periodicidade, moeda=assinatura.moeda).first() if versao_plano is not None else None
     esperados = {}
     if assinatura.valor_base_centavos > 0:
         esperados[ComponentePreco.BASE] = (1, assinatura.valor_base_centavos)
@@ -375,7 +381,7 @@ def _validar_itens_assinatura(assinatura: AssinaturaOrganizacao, remoto: Subscri
     observados = {}
     for item in remoto.items:
         componente = None
-        if item.price_id:
+        if preco is not None and item.price_id:
             referencia = ReferenciaPrecoGateway.objects.filter(
                 variante=remoto.variant,
                 identificador_externo=item.price_id,
@@ -384,7 +390,7 @@ def _validar_itens_assinatura(assinatura: AssinaturaOrganizacao, remoto: Subscri
                 is_deleted=False,
             ).first()
             componente = referencia.componente if referencia else None
-        else:
+        elif preco is None:
             candidatos = [c for c, (_, valor) in esperados.items() if valor == item.unit_amount and item.currency == assinatura.moeda]
             componente = candidatos[0] if len(candidatos) == 1 else None
         if componente is None or componente in observados:
@@ -423,11 +429,12 @@ def _aplicar_fatura(assinatura, invoice: Invoice, *, agora):
         return
     fatura.status = mapa[invoice.status]
     fatura.motivo = str(invoice.reason)
-    subtotal = sum(linha.amount for linha in invoice.lines)
-    fatura.subtotal_centavos = subtotal
-    fatura.desconto_centavos = max(subtotal - invoice.amount_due, 0)
-    fatura.imposto_centavos = max(invoice.amount_due - subtotal, 0)
-    fatura.total_centavos = invoice.amount_due
+    # `None` significa que outro adapter não expôs a categoria. Persistimos
+    # zero como indisponível, nunca como diferença inferida entre outros fatos.
+    fatura.subtotal_centavos = invoice.subtotal if invoice.subtotal is not None else 0
+    fatura.desconto_centavos = invoice.discount_total if invoice.discount_total is not None else 0
+    fatura.imposto_centavos = invoice.tax_total if invoice.tax_total is not None else 0
+    fatura.total_centavos = invoice.total if invoice.total is not None else 0
     fatura.moeda = invoice.currency
     fatura.vencimento_em, fatura.paga_em = invoice.due_at, invoice.paid_at
     inicios = [linha.period_start for linha in invoice.lines if linha.period_start is not None]
@@ -460,12 +467,13 @@ def registrar_falha(claim: ClaimEvento, exc: Exception, *, agora: datetime | Non
             return
         esgotou = evento.tentativas_automaticas_ciclo >= MAX_TENTATIVAS
         evento.status = StatusEventoCobranca.ROTEADO if retry and not esgotou else StatusEventoCobranca.FALHOU
+        evento.aguarda_reconciliacao = bool(advice is not None and advice.disposition == RetryDisposition.RECONCILE_FIRST)
         espera = (
             advice.retry_after if advice is not None and advice.retry_after is not None else calcular_backoff(evento.tentativas_automaticas_ciclo)
         )
         evento.proxima_tentativa_em = agora + espera if retry and not esgotou else None
         evento.erro = "gateway_temporary" if retry else "processing_permanent"
-        evento.save(update_fields=["status", "proxima_tentativa_em", "erro", "last_modified_at"])
+        evento.save(update_fields=["status", "aguarda_reconciliacao", "proxima_tentativa_em", "erro", "last_modified_at"])
         disposicao = advice.disposition.value if advice is not None else "unknown"
         RETRIES.labels(evento.variante, disposicao, "scheduled" if evento.status == StatusEventoCobranca.ROTEADO else "terminal").inc()
         if advice is not None and advice.disposition == RetryDisposition.RECONCILE_FIRST:
@@ -475,12 +483,13 @@ def registrar_falha(claim: ClaimEvento, exc: Exception, *, agora: datetime | Non
 def reabrir_evento_operacional(*, evento: EventoCobranca, ator, motivo: str, chave_idempotencia: str) -> EventoCobranca:
     """Reabre terminal explicitamente sem apagar o total histórico de tentativas."""
     motivo = motivo.strip()
-    if not motivo or not chave_idempotencia.strip() or not getattr(ator, "pk", None) or evento.organizacao_id is None:
+    organizacao_id = evento.organizacao_id
+    if not motivo or not chave_idempotencia.strip() or not getattr(ator, "pk", None) or organizacao_id is None:
         raise ValueError("Retry operacional exige tenant, ator, motivo e chave idempotente.")
-    with organizacao_atual_privilegiada(evento.organizacao_id):
+    with organizacao_atual_privilegiada(organizacao_id):
         from apps.organizacoes.models import Organizacao
 
-        Organizacao.all_objects.select_for_update().get(pk=evento.organizacao_id)
+        Organizacao.all_objects.select_for_update().get(pk=organizacao_id)
         bloqueado = EventoCobranca.objects.select_for_update().get(pk=evento.pk)
         existente = ReaberturaEventoCobranca.objects.filter(chave_idempotencia=chave_idempotencia).first()
         if existente is not None:
@@ -490,7 +499,7 @@ def reabrir_evento_operacional(*, evento: EventoCobranca, ator, motivo: str, cha
         if bloqueado.status != StatusEventoCobranca.FALHOU:
             raise ValueError("Somente evento terminal falho pode ser reaberto.")
         ReaberturaEventoCobranca.objects.create(
-            organizacao_id=bloqueado.organizacao_id,
+            organizacao_id=organizacao_id,
             evento=bloqueado,
             motivo=motivo,
             ator=ator,
@@ -498,19 +507,118 @@ def reabrir_evento_operacional(*, evento: EventoCobranca, ator, motivo: str, cha
             tentativas_anteriores=bloqueado.tentativas_processamento,
         )
         bloqueado.status = StatusEventoCobranca.ROTEADO
+        bloqueado.aguarda_reconciliacao = False
         bloqueado.tentativas_automaticas_ciclo = 0
         bloqueado.proxima_tentativa_em = timezone.now()
         bloqueado.erro = ""
-        bloqueado.save(update_fields=["status", "tentativas_automaticas_ciclo", "proxima_tentativa_em", "erro", "last_modified_at"])
+        bloqueado.save(
+            update_fields=[
+                "status",
+                "aguarda_reconciliacao",
+                "tentativas_automaticas_ciclo",
+                "proxima_tentativa_em",
+                "erro",
+                "last_modified_at",
+            ]
+        )
         transaction.on_commit(
             lambda: current_app.send_task("faturamento.processar_evento_cobranca", args=(bloqueado.pk, bloqueado.variante, bloqueado.organizacao_id))
         )
         return bloqueado
 
 
+def reabrir_evento_reconciliado(*, evento_id: int, organizacao_id: int) -> EventoCobranca | None:
+    """Conclui RECONCILE_FIRST idempotentemente sob o tenant já descoberto."""
+    with organizacao_atual_privilegiada(organizacao_id):
+        from apps.organizacoes.models import Organizacao
+
+        Organizacao.all_objects.select_for_update().get(pk=organizacao_id)
+        evento = EventoCobranca.objects.select_for_update().filter(pk=evento_id, organizacao_id=organizacao_id).first()
+        if evento is None:
+            return None
+        chave = f"system:reconcile:{evento.pk}:{evento.tentativas_processamento}"
+        auditoria = ReaberturaEventoCobranca.objects.filter(chave_idempotencia=chave).first()
+        if evento.aguarda_reconciliacao:
+            if auditoria is None:
+                ReaberturaEventoCobranca.objects.create(
+                    organizacao_id=organizacao_id,
+                    evento=evento,
+                    motivo="Reconciliação remota conclusiva.",
+                    ator=None,
+                    automatica=True,
+                    chave_idempotencia=chave,
+                    tentativas_anteriores=evento.tentativas_processamento,
+                )
+            evento.status = StatusEventoCobranca.ROTEADO
+            evento.aguarda_reconciliacao = False
+            evento.tentativas_automaticas_ciclo = 0
+            evento.proxima_tentativa_em = timezone.now()
+            evento.erro = ""
+            evento.save(
+                update_fields=[
+                    "status",
+                    "aguarda_reconciliacao",
+                    "tentativas_automaticas_ciclo",
+                    "proxima_tentativa_em",
+                    "erro",
+                    "last_modified_at",
+                ]
+            )
+        elif auditoria is None or evento.status != StatusEventoCobranca.ROTEADO:
+            return None
+        transaction.on_commit(
+            lambda: current_app.send_task("faturamento.processar_evento_cobranca", args=(evento.pk, evento.variante, organizacao_id))
+        )
+        return evento
+
+
+def solicitar_reconciliacao_operacional(
+    *, evento: EventoCobranca, ator, motivo: str, chave_idempotencia: str, agora: datetime | None = None, janela: timedelta = timedelta(minutes=20)
+) -> SolicitacaoReconciliacaoCobranca:
+    """Agenda reconciliação uma vez e persiste todos os parâmetros operacionais."""
+    agora = agora or timezone.now()
+    if not motivo.strip() or not chave_idempotencia.strip():
+        raise ValueError("motivo e chave de idempotência são obrigatórios")
+    organizacao_id = evento.organizacao_id
+    if organizacao_id is None:
+        raise ValueError("evento sem organização não pode ser reconciliado operacionalmente")
+    with transaction.atomic(), organizacao_atual_privilegiada(organizacao_id):
+        solicitacao, criada = SolicitacaoReconciliacaoCobranca.objects.get_or_create(
+            organizacao_id=organizacao_id,
+            chave_idempotencia=chave_idempotencia,
+            defaults={
+                "variante": evento.variante,
+                "ator": ator,
+                "motivo": motivo.strip(),
+                "janela_inicio": agora - janela,
+                "janela_fim": agora,
+                "parametros": {"evento_id": evento.pk, "janela_segundos": int(janela.total_seconds())},
+                "resultado": "agendada",
+            },
+        )
+        if criada:
+            tarefa = {"stripe": "faturamento.reconciliar_eventos_stripe"}.get(evento.variante)
+            if tarefa is None:
+                solicitacao.resultado = "variante_ignorada"
+                solicitacao.save(update_fields=["resultado", "last_modified_at"])
+            else:
+                transaction.on_commit(lambda: current_app.send_task(tarefa))
+        return solicitacao
+
+
+def _destino_reconcile(evento_id: int) -> int | None:
+    with transaction.atomic(), connection.cursor() as cursor:
+        cursor.execute("SET LOCAL ROLE billing_ingress_runtime")
+        cursor.execute("SELECT set_config('rls.tenant_id','0',true)")
+        cursor.execute("SELECT set_config('rls.billing_ingress','1',true)")
+        cursor.execute("SELECT faturamento_destino_reconcile(%s)", [evento_id])
+        linha = cursor.fetchone()
+    return linha[0] if linha and linha[0] is not None else None
+
+
 def processar_evento(evento_id: int, organizacao_id: int, variante: str, *, client: CheckoutClient) -> bool:
-    claim = claim_evento(evento_id, organizacao_id)
-    if claim is None or claim.variante != variante:
+    claim = claim_evento(evento_id, organizacao_id, variante=variante)
+    if claim is None:
         return False
     try:
         kind, remoto = recuperar_remoto(claim, client)
@@ -577,7 +685,12 @@ def reconciliar_duravel(
     total = 0
     for evento in pagina.items:
         try:
-            receber(variante, evento, client=client)
+            resultado = receber(variante, evento, client=client)
+            evento_id = getattr(resultado, "evento_id", None)
+            if evento_id is not None:
+                destino = _destino_reconcile(evento_id)
+                if destino is not None:
+                    reabrir_evento_reconciliado(evento_id=evento_id, organizacao_id=destino)
         except Exception:
             RECONCILIACAO.labels(variante, "falhou").inc()
             raise

@@ -211,6 +211,7 @@ class EventoCobranca(BaseTenantless, RLSModel):
     tentativas_roteamento = models.PositiveSmallIntegerField(default=0)
     tentativas_processamento = models.PositiveSmallIntegerField(default=0)
     tentativas_automaticas_ciclo = models.PositiveSmallIntegerField(default=0, db_default=0)
+    aguarda_reconciliacao = models.BooleanField(default=False, db_default=False)
     payload_normalizado = models.JSONField(default=dict, validators=[validar_payload_evento])
     hash_payload = models.CharField(max_length=64)
     erro = models.CharField(max_length=500, blank=True)
@@ -267,7 +268,8 @@ class ReaberturaEventoCobranca(Base):
 
     evento = models.ForeignKey(EventoCobranca, on_delete=models.PROTECT, related_name="reaberturas")
     motivo = models.CharField(max_length=500)
-    ator = models.ForeignKey("usuarios.Usuario", on_delete=models.PROTECT, related_name="reaberturas_eventos_cobranca")
+    ator = models.ForeignKey("usuarios.Usuario", on_delete=models.PROTECT, null=True, blank=True, related_name="reaberturas_eventos_cobranca")
+    automatica = models.BooleanField(default=False)
     chave_idempotencia = models.CharField(max_length=120)
     tentativas_anteriores = models.PositiveSmallIntegerField()
 
@@ -275,4 +277,24 @@ class ReaberturaEventoCobranca(Base):
         db_table = "reabertura_evento_cobranca"
         constraints = [
             models.UniqueConstraint(fields=("organizacao", "chave_idempotencia"), name="reabertura_evento_chave_org_unica"),
+        ]
+
+
+class SolicitacaoReconciliacaoCobranca(Base):
+    """Auditoria tenant-scoped de uma reconciliação operacional."""
+
+    variante = models.CharField(max_length=50)
+    ator = models.ForeignKey("usuarios.Usuario", on_delete=models.PROTECT, related_name="reconciliacoes_cobranca_solicitadas")
+    motivo = models.CharField(max_length=500)
+    chave_idempotencia = models.CharField(max_length=160)
+    janela_inicio = models.DateTimeField()
+    janela_fim = models.DateTimeField()
+    parametros = models.JSONField(default=dict)
+    resultado = models.CharField(max_length=30, default="agendada")
+
+    class Meta(Base.Meta):
+        db_table = "solicitacao_reconciliacao_cobranca"
+        constraints = [
+            models.UniqueConstraint(fields=("organizacao", "chave_idempotencia"), name="solicitacao_reconcile_chave_org_unica"),
+            models.CheckConstraint(condition=models.Q(janela_inicio__lt=models.F("janela_fim")), name="solicitacao_reconcile_janela_valida"),
         ]

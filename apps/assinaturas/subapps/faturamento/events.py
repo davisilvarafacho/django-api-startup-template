@@ -140,9 +140,9 @@ def hash_payload_evento(evento: EventoNormalizado) -> str:
     return sha256(canonico).hexdigest()
 
 
-def enfileirar_processamento_evento(evento_id: int, variante: str) -> None:
+def enfileirar_processamento_evento(evento_id: int, variante: str, organizacao_id: int) -> None:
     """Seam assíncrono consumido pelo worker financeiro da Task 15."""
-    current_app.send_task("faturamento.processar_evento_cobranca", args=(evento_id, variante))
+    current_app.send_task("faturamento.processar_evento_cobranca", args=(evento_id, variante, organizacao_id))
 
 
 class RepositorioEventosPostgres:
@@ -198,7 +198,7 @@ class EventosCobranca:
         *,
         repositorio: RepositorioEventos | None = None,
         resolver_destino: Callable[[WebhookEvent], DestinoEvento | None] | None = None,
-        enqueue: Callable[[int, str], None] = enfileirar_processamento_evento,
+        enqueue: Callable[[int, str, int], None] = enfileirar_processamento_evento,
     ) -> None:
         self.repositorio = repositorio or RepositorioEventosPostgres()
         self.resolver_destino = resolver_destino or resolver_destino_evento
@@ -317,13 +317,15 @@ class EventosCobranca:
                 evento_local = self.repositorio.rotear(evento_local, destino)
             if evento_local.status == StatusEventoCobranca.ROTEADO:
                 _registrar_metrica(variante, "routed", familia)
-                transaction.on_commit(lambda: self._enfileirar(evento_local.id, variante, familia))
+                transaction.on_commit(lambda: self._enfileirar(evento_local.id, variante, evento_local.organizacao_id, familia))
             else:
                 _registrar_metrica(variante, "unrouted", familia)
             return ResultadoRecebimento(evento_local.id, True, evento_local.status)
 
-    def _enfileirar(self, evento_id: int, variante: str, familia: str) -> None:
-        self.enqueue(evento_id, variante)
+    def _enfileirar(self, evento_id: int, variante: str, organizacao_id: int | None, familia: str) -> None:
+        if organizacao_id is None:
+            raise RuntimeError("Evento roteado exige organização explícita no enqueue.")
+        self.enqueue(evento_id, variante, organizacao_id)
         _registrar_metrica(variante, "enqueue", familia)
 
 

@@ -1,11 +1,16 @@
 from django.contrib import admin
 
-from celery import current_app
-
 from apps.api.base.admin import BaseModelAdmin
 
-from .models import AssinaturaGateway, CheckoutCobranca, EventoCobranca, FaturaAssinatura, ReferenciaPrecoGateway
-from .processing import reabrir_evento_operacional
+from .models import (
+    AssinaturaGateway,
+    CheckoutCobranca,
+    EventoCobranca,
+    FaturaAssinatura,
+    ReferenciaPrecoGateway,
+    SolicitacaoReconciliacaoCobranca,
+)
+from .processing import reabrir_evento_operacional, solicitar_reconciliacao_operacional
 
 
 class SomenteLeituraAdmin(BaseModelAdmin):
@@ -51,7 +56,7 @@ class CheckoutCobrancaAdmin(SomenteLeituraAdmin):
 class EventoCobrancaAdmin(SomenteLeituraAdmin):
     list_display = ("id", "organizacao", "variante", "tipo", "status", "tentativas_processamento")
     exclude = ("payload_normalizado", "hash_payload", "erro")
-    actions = ("reabrir_falhos", "reconciliar_variantes")
+    actions: tuple[str, ...] = ("reabrir_falhos", "reconciliar_variantes")
 
     def has_change_permission(self, request, obj=None):
         return bool(request is not None and request.user.has_perm("faturamento.change_eventocobranca"))
@@ -69,9 +74,17 @@ class EventoCobrancaAdmin(SomenteLeituraAdmin):
 
     @admin.action(description="Agendar reconciliação das variantes selecionadas")
     def reconciliar_variantes(self, request, queryset):
-        for variante in queryset.values_list("variante", flat=True).distinct():
-            tarefa = {"stripe": "faturamento.reconciliar_eventos_stripe"}.get(variante)
-            if tarefa is not None:
-                current_app.send_task(tarefa)
         for evento in queryset:
+            solicitar_reconciliacao_operacional(
+                evento=evento,
+                ator=request.user,
+                motivo="Reconciliação operacional pelo Django Admin.",
+                chave_idempotencia=f"admin-reconcile:{evento.pk}:{evento.tentativas_processamento}",
+            )
             self.log_change(request, evento, "Reconciliação operacional agendada pelo Django Admin.")
+
+
+@admin.register(SolicitacaoReconciliacaoCobranca)
+class SolicitacaoReconciliacaoCobrancaAdmin(SomenteLeituraAdmin):
+    list_display = ("id", "organizacao", "variante", "ator", "resultado", "janela_inicio", "janela_fim")
+    exclude = ("parametros",)

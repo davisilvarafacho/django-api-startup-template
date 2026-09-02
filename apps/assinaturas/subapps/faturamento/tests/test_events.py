@@ -166,7 +166,7 @@ def test_receber_deduplica_hash_igual_e_enfileira_apenas_novo_roteado(monkeypatc
 
     assert primeiro.novo is True
     assert segundo.novo is False
-    enqueue.assert_called_once_with(primeiro.evento_id, "stripe")
+    enqueue.assert_called_once_with(primeiro.evento_id, "stripe", destino.organizacao_id)
 
 
 def test_receber_recusa_colisao_sem_sobrescrever_ou_reagendar(monkeypatch):

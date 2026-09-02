@@ -1,15 +1,18 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from threading import Barrier
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from django.db import connection
+from django.db import close_old_connections, connection, connections
 from django.utils import timezone
 
 import pytest
-from django_checkouts.enums import ResourceKind, RetryDisposition
+from django_checkouts.enums import Gateway, InvoiceReason, InvoiceStatus, ResourceKind, RetryDisposition, SetupStatus, SubscriptionStatus
 from django_checkouts.exceptions import GatewayPermanentError, GatewayTemporaryError, RetryAdvice
 
 from apps.assinaturas.models import StatusAssinatura, StatusFinanceiro
+from apps.assinaturas.subapps.faturamento.checkouts import criar_referencia_checkout
 from apps.assinaturas.subapps.faturamento.models import (
     AssinaturaGateway,
     CheckoutCobranca,
@@ -17,6 +20,7 @@ from apps.assinaturas.subapps.faturamento.models import (
     EventoCobranca,
     FinalidadeCheckout,
     ReaberturaEventoCobranca,
+    SolicitacaoReconciliacaoCobranca,
     StatusCheckout,
     StatusEventoCobranca,
 )
@@ -25,10 +29,13 @@ from apps.assinaturas.subapps.faturamento.processing import (
     _validar_identidade,
     calcular_backoff,
     claim_evento,
+    finalizar_evento,
     reabrir_evento_operacional,
+    reabrir_evento_reconciliado,
     reconciliar_duravel,
     reconciliar_janela,
     registrar_falha,
+    solicitar_reconciliacao_operacional,
 )
 from apps.assinaturas.subscriptions import Assinaturas
 from apps.assinaturas.tests.test_subscription_models import _criar_assinatura, _criar_versao
@@ -143,14 +150,65 @@ def test_worker_concorrente_nao_reivindica_lease_vigente():
             ocorrido_em=agora,
         )
 
-    primeiro = claim_evento(evento.pk, organizacao.pk, agora=agora)
-    segundo = claim_evento(evento.pk, organizacao.pk, agora=agora)
+    primeiro = claim_evento(evento.pk, organizacao.pk, variante="stripe", agora=agora)
+    segundo = claim_evento(evento.pk, organizacao.pk, variante="stripe", agora=agora)
 
     assert primeiro is not None
     assert segundo is None
     with organizacao_atual_privilegiada(organizacao.pk):
         evento.refresh_from_db()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_dois_workers_com_conexoes_reais_produzem_um_unico_claim_sem_deadlock():
+    organizacao, evento, agora = _evento_mapeado(sufixo="worker-real")
+    barreira = Barrier(2)
+
+    def reivindicar():
+        close_old_connections()
+        try:
+            barreira.wait(timeout=10)
+            return claim_evento(evento.pk, organizacao.pk, variante="stripe", agora=agora)
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        resultados = [futuro.result(timeout=10) for futuro in (pool.submit(reivindicar), pool.submit(reivindicar))]
+
+    assert sum(resultado is not None for resultado in resultados) == 1
+    with organizacao_atual_privilegiada(organizacao.pk):
+        evento.refresh_from_db()
         assert evento.tentativas_processamento == 1
+        assert evento.status == StatusEventoCobranca.PROCESSANDO
+        assert evento.tentativas_processamento == 1
+
+
+@pytest.mark.parametrize("status", [StatusEventoCobranca.FALHOU, StatusEventoCobranca.PROCESSADO, StatusEventoCobranca.IGNORADO])
+@pytest.mark.django_db(transaction=True)
+def test_claim_mensagem_residual_terminal_e_noop_sem_consumir_tentativa(status):
+    organizacao, evento, agora = _evento_mapeado(sufixo=f"terminal-{status}")
+    with organizacao_atual_privilegiada(organizacao.pk):
+        evento.status = status
+        evento.save(update_fields=["status", "last_modified_at"])
+
+    assert claim_evento(evento.pk, organizacao.pk, variante="stripe", agora=agora) is None
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        evento.refresh_from_db()
+    assert evento.tentativas_processamento == 0
+    assert evento.tentativas_automaticas_ciclo == 0
+
+
+@pytest.mark.django_db(transaction=True)
+def test_claim_variante_incorreta_e_noop_antes_de_mutar():
+    organizacao, evento, agora = _evento_mapeado(sufixo="variant-noop")
+
+    assert claim_evento(evento.pk, organizacao.pk, variante="outra", agora=agora) is None
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        evento.refresh_from_db()
+    assert evento.status == StatusEventoCobranca.ROTEADO
+    assert evento.tentativas_processamento == 0
 
 
 @pytest.mark.django_db
@@ -225,12 +283,145 @@ def test_claim_evento_atrasado_fica_no_contrato_historico(familia):
             ocorrido_em=agora,
         )
 
-    claim = claim_evento(evento.pk, organizacao.pk, agora=agora)
+    claim = claim_evento(evento.pk, organizacao.pk, variante="stripe", agora=agora)
 
     assert claim is not None
     assert claim.assinatura_pk == antigo.pk
     assert claim.assinatura_pk != atual.pk
     assert claim.checkout_pk == (checkout.pk if checkout else None)
+
+
+@pytest.mark.parametrize("familia", ["checkout", "setup", "subscription", "invoice"])
+@pytest.mark.django_db(transaction=True)
+def test_finalize_atrasado_atualiza_apenas_contrato_historico(familia):
+    """Retrieve/finalize de A nunca escolhe ou altera a assinatura B corrente."""
+    agora = timezone.now()
+    organizacao = Organizacao.objects.create(nome=f"Finalize {familia}", slug=f"finalize-{familia}")
+    versao = _criar_versao(codigo=f"finalize-{familia}")
+    status_antigo = {"checkout": StatusAssinatura.PENDENTE, "setup": StatusAssinatura.ATIVA}.get(familia, StatusAssinatura.ENCERRADA)
+    antigo = _criar_assinatura(
+        organizacao,
+        versao,
+        status=status_antigo,
+        status_financeiro=StatusFinanceiro.PENDENTE if status_antigo == StatusAssinatura.PENDENTE else StatusFinanceiro.REGULAR,
+        encerrada_em=agora - timedelta(days=1) if status_antigo == StatusAssinatura.ENCERRADA else None,
+        motivo_encerramento="substituido" if status_antigo == StatusAssinatura.ENCERRADA else None,
+        chave_idempotencia=f"finalize-old-{familia}",
+    )
+    mapping = AssinaturaGateway.objects.create(
+        organizacao=organizacao,
+        assinatura=antigo,
+        variante="stripe",
+        identificador_externo=f"sub_finalize_{familia}",
+    )
+    checkout = None
+    if familia in {"checkout", "setup"}:
+        with organizacao_atual_privilegiada(organizacao.pk):
+            checkout = CheckoutCobranca.objects.create(
+                organizacao=organizacao,
+                assinatura=antigo,
+                finalidade=FinalidadeCheckout.FORMA_PAGAMENTO if familia == "setup" else FinalidadeCheckout.CONTRATACAO,
+                status=StatusCheckout.ABERTO,
+                chave_idempotencia=f"finalize-checkout-{familia}",
+                operacao_chave=f"finalize-{familia}",
+                snapshot_hash="e" * 64,
+                variante="stripe",
+                identificador_externo=f"cs_finalize_{familia}",
+                valor_esperado_centavos=0 if familia == "setup" else 1000,
+                moeda_esperada="BRL",
+            )
+        Assinaturas.encerrar(organizacao, encerrada_em=agora - timedelta(days=1))
+    atual = _criar_assinatura(organizacao, versao, chave_idempotencia=f"finalize-current-{familia}")
+    campos_financeiros = (
+        "status",
+        "status_financeiro",
+        "revisao",
+        "seats_contratados",
+        "periodo_atual_iniciado_em",
+        "periodo_atual_termina_em",
+        "encerrada_em",
+    )
+    antes = tuple(getattr(atual, campo) for campo in campos_financeiros)
+    with organizacao_atual_privilegiada(organizacao.pk):
+        evento = EventoCobranca.objects.create(
+            organizacao=organizacao,
+            variante="stripe",
+            identificador_evento=f"evt_finalize_{familia}",
+            tipo=f"{familia}.paid" if familia in {"checkout", "invoice"} else f"{familia}.updated",
+            identificador_checkout=checkout.identificador_externo if checkout else "",
+            identificador_assinatura=mapping.identificador_externo,
+            identificador_fatura=f"in_finalize_{familia}" if familia == "invoice" else "",
+            status=StatusEventoCobranca.ROTEADO,
+            hash_payload="f" * 64,
+            ocorrido_em=agora,
+        )
+    claim = claim_evento(evento.pk, organizacao.pk, variante="stripe", agora=agora)
+    assert claim is not None
+    referencia = criar_referencia_checkout(checkout.pk, organizacao.pk) if checkout else None
+    if familia == "checkout":
+        kind = ResourceKind.CHECKOUT
+        remoto = SimpleNamespace(
+            gateway=Gateway.STRIPE,
+            variant="stripe",
+            external_id=checkout.identificador_externo,
+            reference_id=referencia,
+            amount_total=1000,
+            currency="BRL",
+            mode="subscription",
+            status="paid",
+            subscription_id="sub_remote_old",
+        )
+    elif familia == "setup":
+        kind = ResourceKind.SETUP
+        remoto = SimpleNamespace(
+            gateway=Gateway.STRIPE,
+            variant="stripe",
+            external_id=checkout.identificador_externo,
+            reference_id=referencia,
+            status=SetupStatus.COMPLETE,
+        )
+    elif familia == "subscription":
+        kind = ResourceKind.SUBSCRIPTION
+        remoto = SimpleNamespace(
+            gateway=Gateway.STRIPE,
+            variant="stripe",
+            external_id=mapping.identificador_externo,
+            status=SubscriptionStatus.CANCELED,
+        )
+    else:
+        kind = ResourceKind.INVOICE
+        invoice = SimpleNamespace(
+            gateway=Gateway.STRIPE,
+            variant="stripe",
+            external_id="in_finalize_invoice",
+            subscription_id=mapping.identificador_externo,
+            status=InvoiceStatus.PAID,
+            reason=InvoiceReason.RENEWAL,
+            currency="BRL",
+            lines=(),
+            amount_due=1000,
+            amount_paid=1000,
+            amount_remaining=0,
+            subtotal=900,
+            discount_total=0,
+            tax_total=100,
+            total=1000,
+            due_at=agora,
+            paid_at=agora,
+            next_payment_attempt_at=None,
+            attempt_count=1,
+            hosted_url=None,
+        )
+        remoto = (invoice, None)
+
+    assert finalizar_evento(claim, kind, remoto, agora=agora) is True
+    with organizacao_atual_privilegiada(organizacao.pk):
+        atual.refresh_from_db()
+        mapping.refresh_from_db()
+        evento.refresh_from_db()
+        assert tuple(getattr(atual, campo) for campo in campos_financeiros) == antes
+        assert evento.status == StatusEventoCobranca.PROCESSADO
+        assert mapping.assinatura_id == antigo.pk
 
 
 @pytest.mark.django_db(transaction=True)
@@ -284,7 +475,7 @@ def test_reconciliacao_crash_na_ingestao_nao_avanca_cursor_e_restart_repete_pagi
 @pytest.mark.django_db(transaction=True)
 def test_retry_dispositions_sao_finitas_e_reconcile_first_agenda(monkeypatch, disposition, status_esperado, agenda_reconciliacao):
     organizacao, evento, agora = _evento_mapeado(sufixo=disposition.value)
-    claim = claim_evento(evento.pk, organizacao.pk, agora=agora)
+    claim = claim_evento(evento.pk, organizacao.pk, variante="stripe", agora=agora)
     envio = Mock()
     monkeypatch.setattr("apps.assinaturas.subapps.faturamento.processing.current_app", SimpleNamespace(send_task=envio))
     erro = GatewayPermanentError(
@@ -306,7 +497,7 @@ def test_retry_dispositions_sao_finitas_e_reconcile_first_agenda(monkeypatch, di
 @pytest.mark.django_db(transaction=True)
 def test_cap_oito_e_reabertura_operacional_preservam_total_e_auditoria(monkeypatch):
     organizacao, evento, agora = _evento_mapeado(sufixo="cap8", tentativas_ciclo=7)
-    claim = claim_evento(evento.pk, organizacao.pk, agora=agora)
+    claim = claim_evento(evento.pk, organizacao.pk, variante="stripe", agora=agora)
     registrar_falha(claim, GatewayTemporaryError("temp", gateway="stripe", variant="stripe"), agora=agora)
     ator = Usuario.objects.create_user(email="operador@example.com", password=None)
     envio = Mock()
@@ -326,3 +517,70 @@ def test_cap_oito_e_reabertura_operacional_preservam_total_e_auditoria(monkeypat
     assert evento.tentativas_automaticas_ciclo == 0
     assert auditoria.tentativas_anteriores == 1
     assert auditoria.ator == ator
+
+
+@pytest.mark.django_db(transaction=True)
+def test_reconciliacao_operacional_persiste_parametros_ator_resultado_e_idempotencia(monkeypatch):
+    organizacao, evento, agora = _evento_mapeado(sufixo="audit-reconcile")
+    ator = Usuario.objects.create_user(email="reconcile@example.com", password=None)
+    envio = Mock()
+    monkeypatch.setattr("apps.assinaturas.subapps.faturamento.processing.current_app", SimpleNamespace(send_task=envio))
+
+    primeira = solicitar_reconciliacao_operacional(
+        evento=evento,
+        ator=ator,
+        motivo="Incidente no gateway",
+        chave_idempotencia="admin-reconcile:1",
+        agora=agora,
+    )
+    segunda = solicitar_reconciliacao_operacional(
+        evento=evento,
+        ator=ator,
+        motivo="Incidente no gateway",
+        chave_idempotencia="admin-reconcile:1",
+        agora=agora,
+    )
+
+    assert primeira.pk == segunda.pk
+    with organizacao_atual_privilegiada(organizacao.pk):
+        auditoria = SolicitacaoReconciliacaoCobranca.objects.get(pk=primeira.pk)
+    assert auditoria.ator == ator
+    assert auditoria.motivo == "Incidente no gateway"
+    assert auditoria.janela_inicio == agora - timedelta(minutes=20)
+    assert auditoria.janela_fim == agora
+    assert auditoria.parametros == {"evento_id": evento.pk, "janela_segundos": 1200}
+    assert auditoria.resultado == "agendada"
+    envio.assert_called_once_with("faturamento.reconciliar_eventos_stripe")
+
+
+@pytest.mark.django_db(transaction=True)
+def test_reconcile_first_reabre_automaticamente_uma_vez_e_preserva_auditoria(monkeypatch):
+    organizacao, evento, agora = _evento_mapeado(sufixo="reconcile-first")
+    claim = claim_evento(evento.pk, organizacao.pk, variante="stripe", agora=agora)
+    envio = Mock()
+    monkeypatch.setattr("apps.assinaturas.subapps.faturamento.processing.current_app", SimpleNamespace(send_task=envio))
+    erro = GatewayPermanentError(
+        "incerto",
+        gateway="stripe",
+        variant="stripe",
+        retry_advice=RetryAdvice(disposition=RetryDisposition.RECONCILE_FIRST),
+    )
+    registrar_falha(claim, erro, agora=agora)
+    with organizacao_atual_privilegiada(organizacao.pk):
+        evento.refresh_from_db()
+    assert evento.status == StatusEventoCobranca.FALHOU
+    assert evento.aguarda_reconciliacao is True
+
+    primeiro = reabrir_evento_reconciliado(evento_id=evento.pk, organizacao_id=organizacao.pk)
+    segundo = reabrir_evento_reconciliado(evento_id=evento.pk, organizacao_id=organizacao.pk)
+
+    assert primeiro is not None
+    assert segundo is not None
+    with organizacao_atual_privilegiada(organizacao.pk):
+        evento.refresh_from_db()
+        auditorias = list(ReaberturaEventoCobranca.objects.filter(evento=evento))
+    assert evento.status == StatusEventoCobranca.ROTEADO
+    assert evento.aguarda_reconciliacao is False
+    assert len(auditorias) == 1
+    assert auditorias[0].automatica is True
+    assert auditorias[0].ator is None

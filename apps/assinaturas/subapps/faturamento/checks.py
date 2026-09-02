@@ -67,7 +67,9 @@ def role_ingresso_check(app_configs, **kwargs):
         cursor.execute(
             """WITH esperadas(oid) AS (VALUES
                  (to_regprocedure('public.faturamento_ingress_evento(text,text,text,text,text,text,boolean,jsonb,text,timestamptz)')),
-                 (to_regprocedure('public.faturamento_rotear_evento_destino(bigint,bigint)'))
+                 (to_regprocedure('public.faturamento_rotear_evento_destino(bigint,bigint)')),
+                 (to_regprocedure('public.faturamento_claim_recovery(integer,timestamptz)')),
+                 (to_regprocedure('public.faturamento_destino_reconcile(bigint)'))
                ), roles_faturamento AS (
                  SELECT oid,rolname FROM pg_roles WHERE rolname IN (%s,%s)
                ), acl_relacoes AS (
@@ -88,13 +90,16 @@ def role_ingresso_check(app_configs, **kwargs):
                ), policies_tenant(relname,polname) AS (VALUES
                  ('evento_cobranca','evento_tenant'),
                  ('checkout_cobranca','isolamento_organizacao'),
-                 ('fatura_assinatura','isolamento_organizacao')
+                 ('fatura_assinatura','isolamento_organizacao'),
+                 ('reabertura_evento_cobranca','isolamento_organizacao'),
+                 ('solicitacao_reconciliacao_cobranca','isolamento_organizacao')
                ) SELECT
-                 (SELECT count(*) FROM esperadas JOIN pg_proc p ON p.oid=esperadas.oid) = 2
+                 (SELECT count(*) FROM esperadas JOIN pg_proc p ON p.oid=esperadas.oid) = 4
                  AND (SELECT count(*) FROM pg_proc
                       WHERE pronamespace='public'::regnamespace
                         AND proname IN ('faturamento_receber_evento','faturamento_rotear_evento',
-                                       'faturamento_ingress_evento','faturamento_rotear_evento_destino')) = 2
+                                       'faturamento_ingress_evento','faturamento_rotear_evento_destino',
+                                       'faturamento_claim_recovery','faturamento_destino_reconcile')) = 4
                  AND NOT EXISTS (
                    SELECT 1 FROM esperadas e
                    LEFT JOIN pg_proc p ON p.oid=e.oid LEFT JOIN pg_roles r ON r.oid=p.proowner
@@ -106,11 +111,12 @@ def role_ingresso_check(app_configs, **kwargs):
                  )
                  AND
                  NOT EXISTS (SELECT 1 FROM acl_relacoes WHERE rolname=%s)
-                 AND (SELECT count(*) FROM acl_relacoes WHERE rolname=%s) = 6
+                 AND (SELECT count(*) FROM acl_relacoes WHERE rolname=%s) = 7
                  AND NOT EXISTS (
                    SELECT 1 FROM acl_relacoes WHERE rolname=%s AND NOT (
                      (relname='evento_cobranca' AND relkind='r' AND privilege_type IN ('SELECT','INSERT','UPDATE'))
                      OR (relname='assinatura_gateway' AND relkind='r' AND privilege_type='SELECT')
+                     OR (relname='checkout_cobranca' AND relkind='r' AND privilege_type='SELECT')
                      OR (relname='evento_cobranca_id_seq' AND relkind='S' AND privilege_type IN ('SELECT','USAGE'))
                    ) OR is_grantable
                  )
@@ -122,14 +128,16 @@ def role_ingresso_check(app_configs, **kwargs):
                      AND polname LIKE 'evento_interface_definidor_%%') = 3
                  AND (SELECT count(*) FROM pg_class c
                       WHERE c.relnamespace='public'::regnamespace
-                        AND c.relname IN ('evento_cobranca','checkout_cobranca','fatura_assinatura')
-                        AND c.relrowsecurity AND c.relforcerowsecurity) = 3
+                        AND c.relname IN ('evento_cobranca','checkout_cobranca','fatura_assinatura','reabertura_evento_cobranca',
+                                          'solicitacao_reconciliacao_cobranca')
+                        AND c.relrowsecurity AND c.relforcerowsecurity) = 5
                  AND (SELECT count(*) FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid
                       WHERE c.relnamespace='public'::regnamespace
-                        AND c.relname IN ('evento_cobranca','checkout_cobranca','fatura_assinatura')) = 6
+                        AND c.relname IN ('evento_cobranca','checkout_cobranca','fatura_assinatura','reabertura_evento_cobranca',
+                                          'solicitacao_reconciliacao_cobranca')) = 9
                  AND (SELECT count(*) FROM policies_tenant e JOIN pg_class c ON c.relname=e.relname
                       AND c.relnamespace='public'::regnamespace
-                      JOIN pg_policy p ON p.polrelid=c.oid AND p.polname=e.polname) = 3
+                      JOIN pg_policy p ON p.polrelid=c.oid AND p.polname=e.polname) = 5
                  AND NOT EXISTS (
                    SELECT 1 FROM policies_tenant e
                    LEFT JOIN pg_class c ON c.relname=e.relname AND c.relnamespace='public'::regnamespace
