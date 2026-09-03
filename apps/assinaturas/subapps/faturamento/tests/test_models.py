@@ -1,3 +1,4 @@
+import copy
 from datetime import timedelta
 from importlib import import_module
 from types import SimpleNamespace
@@ -54,6 +55,14 @@ SENHA_INGRESSO = "billing_ingress_tester"
 PAPEL_WEB = "billing_web_tester"
 PAPEL_MIGRATION = "billing_migration_tester"
 SENHA_PAPEIS = "billing_roles_tester"
+ALIAS_MIGRATION_NOBYPASS = "billing_migration_nobypass"
+
+if ALIAS_MIGRATION_NOBYPASS not in connections.databases:
+    configuracao_migration = copy.deepcopy(connections.databases["default"])
+    configuracao_migration["USER"] = PAPEL_MIGRATION
+    configuracao_migration["PASSWORD"] = SENHA_PAPEIS
+    configuracao_migration["TEST"] = {**configuracao_migration.get("TEST", {}), "MIRROR": "default"}
+    connections.databases[ALIAS_MIGRATION_NOBYPASS] = configuracao_migration
 
 
 @pytest.fixture(scope="module")
@@ -1323,45 +1332,113 @@ def test_migration_initial_zero_aplica_reverte_reaplica_atomicamente(papel_ingre
         MigrationExecutor(connection).migrate(folhas)
 
 
-@pytest.mark.django_db(transaction=True)
+@pytest.mark.django_db(transaction=True, databases=("default", ALIAS_MIGRATION_NOBYPASS))
 def test_migrations_0009_0011_revertem_com_auditoria_automatica_e_fatos_nulos(papel_ingresso):
-    organizacao = Organizacao.objects.create(nome="Reverse financeiro", slug="reverse-financeiro")
-    assinatura = _criar_assinatura(organizacao, _criar_versao(codigo="reverse-financeiro"))
-    with organizacao_atual_privilegiada(organizacao.pk):
-        evento = EventoCobranca.objects.create(
-            organizacao=organizacao,
-            variante="stripe",
-            identificador_evento="evt_reverse_financeiro",
-            tipo="invoice.paid",
-            status=StatusEventoCobranca.FALHOU,
-            hash_payload="b" * 64,
-        )
-        ReaberturaEventoCobranca.objects.create(
-            organizacao=organizacao,
-            evento=evento,
-            motivo="Reconciliação automática",
-            ator=None,
-            automatica=True,
-            chave_idempotencia="system:reverse",
-            tentativas_anteriores=1,
-        )
-        FaturaAssinatura.objects.create(
-            organizacao=organizacao,
-            assinatura=assinatura,
-            variante="stripe",
-            identificador_externo="in_reverse_financeiro",
-            status=StatusFatura.ABERTA,
-            moeda="BRL",
-            subtotal_centavos=None,
-            desconto_centavos=None,
-            imposto_centavos=None,
-            total_centavos=None,
-        )
-
     folhas = MigrationExecutor(connection).loader.graph.leaf_nodes()
+    conexao_migration = connections[ALIAS_MIGRATION_NOBYPASS]
+    tabelas = (
+        "evento_cobranca",
+        "fatura_assinatura",
+        "reabertura_evento_cobranca",
+        "solicitacao_reconciliacao_cobranca",
+    )
+    owners_originais = {}
+    owner_tinha_create = False
+    migration_tinha_create = False
+    public_tinha_create = False
     try:
-        MigrationExecutor(connection).migrate([("faturamento", "0008_fronteira_recovery_e_rls_auditoria")])
         with connection.cursor() as cursor:
+            cursor.execute("SELECT has_schema_privilege(%s,'public','CREATE')", [settings.BILLING_DATABASE_OWNER_ROLE])
+            owner_tinha_create = cursor.fetchone()[0]
+            cursor.execute("SELECT has_schema_privilege(%s,'public','CREATE')", [PAPEL_MIGRATION])
+            migration_tinha_create = cursor.fetchone()[0]
+            cursor.execute(
+                """SELECT EXISTS (
+                       SELECT 1 FROM pg_namespace n,
+                       LATERAL aclexplode(COALESCE(n.nspacl,acldefault('n',n.nspowner))) acl
+                       WHERE n.nspname='public' AND acl.grantee=0 AND acl.privilege_type='CREATE'
+                   )"""
+            )
+            public_tinha_create = cursor.fetchone()[0]
+            cursor.execute("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
+            cursor.execute(f"REVOKE CREATE ON SCHEMA public FROM {settings.BILLING_DATABASE_OWNER_ROLE}")
+            cursor.execute(f"GRANT USAGE,CREATE ON SCHEMA public TO {PAPEL_MIGRATION} WITH GRANT OPTION")
+            cursor.execute(f"GRANT SELECT,INSERT,DELETE ON django_migrations TO {PAPEL_MIGRATION}")
+            cursor.execute(f"GRANT USAGE,SELECT ON django_migrations_id_seq TO {PAPEL_MIGRATION}")
+            cursor.execute(f"GRANT REFERENCES ON usuario,organizacao TO {PAPEL_MIGRATION}")
+            for tabela in tabelas:
+                cursor.execute("SELECT relowner::regrole::text FROM pg_class WHERE oid=%s::regclass", [tabela])
+                owners_originais[tabela] = cursor.fetchone()[0]
+                cursor.execute(f"ALTER TABLE public.{tabela} OWNER TO {PAPEL_MIGRATION}")
+            cursor.execute("SELECT has_schema_privilege(%s,'public','CREATE')", [settings.BILLING_DATABASE_OWNER_ROLE])
+            assert cursor.fetchone() == (False,)
+        conexao_migration.settings_dict["NAME"] = connection.settings_dict["NAME"]
+
+        with conexao_migration.cursor() as cursor:
+            cursor.execute(
+                """SELECT session_user,current_user,rolsuper,rolbypassrls
+                   FROM pg_roles WHERE rolname=current_user"""
+            )
+            assert cursor.fetchone() == (PAPEL_MIGRATION, PAPEL_MIGRATION, False, False)
+            cursor.execute(
+                """SELECT relname,relowner::regrole::text,relforcerowsecurity
+                   FROM pg_class
+                   WHERE oid IN ('reabertura_evento_cobranca'::regclass,'fatura_assinatura'::regclass)
+                   ORDER BY relname"""
+            )
+            assert cursor.fetchall() == [
+                ("fatura_assinatura", PAPEL_MIGRATION, True),
+                ("reabertura_evento_cobranca", PAPEL_MIGRATION, True),
+            ]
+
+        organizacao = Organizacao.objects.create(nome="Reverse financeiro", slug="reverse-financeiro")
+        assinatura = _criar_assinatura(organizacao, _criar_versao(codigo="reverse-financeiro"))
+        with organizacao_atual_privilegiada(organizacao.pk):
+            FaturaAssinatura.objects.create(
+                organizacao=organizacao,
+                assinatura=assinatura,
+                variante="stripe",
+                identificador_externo="in_reverse_financeiro",
+                status=StatusFatura.ABERTA,
+                moeda="BRL",
+                subtotal_centavos=None,
+                desconto_centavos=None,
+                imposto_centavos=None,
+                total_centavos=None,
+            )
+
+        MigrationExecutor(conexao_migration).migrate([("faturamento", "0010_auditoria_reconciliacao_operacional")])
+        with transaction.atomic(using=ALIAS_MIGRATION_NOBYPASS), conexao_migration.cursor() as cursor:
+            cursor.execute("SELECT set_config('rls.tenant_id',%s,true)", [str(organizacao.pk)])
+            cursor.execute(
+                "SELECT subtotal_centavos,desconto_centavos,imposto_centavos,total_centavos "
+                "FROM fatura_assinatura WHERE identificador_externo='in_reverse_financeiro'"
+            )
+            assert cursor.fetchone() == (0, 0, 0, 0)
+
+        MigrationExecutor(conexao_migration).migrate([("faturamento", "0011_fatos_invoice_e_lease_recovery")])
+        with organizacao_atual_privilegiada(organizacao.pk):
+            evento = EventoCobranca.objects.create(
+                organizacao=organizacao,
+                variante="stripe",
+                identificador_evento="evt_reverse_financeiro",
+                tipo="invoice.paid",
+                status=StatusEventoCobranca.FALHOU,
+                hash_payload="b" * 64,
+            )
+            ReaberturaEventoCobranca.objects.create(
+                organizacao=organizacao,
+                evento=evento,
+                motivo="Reconciliação automática",
+                ator=None,
+                automatica=True,
+                chave_idempotencia="system:reverse",
+                tentativas_anteriores=1,
+            )
+
+        MigrationExecutor(conexao_migration).migrate([("faturamento", "0008_fronteira_recovery_e_rls_auditoria")])
+        with transaction.atomic(using=ALIAS_MIGRATION_NOBYPASS), conexao_migration.cursor() as cursor:
+            cursor.execute("SELECT set_config('rls.tenant_id',%s,true)", [str(organizacao.pk)])
             cursor.execute(
                 "SELECT is_nullable FROM information_schema.columns WHERE table_name='reabertura_evento_cobranca' AND column_name='ator_id'"
             )
@@ -1373,11 +1450,31 @@ def test_migrations_0009_0011_revertem_com_auditoria_automatica_e_fatos_nulos(pa
                 "FROM fatura_assinatura WHERE identificador_externo='in_reverse_financeiro'"
             )
             assert cursor.fetchone() == (0, 0, 0, 0)
-        MigrationExecutor(connection).migrate(folhas)
-        with connection.cursor() as cursor:
+        MigrationExecutor(conexao_migration).migrate([("faturamento", "0011_fatos_invoice_e_lease_recovery")])
+        with conexao_migration.cursor() as cursor:
             cursor.execute(
                 "SELECT column_name FROM information_schema.columns WHERE table_name='evento_cobranca' AND column_name='recuperacao_arrendada_ate'"
             )
             assert cursor.fetchone() == ("recuperacao_arrendada_ate",)
+            cursor.execute("SELECT policyname FROM pg_policies WHERE schemaname='public' AND policyname LIKE 'faturamento_reverse_%'")
+            assert cursor.fetchall() == []
+            cursor.execute(
+                "SELECT tgenabled FROM pg_trigger WHERE tgrelid='public.fatura_assinatura'::regclass AND tgname='fatura_assinatura_coerencia'"
+            )
+            assert cursor.fetchone() == ("O",)
+            cursor.execute("SELECT has_schema_privilege(%s,'public','CREATE')", [settings.BILLING_DATABASE_OWNER_ROLE])
+            assert cursor.fetchone() == (False,)
     finally:
+        conexao_migration.close()
         MigrationExecutor(connection).migrate(folhas)
+        with connection.cursor() as cursor:
+            for tabela, owner in owners_originais.items():
+                cursor.execute(f"ALTER TABLE public.{connection.ops.quote_name(tabela)} OWNER TO {connection.ops.quote_name(owner)}")
+            if not owner_tinha_create:
+                cursor.execute(f"REVOKE CREATE ON SCHEMA public FROM {settings.BILLING_DATABASE_OWNER_ROLE}")
+            if not migration_tinha_create:
+                cursor.execute(f"REVOKE CREATE ON SCHEMA public FROM {PAPEL_MIGRATION}")
+            if public_tinha_create:
+                cursor.execute("GRANT CREATE ON SCHEMA public TO PUBLIC")
+            if owner_tinha_create:
+                cursor.execute(f"GRANT CREATE ON SCHEMA public TO {settings.BILLING_DATABASE_OWNER_ROLE}")

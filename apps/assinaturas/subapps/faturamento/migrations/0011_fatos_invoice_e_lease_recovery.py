@@ -72,28 +72,83 @@ def instalar(apps, schema_editor):
     del apps
     if schema_editor.connection.vendor == "postgresql":
         owner = _owner_financeiro()
+        owner_quoted = schema_editor.connection.ops.quote_name(owner)
+        with schema_editor.connection.cursor() as cursor:
+            cursor.execute("SELECT has_schema_privilege(%s,'public','CREATE')", [owner])
+            owner_tinha_create = cursor.fetchone()[0]
+        if not owner_tinha_create:
+            schema_editor.execute(f"GRANT CREATE ON SCHEMA public TO {owner_quoted}")
+        schema_editor.execute(f"SET LOCAL ROLE {owner_quoted}")
         schema_editor.execute(SQL.replace("__BILLING_OWNER__", owner))
+        schema_editor.execute("RESET ROLE")
+        if not owner_tinha_create:
+            schema_editor.execute(f"REVOKE CREATE ON SCHEMA public FROM {owner_quoted}")
 
 
 def remover(apps, schema_editor):
     del apps
     if schema_editor.connection.vendor == "postgresql":
         owner = _owner_financeiro()
+        owner_quoted = schema_editor.connection.ops.quote_name(owner)
+        with schema_editor.connection.cursor() as cursor:
+            cursor.execute("SELECT has_schema_privilege(%s,'public','CREATE')", [owner])
+            owner_tinha_create = cursor.fetchone()[0]
+        if not owner_tinha_create:
+            schema_editor.execute(f"GRANT CREATE ON SCHEMA public TO {owner_quoted}")
+        schema_editor.execute(f"SET LOCAL ROLE {owner_quoted}")
         schema_editor.execute("DROP FUNCTION public.faturamento_claim_recovery(integer,timestamptz)")
+        schema_editor.execute("RESET ROLE")
         from importlib import import_module
 
         anterior = import_module("apps.assinaturas.subapps.faturamento.migrations.0008_fronteira_recovery_e_rls_auditoria")
-        schema_editor.execute(anterior.SQL.replace("__BILLING_OWNER__", owner))
+        grant = "GRANT EXECUTE ON FUNCTION public.faturamento_claim_recovery(integer,timestamptz) TO billing_ingress_runtime;"
+        schema_editor.execute(anterior.SQL.replace("__BILLING_OWNER__", owner).replace(grant, ""))
+        schema_editor.execute(f"SET LOCAL ROLE {owner_quoted}")
+        schema_editor.execute(grant)
+        schema_editor.execute("RESET ROLE")
+        if not owner_tinha_create:
+            schema_editor.execute(f"REVOKE CREATE ON SCHEMA public FROM {owner_quoted}")
 
 
 def preparar_reverse(apps, schema_editor):
     """O schema anterior representava fatos indisponíveis como zero."""
     FaturaAssinatura = apps.get_model("faturamento", "FaturaAssinatura")
     manager = FaturaAssinatura.objects.using(schema_editor.connection.alias)
+    if schema_editor.connection.vendor == "postgresql":
+        with schema_editor.connection.cursor() as cursor:
+            cursor.execute("SELECT current_user")
+            papel_ddl = schema_editor.connection.ops.quote_name(cursor.fetchone()[0])
+        schema_editor.execute(
+            f"""
+            DROP POLICY IF EXISTS faturamento_reverse_0011_fatos_nulos_select ON public.fatura_assinatura;
+            DROP POLICY IF EXISTS faturamento_reverse_0011_fatos_nulos ON public.fatura_assinatura;
+            CREATE POLICY faturamento_reverse_0011_fatos_nulos_select ON public.fatura_assinatura
+            FOR SELECT TO {papel_ddl}
+            USING (true);
+            CREATE POLICY faturamento_reverse_0011_fatos_nulos ON public.fatura_assinatura
+            FOR UPDATE TO {papel_ddl}
+            USING (
+                subtotal_centavos IS NULL OR desconto_centavos IS NULL
+                OR imposto_centavos IS NULL OR total_centavos IS NULL
+            )
+            WITH CHECK (true);
+            ALTER TABLE public.fatura_assinatura DISABLE TRIGGER fatura_assinatura_coerencia;
+            UPDATE public.fatura_assinatura
+            SET subtotal_centavos=COALESCE(subtotal_centavos,0),
+                desconto_centavos=COALESCE(desconto_centavos,0),
+                imposto_centavos=COALESCE(imposto_centavos,0),
+                total_centavos=COALESCE(total_centavos,0)
+            WHERE subtotal_centavos IS NULL OR desconto_centavos IS NULL
+               OR imposto_centavos IS NULL OR total_centavos IS NULL;
+            ALTER TABLE public.fatura_assinatura ENABLE TRIGGER fatura_assinatura_coerencia;
+            DROP POLICY faturamento_reverse_0011_fatos_nulos ON public.fatura_assinatura;
+            DROP POLICY faturamento_reverse_0011_fatos_nulos_select ON public.fatura_assinatura;
+            SET CONSTRAINTS ALL IMMEDIATE;
+            """
+        )
+        return
     for campo in ("subtotal_centavos", "desconto_centavos", "imposto_centavos", "total_centavos"):
         manager.filter(**{f"{campo}__isnull": True}).update(**{campo: 0})
-    if schema_editor.connection.vendor == "postgresql":
-        schema_editor.execute("SET CONSTRAINTS ALL IMMEDIATE")
 
 
 def noop(apps, schema_editor):

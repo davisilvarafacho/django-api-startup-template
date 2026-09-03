@@ -56,6 +56,7 @@ if TYPE_CHECKING:
 
 MAX_TENTATIVAS = 8
 LEASE = timedelta(minutes=15)
+LEASE_RECONCILIACAO_OPERACIONAL = timedelta(seconds=settings.CELERY_TASK_TIME_LIMIT)
 PROCESSAMENTOS = Counter("billing_event_processing_total", "Resultado finito do worker financeiro.", ("variante", "familia", "resultado"))
 DURACAO_IO = Histogram("billing_gateway_operation_seconds", "Duração de I/O financeiro.", ("variante", "operacao"))
 CLAIMS = Counter("billing_event_claim_total", "Resultado do claim financeiro.", ("variante", "resultado"))
@@ -607,7 +608,7 @@ def solicitar_reconciliacao_operacional(
     if organizacao_id is None:
         raise ValueError("evento sem organização não pode ser reconciliado operacionalmente")
     with transaction.atomic(), organizacao_atual_privilegiada(organizacao_id):
-        solicitacao, criada = SolicitacaoReconciliacaoCobranca.objects.get_or_create(
+        solicitacao, criada = SolicitacaoReconciliacaoCobranca.objects.select_for_update().get_or_create(
             organizacao_id=organizacao_id,
             chave_idempotencia=chave_idempotencia,
             defaults={
@@ -620,7 +621,14 @@ def solicitar_reconciliacao_operacional(
                 "resultado": "agendada",
             },
         )
-        if criada:
+        recuperavel = not criada and (
+            solicitacao.resultado == "falhou"
+            or (solicitacao.resultado == "executando" and solicitacao.last_modified_at <= agora - LEASE_RECONCILIACAO_OPERACIONAL)
+        )
+        if recuperavel:
+            solicitacao.resultado = "agendada"
+            solicitacao.save(update_fields=["resultado", "last_modified_at"])
+        if criada or recuperavel:
             tarefa = {"stripe": "faturamento.reconciliar_eventos_stripe"}.get(evento.variante)
             if tarefa is None:
                 solicitacao.resultado = "variante_ignorada"

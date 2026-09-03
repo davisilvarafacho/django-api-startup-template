@@ -28,27 +28,62 @@ DROP FUNCTION public.faturamento_destino_reconcile(bigint);
 """
 
 
+def _owner_financeiro() -> str:
+    owner = settings.BILLING_DATABASE_OWNER_ROLE
+    if owner != "billing_functions_owner":
+        raise RuntimeError("Owner financeiro incompatível com o contrato operacional.")
+    return owner
+
+
 def instalar(apps, schema_editor):
     del apps
     if schema_editor.connection.vendor == "postgresql":
-        owner = settings.BILLING_DATABASE_OWNER_ROLE
-        if owner != "billing_functions_owner":
-            raise RuntimeError("Owner financeiro incompatível com o contrato operacional.")
+        owner = _owner_financeiro()
+        owner_quoted = schema_editor.connection.ops.quote_name(owner)
+        with schema_editor.connection.cursor() as cursor:
+            cursor.execute("SELECT has_schema_privilege(%s,'public','CREATE')", [owner])
+            owner_tinha_create = cursor.fetchone()[0]
+        if not owner_tinha_create:
+            schema_editor.execute(f"GRANT CREATE ON SCHEMA public TO {owner_quoted}")
+        schema_editor.execute(f"SET LOCAL ROLE {owner_quoted}")
         schema_editor.execute(SQL.replace("__BILLING_OWNER__", owner))
+        schema_editor.execute("RESET ROLE")
+        if not owner_tinha_create:
+            schema_editor.execute(f"REVOKE CREATE ON SCHEMA public FROM {owner_quoted}")
 
 
 def remover(apps, schema_editor):
     del apps
     if schema_editor.connection.vendor == "postgresql":
+        owner = schema_editor.connection.ops.quote_name(_owner_financeiro())
+        schema_editor.execute(f"SET LOCAL ROLE {owner}")
         schema_editor.execute(REVERSE_SQL)
+        schema_editor.execute("RESET ROLE")
 
 
 def preparar_reverse(apps, schema_editor):
     """Remove auditorias automáticas, que não possuem ator no schema anterior."""
     alias = schema_editor.connection.alias
-    apps.get_model("faturamento", "ReaberturaEventoCobranca").objects.using(alias).filter(ator__isnull=True).delete()
     if schema_editor.connection.vendor == "postgresql":
-        schema_editor.execute("SET CONSTRAINTS ALL IMMEDIATE")
+        with schema_editor.connection.cursor() as cursor:
+            cursor.execute("SELECT current_user")
+            papel_ddl = schema_editor.connection.ops.quote_name(cursor.fetchone()[0])
+        schema_editor.execute(
+            f"""
+            DROP POLICY IF EXISTS faturamento_reverse_0009_automaticas_select ON public.reabertura_evento_cobranca;
+            DROP POLICY IF EXISTS faturamento_reverse_0009_automaticas_delete ON public.reabertura_evento_cobranca;
+            CREATE POLICY faturamento_reverse_0009_automaticas_select ON public.reabertura_evento_cobranca
+            FOR SELECT TO {papel_ddl} USING (ator_id IS NULL);
+            CREATE POLICY faturamento_reverse_0009_automaticas_delete ON public.reabertura_evento_cobranca
+            FOR DELETE TO {papel_ddl} USING (ator_id IS NULL);
+            DELETE FROM public.reabertura_evento_cobranca WHERE ator_id IS NULL;
+            DROP POLICY faturamento_reverse_0009_automaticas_delete ON public.reabertura_evento_cobranca;
+            DROP POLICY faturamento_reverse_0009_automaticas_select ON public.reabertura_evento_cobranca;
+            SET CONSTRAINTS ALL IMMEDIATE;
+            """
+        )
+        return
+    apps.get_model("faturamento", "ReaberturaEventoCobranca").objects.using(alias).filter(ator__isnull=True).delete()
 
 
 def noop(apps, schema_editor):

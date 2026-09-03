@@ -1,8 +1,10 @@
 import inspect
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from threading import Event, Lock
 from types import SimpleNamespace
 
-from django.db import connection, transaction
+from django.db import close_old_connections, connection, connections, transaction
 from django.utils import timezone
 
 import pytest
@@ -245,7 +247,12 @@ def test_task_reconciliacao_operacional_usa_janela_auditada_e_registra_contagem(
         }
     ]
     assert solicitacao.resultado == "concluida"
-    assert solicitacao.parametros == {"evento_id": 123, "janela_segundos": 600, "eventos_ingeridos": 0}
+    assert solicitacao.parametros == {
+        "evento_id": 123,
+        "janela_segundos": 600,
+        "tentativas_execucao": 1,
+        "eventos_ingeridos": 0,
+    }
 
 
 @pytest.mark.django_db(transaction=True)
@@ -271,5 +278,103 @@ def test_task_reconciliacao_operacional_registra_falha_sem_persistir_mensagem(mo
     assert solicitacao.parametros == {
         "evento_id": 123,
         "janela_segundos": 600,
+        "tentativas_execucao": 1,
         "erro_codigo": "RuntimeError",
+    }
+
+
+@pytest.mark.django_db(transaction=True)
+def test_task_reconciliacao_operacional_recupera_execucao_abandonada(monkeypatch):
+    from django.conf import settings
+
+    from tests.support.usuarios import criar_usuario
+
+    organizacao = Organizacao.objects.create(nome="Auditoria abandonada", slug="auditoria-abandonada")
+    solicitacao = _solicitacao_operacional(organizacao, criar_usuario(email="auditoria-abandonada@example.com"))
+    with organizacao_atual_privilegiada(organizacao.pk):
+        SolicitacaoReconciliacaoCobranca.objects.filter(pk=solicitacao.pk).update(
+            resultado="executando",
+            last_modified_at=timezone.now() - timedelta(seconds=settings.CELERY_TASK_TIME_LIMIT + 1),
+        )
+    chamadas = []
+
+    class Events:
+        def list(self, **kwargs):
+            chamadas.append(kwargs)
+            return SimpleNamespace(items=(), next_cursor=None)
+
+    monkeypatch.setattr(billing_tasks, "get_checkout_gateway", lambda variante: SimpleNamespace(events=Events()))
+
+    assert billing_tasks.executar_reconciliacao_operacional.run(solicitacao.pk, organizacao.pk) == 0
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        solicitacao.refresh_from_db()
+    assert len(chamadas) == 1
+    assert solicitacao.resultado == "concluida"
+
+
+@pytest.mark.django_db(transaction=True)
+def test_finalizacao_atrasada_nao_sobrescreve_recuperacao_mais_nova(monkeypatch):
+    from django.conf import settings
+
+    from tests.support.usuarios import criar_usuario
+
+    organizacao = Organizacao.objects.create(nome="Auditoria concorrente", slug="auditoria-concorrente")
+    solicitacao = _solicitacao_operacional(organizacao, criar_usuario(email="auditoria-concorrente@example.com"))
+    primeira_iniciou = Event()
+    liberar_primeira = Event()
+    lock = Lock()
+    gateways = 0
+
+    class EventsBloqueados:
+        def list(self, **kwargs):
+            del kwargs
+            primeira_iniciou.set()
+            assert liberar_primeira.wait(timeout=10)
+            raise RuntimeError("falha tardia")
+
+    class EventsConcluidos:
+        def list(self, **kwargs):
+            del kwargs
+            return SimpleNamespace(items=(), next_cursor=None)
+
+    def gateway(variante):
+        nonlocal gateways
+        assert variante == "stripe"
+        with lock:
+            gateways += 1
+            numero = gateways
+        return SimpleNamespace(events=EventsBloqueados() if numero == 1 else EventsConcluidos())
+
+    monkeypatch.setattr(billing_tasks, "get_checkout_gateway", gateway)
+
+    def executar_primeira():
+        close_old_connections()
+        try:
+            return billing_tasks.executar_reconciliacao_operacional.run(solicitacao.pk, organizacao.pk)
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        primeira = pool.submit(executar_primeira)
+        assert primeira_iniciou.wait(timeout=10)
+        with organizacao_atual_privilegiada(organizacao.pk):
+            SolicitacaoReconciliacaoCobranca.objects.filter(pk=solicitacao.pk).update(
+                last_modified_at=timezone.now() - timedelta(seconds=settings.CELERY_TASK_TIME_LIMIT + 1)
+            )
+        segunda = billing_tasks.executar_reconciliacao_operacional.run(solicitacao.pk, organizacao.pk)
+        liberar_primeira.set()
+        with pytest.raises(RuntimeError, match="falha tardia"):
+            primeira.result(timeout=10)
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        solicitacao.refresh_from_db()
+    assert segunda == 0
+    assert gateways == 2
+    assert solicitacao.resultado == "concluida"
+    assert solicitacao.parametros == {
+        "evento_id": 123,
+        "janela_segundos": 600,
+        "tentativas_execucao": 2,
+        "eventos_ingeridos": 0,
     }

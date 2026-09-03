@@ -68,6 +68,8 @@ def test_actions_financeiras_exigem_permissoes_operacionais_especificas(monkeypa
     assert {"reabrir_falhos", "reconciliar_variantes"}.isdisjoint(evento_admin.get_actions(request))
     with pytest.raises(PermissionDenied, match="retry financeiro"):
         evento_admin.reabrir_falhos(request, EventoCobranca.objects.none())
+    with pytest.raises(PermissionDenied, match="reconciliação financeira"):
+        evento_admin.reconciliar_variantes(request, EventoCobranca.objects.none())
 
     operador_retry = criar_usuario(email="admin-retry-only@example.com", is_staff=True)
     operador_retry.user_permissions.add(Permission.objects.get(content_type=content_type, codename="view_eventocobranca"))
@@ -77,3 +79,13 @@ def test_actions_financeiras_exigem_permissoes_operacionais_especificas(monkeypa
 
     assert "reabrir_falhos" in evento_admin.get_actions(request)
     assert "reconciliar_variantes" not in evento_admin.get_actions(request)
+    with pytest.raises(PermissionDenied, match="reconciliação financeira"):
+        evento_admin.reconciliar_variantes(request, EventoCobranca.objects.none())
+
+    operador_reconcile = criar_usuario(email="admin-reconcile-only@example.com", is_staff=True)
+    operador_reconcile.user_permissions.add(Permission.objects.get(content_type=content_type, codename="view_eventocobranca"))
+    operador_reconcile.user_permissions.add(Permission.objects.get(content_type=content_type, codename="reconcile_eventocobranca"))
+    request.user = operador_reconcile
+
+    assert "reabrir_falhos" not in evento_admin.get_actions(request)
+    assert "reconciliar_variantes" in evento_admin.get_actions(request)

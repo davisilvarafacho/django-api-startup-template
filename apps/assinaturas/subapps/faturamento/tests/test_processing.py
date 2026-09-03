@@ -4,6 +4,7 @@ from threading import Barrier, Lock
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+from django.conf import settings
 from django.db import close_old_connections, connection, connections
 from django.utils import timezone
 
@@ -731,6 +732,119 @@ def test_reconciliacao_operacional_persiste_parametros_ator_resultado_e_idempote
         "faturamento.executar_reconciliacao_operacional",
         args=(primeira.pk, organizacao.pk),
     )
+
+
+@pytest.mark.parametrize(
+    ("resultado", "idade_segundos"),
+    [
+        ("falhou", 0),
+        ("executando", settings.CELERY_TASK_TIME_LIMIT + 1),
+    ],
+)
+@pytest.mark.django_db(transaction=True)
+def test_reconciliacao_operacional_reagenda_estado_recuperavel_uma_vez_sob_concorrencia(monkeypatch, resultado, idade_segundos):
+    organizacao, evento, agora = _evento_mapeado(sufixo=f"reagendar-{resultado}")
+    ator = Usuario.objects.create_user(email=f"reagendar-{resultado}@example.com", password=None)
+    parametros = {
+        "evento_id": evento.pk,
+        "janela_segundos": 1200,
+        "erro_codigo": "RuntimeError",
+        "tentativas_execucao": 1,
+    }
+    with organizacao_atual_privilegiada(organizacao.pk):
+        solicitacao = SolicitacaoReconciliacaoCobranca.objects.create(
+            organizacao=organizacao,
+            variante="stripe",
+            ator=ator,
+            motivo="Incidente original preservado",
+            chave_idempotencia=f"admin-reconcile:{evento.pk}:0",
+            janela_inicio=agora - timedelta(minutes=20),
+            janela_fim=agora,
+            parametros=parametros,
+            resultado=resultado,
+        )
+        SolicitacaoReconciliacaoCobranca.objects.filter(pk=solicitacao.pk).update(last_modified_at=agora - timedelta(seconds=idade_segundos))
+
+    barreira = Barrier(2)
+    lock = Lock()
+    enviados = []
+
+    def enviar(*args, **kwargs):
+        with lock:
+            enviados.append((args, kwargs))
+
+    monkeypatch.setattr("apps.assinaturas.subapps.faturamento.processing.current_app", SimpleNamespace(send_task=enviar))
+
+    def solicitar():
+        close_old_connections()
+        try:
+            barreira.wait(timeout=10)
+            return solicitar_reconciliacao_operacional(
+                evento=evento,
+                ator=ator,
+                motivo="Tentativa repetida que não substitui a auditoria",
+                chave_idempotencia=solicitacao.chave_idempotencia,
+                agora=agora,
+            ).pk
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        ids = [futuro.result(timeout=15) for futuro in (pool.submit(solicitar), pool.submit(solicitar))]
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        solicitacao.refresh_from_db()
+        total = SolicitacaoReconciliacaoCobranca.objects.filter(chave_idempotencia=solicitacao.chave_idempotencia).count()
+
+    assert ids == [solicitacao.pk, solicitacao.pk]
+    assert enviados == [
+        (
+            ("faturamento.executar_reconciliacao_operacional",),
+            {"args": (solicitacao.pk, organizacao.pk)},
+        )
+    ]
+    assert total == 1
+    assert solicitacao.resultado == "agendada"
+    assert solicitacao.ator == ator
+    assert solicitacao.motivo == "Incidente original preservado"
+    assert solicitacao.janela_inicio == agora - timedelta(minutes=20)
+    assert solicitacao.janela_fim == agora
+    assert solicitacao.parametros == parametros
+
+
+@pytest.mark.django_db(transaction=True)
+def test_reconciliacao_operacional_nao_reagenda_execucao_com_lease_ativo(monkeypatch):
+    organizacao, evento, agora = _evento_mapeado(sufixo="reagendar-lease-ativo")
+    ator = Usuario.objects.create_user(email="reagendar-lease-ativo@example.com", password=None)
+    with organizacao_atual_privilegiada(organizacao.pk):
+        solicitacao = SolicitacaoReconciliacaoCobranca.objects.create(
+            organizacao=organizacao,
+            variante="stripe",
+            ator=ator,
+            motivo="Execução ainda ativa",
+            chave_idempotencia=f"admin-reconcile:{evento.pk}:0",
+            janela_inicio=agora - timedelta(minutes=20),
+            janela_fim=agora,
+            parametros={"evento_id": evento.pk, "janela_segundos": 1200, "tentativas_execucao": 1},
+            resultado="executando",
+        )
+        SolicitacaoReconciliacaoCobranca.objects.filter(pk=solicitacao.pk).update(last_modified_at=agora - timedelta(minutes=1))
+    envio = Mock()
+    monkeypatch.setattr("apps.assinaturas.subapps.faturamento.processing.current_app", SimpleNamespace(send_task=envio))
+
+    repetida = solicitar_reconciliacao_operacional(
+        evento=evento,
+        ator=ator,
+        motivo="Não deve duplicar",
+        chave_idempotencia=solicitacao.chave_idempotencia,
+        agora=agora,
+    )
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        repetida.refresh_from_db()
+    assert repetida.resultado == "executando"
+    assert repetida.motivo == "Execução ainda ativa"
+    envio.assert_not_called()
 
 
 @pytest.mark.django_db(transaction=True)

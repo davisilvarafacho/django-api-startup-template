@@ -13,6 +13,7 @@ from apps.organizacoes.context import organizacao_atual_privilegiada
 
 from .models import SolicitacaoReconciliacaoCobranca
 from .processing import (
+    LEASE_RECONCILIACAO_OPERACIONAL,
     _destino_reconcile,
     processar_evento,
     reabrir_evento_reconciliado,
@@ -59,6 +60,7 @@ def reconciliar_evento_cobranca(evento_id: int, variante: str, organizacao_id: i
 
 
 def _reivindicar_solicitacao(solicitacao_id: int, organizacao_id: int):
+    agora = timezone.now()
     with organizacao_atual_privilegiada(organizacao_id):
         solicitacao = (
             SolicitacaoReconciliacaoCobranca.objects.select_for_update()
@@ -72,28 +74,44 @@ def _reivindicar_solicitacao(solicitacao_id: int, organizacao_id: int):
             return None
         if solicitacao.resultado == "concluida":
             return int(solicitacao.parametros.get("eventos_ingeridos", 0))
-        if solicitacao.resultado != "agendada":
+        abandonada = solicitacao.resultado == "executando" and solicitacao.last_modified_at <= agora - LEASE_RECONCILIACAO_OPERACIONAL
+        if solicitacao.resultado != "agendada" and not abandonada:
             return None
+        parametros = dict(solicitacao.parametros)
+        tentativa_execucao = int(parametros.get("tentativas_execucao", 0)) + 1
+        parametros["tentativas_execucao"] = tentativa_execucao
+        solicitacao.parametros = parametros
         solicitacao.resultado = "executando"
-        solicitacao.save(update_fields=["resultado", "last_modified_at"])
+        solicitacao.save(update_fields=["parametros", "resultado", "last_modified_at"])
         return (
             solicitacao.variante,
             solicitacao.janela_inicio,
             solicitacao.janela_fim,
+            tentativa_execucao,
         )
 
 
-def _finalizar_solicitacao(solicitacao_id: int, organizacao_id: int, *, resultado: str, complemento: dict[str, object]) -> None:
+def _finalizar_solicitacao(
+    solicitacao_id: int,
+    organizacao_id: int,
+    tentativa_execucao: int,
+    *,
+    resultado: str,
+    complemento: dict[str, object],
+) -> bool:
     with organizacao_atual_privilegiada(organizacao_id):
         solicitacao = SolicitacaoReconciliacaoCobranca.objects.select_for_update().get(
             pk=solicitacao_id,
             organizacao_id=organizacao_id,
         )
         parametros = dict(solicitacao.parametros)
+        if solicitacao.resultado != "executando" or parametros.get("tentativas_execucao") != tentativa_execucao:
+            return False
         parametros.update(complemento)
         solicitacao.parametros = parametros
         solicitacao.resultado = resultado
         solicitacao.save(update_fields=["parametros", "resultado", "last_modified_at"])
+        return True
 
 
 @shared_task(name="faturamento.executar_reconciliacao_operacional", ignore_result=True)
@@ -102,7 +120,7 @@ def executar_reconciliacao_operacional(solicitacao_id: int, organizacao_id: int)
     reivindicacao = _reivindicar_solicitacao(solicitacao_id, organizacao_id)
     if reivindicacao is None or isinstance(reivindicacao, int):
         return reivindicacao if isinstance(reivindicacao, int) else False
-    variante, inicio, fim = reivindicacao
+    variante, inicio, fim, tentativa_execucao = reivindicacao
     try:
         client = get_checkout_gateway(variante)
         total = reconciliar_janela(variante=variante, inicio=inicio, fim=fim, client=client)
@@ -110,6 +128,7 @@ def executar_reconciliacao_operacional(solicitacao_id: int, organizacao_id: int)
         _finalizar_solicitacao(
             solicitacao_id,
             organizacao_id,
+            tentativa_execucao,
             resultado="falhou",
             complemento={"erro_codigo": type(exc).__name__},
         )
@@ -117,6 +136,7 @@ def executar_reconciliacao_operacional(solicitacao_id: int, organizacao_id: int)
     _finalizar_solicitacao(
         solicitacao_id,
         organizacao_id,
+        tentativa_execucao,
         resultado="concluida",
         complemento={"eventos_ingeridos": total},
     )
