@@ -31,13 +31,28 @@ DROP FUNCTION public.faturamento_destino_reconcile(bigint);
 def instalar(apps, schema_editor):
     del apps
     if schema_editor.connection.vendor == "postgresql":
-        schema_editor.execute(SQL.replace("__BILLING_OWNER__", settings.BILLING_DATABASE_OWNER_ROLE))
+        owner = settings.BILLING_DATABASE_OWNER_ROLE
+        if owner != "billing_functions_owner":
+            raise RuntimeError("Owner financeiro incompatível com o contrato operacional.")
+        schema_editor.execute(SQL.replace("__BILLING_OWNER__", owner))
 
 
 def remover(apps, schema_editor):
     del apps
     if schema_editor.connection.vendor == "postgresql":
         schema_editor.execute(REVERSE_SQL)
+
+
+def preparar_reverse(apps, schema_editor):
+    """Remove auditorias automáticas, que não possuem ator no schema anterior."""
+    alias = schema_editor.connection.alias
+    apps.get_model("faturamento", "ReaberturaEventoCobranca").objects.using(alias).filter(ator__isnull=True).delete()
+    if schema_editor.connection.vendor == "postgresql":
+        schema_editor.execute("SET CONSTRAINTS ALL IMMEDIATE")
+
+
+def noop(apps, schema_editor):
+    del apps, schema_editor
 
 
 class Migration(migrations.Migration):
@@ -64,5 +79,8 @@ class Migration(migrations.Migration):
                 to=settings.AUTH_USER_MODEL,
             ),
         ),
+        # No caminho reverso esta operação roda antes do AlterField acima,
+        # evitando restaurar NOT NULL sobre auditorias automáticas sem ator.
+        migrations.RunPython(noop, preparar_reverse),
         migrations.RunPython(instalar, remover),
     ]

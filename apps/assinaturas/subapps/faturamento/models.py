@@ -163,10 +163,10 @@ class FaturaAssinatura(Base):
     identificador_externo = models.CharField(max_length=255)
     status = models.PositiveSmallIntegerField(choices=StatusFatura.choices)
     motivo = models.CharField(max_length=255, blank=True)
-    subtotal_centavos = models.PositiveBigIntegerField(default=0)
-    desconto_centavos = models.PositiveBigIntegerField(default=0)
-    imposto_centavos = models.PositiveBigIntegerField(default=0)
-    total_centavos = models.PositiveBigIntegerField(default=0)
+    subtotal_centavos = models.PositiveBigIntegerField(null=True, blank=True)
+    desconto_centavos = models.PositiveBigIntegerField(null=True, blank=True)
+    imposto_centavos = models.PositiveBigIntegerField(null=True, blank=True)
+    total_centavos = models.PositiveBigIntegerField(null=True, blank=True)
     moeda = models.CharField(max_length=3, validators=[MOEDA])
     periodo_iniciado_em = models.DateTimeField(null=True, blank=True)
     periodo_termina_em = models.DateTimeField(null=True, blank=True)
@@ -218,6 +218,7 @@ class EventoCobranca(BaseTenantless, RLSModel):
     ocorrido_em = models.DateTimeField(null=True, blank=True)
     processado_em = models.DateTimeField(null=True, blank=True)
     proxima_tentativa_em = models.DateTimeField(null=True, blank=True)
+    recuperacao_arrendada_ate = models.DateTimeField(null=True, blank=True)
 
     def save(self, *args, **kwargs):
         self.payload_normalizado = normalizar_payload_evento(self.payload_normalizado)
@@ -225,6 +226,10 @@ class EventoCobranca(BaseTenantless, RLSModel):
 
     class Meta:
         db_table = "evento_cobranca"
+        permissions = [
+            ("retry_failed_eventocobranca", "Pode reabrir evento de cobrança falho"),
+            ("reconcile_eventocobranca", "Pode reconciliar evento de cobrança"),
+        ]
         rls_policies = [
             TenantPolicy(name="evento_tenant", tenant_field="organizacao"),
             CustomPolicy(name="evento_ingresso_select", operation=BasePolicy.SELECT, expression=INGRESSO),

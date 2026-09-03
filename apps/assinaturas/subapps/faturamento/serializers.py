@@ -37,7 +37,7 @@ class FaturaResponseSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     status = serializers.IntegerField()
     motivo = serializers.CharField()
-    total_centavos = serializers.IntegerField()
+    total_centavos = serializers.IntegerField(allow_null=True)
     moeda = serializers.CharField()
     vencimento_em = serializers.DateTimeField(allow_null=True)
     paga_em = serializers.DateTimeField(allow_null=True)

@@ -1,4 +1,7 @@
-from unittest.mock import patch
+from datetime import timedelta
+from importlib import import_module
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from django.conf import settings
 from django.contrib import admin
@@ -7,6 +10,7 @@ from django.core.exceptions import ValidationError
 from django.db import DatabaseError, IntegrityError, connection, connections, models, transaction
 from django.db.migrations.executor import MigrationExecutor
 from django.test import override_settings
+from django.utils import timezone
 
 import psycopg2
 import pytest
@@ -29,7 +33,9 @@ from apps.assinaturas.subapps.faturamento.models import (
     EventoCobranca,
     FaturaAssinatura,
     FinalidadeCheckout,
+    ReaberturaEventoCobranca,
     ReferenciaPrecoGateway,
+    SolicitacaoReconciliacaoCobranca,
     StatusCheckout,
     StatusEventoCobranca,
     StatusFatura,
@@ -65,6 +71,7 @@ def papel_ingresso(django_db_setup, django_db_blocker):
         cursor.execute(f"GRANT SELECT ON evento_cobranca TO {PAPEL_INGRESSO}")
         cursor.execute(f"GRANT SELECT, INSERT, UPDATE ON checkout_cobranca, fatura_assinatura TO {PAPEL_INGRESSO}")
         cursor.execute(f"GRANT USAGE, SELECT ON SEQUENCE checkout_cobranca_id_seq, fatura_assinatura_id_seq TO {PAPEL_INGRESSO}")
+        cursor.execute(f"GRANT SELECT ON reabertura_evento_cobranca, solicitacao_reconciliacao_cobranca TO {PAPEL_WEB}")
     yield
     with django_db_blocker.unblock(), connection.cursor() as cursor:
         cursor.execute(f"DROP OWNED BY {PAPEL_INGRESSO}")
@@ -78,6 +85,52 @@ def papel_ingresso(django_db_setup, django_db_blocker):
 def test_modelos_respeitam_fronteira_global_e_tenantizada():
     assert issubclass(AssinaturaGateway, BaseTenantless)
     assert issubclass(ReferenciaPrecoGateway, BaseTenantless)
+
+
+def test_migration_0009_recusa_owner_security_definer_divergente():
+    migration = import_module("apps.assinaturas.subapps.faturamento.migrations.0009_reconcile_first_conclusivo")
+    editor = SimpleNamespace(connection=SimpleNamespace(vendor="postgresql"), execute=Mock())
+    with override_settings(BILLING_DATABASE_OWNER_ROLE="owner_incorreto"), pytest.raises(RuntimeError, match="Owner financeiro incompatível"):
+        migration.instalar(None, editor)
+    editor.execute.assert_not_called()
+
+
+def test_migration_0011_recusa_owner_security_definer_divergente_no_reverse():
+    migration = import_module("apps.assinaturas.subapps.faturamento.migrations.0011_fatos_invoice_e_lease_recovery")
+    editor = SimpleNamespace(connection=SimpleNamespace(vendor="postgresql"), execute=Mock())
+
+    with override_settings(BILLING_DATABASE_OWNER_ROLE="owner_incorreto"), pytest.raises(RuntimeError, match="Owner financeiro incompatível"):
+        migration.remover(None, editor)
+
+    editor.execute.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "nome",
+    [
+        "0009_reconcile_first_conclusivo",
+        "0011_fatos_invoice_e_lease_recovery",
+    ],
+)
+def test_preparacao_de_reverse_usa_alias_do_schema_editor_inclusive_sqlite(nome):
+    migration = import_module(f"apps.assinaturas.subapps.faturamento.migrations.{nome}")
+    manager = Mock()
+    manager.using.return_value = manager
+    model = SimpleNamespace(objects=manager)
+    apps_historicos = SimpleNamespace(get_model=Mock(return_value=model))
+    editor = SimpleNamespace(connection=SimpleNamespace(vendor="sqlite", alias="sqlite_reverse"), execute=Mock())
+
+    migration.preparar_reverse(apps_historicos, editor)
+
+    manager.using.assert_called_once_with("sqlite_reverse")
+    editor.execute.assert_not_called()
+
+
+def test_fatos_financeiros_opcionais_distinguem_indisponivel_de_zero_explicito():
+    for campo in ("subtotal_centavos", "desconto_centavos", "imposto_centavos", "total_centavos"):
+        field = FaturaAssinatura._meta.get_field(campo)
+        assert field.null is True
+        assert field.default is models.NOT_PROVIDED
     assert issubclass(CheckoutCobranca, Base)
     assert issubclass(FaturaAssinatura, Base)
     assert issubclass(EventoCobranca, BaseTenantless)
@@ -437,6 +490,64 @@ def test_admin_oculta_payload_urls_e_e_somente_leitura():
         assert model_admin.has_delete_permission(None) is False
     assert "payload_normalizado" in admin.site._registry[EventoCobranca].exclude
     assert "url" in admin.site._registry[CheckoutCobranca].exclude
+
+
+@pytest.mark.django_db(transaction=True)
+def test_rls_auditorias_operacionais_isola_tenant_com_credencial_non_owner(papel_ingresso):
+    org_a = Organizacao.objects.create(nome="Auditoria RLS A", slug="auditoria-rls-a")
+    org_b = Organizacao.objects.create(nome="Auditoria RLS B", slug="auditoria-rls-b")
+    ator = criar_usuario(email="auditoria-rls@example.com")
+    registros = []
+    for organizacao, sufixo in ((org_a, "a"), (org_b, "b")):
+        with organizacao_atual_privilegiada(organizacao.pk):
+            evento = EventoCobranca.objects.create(
+                organizacao=organizacao,
+                variante="stripe",
+                identificador_evento=f"evt_auditoria_rls_{sufixo}",
+                tipo="invoice.paid",
+                status=StatusEventoCobranca.FALHOU,
+                hash_payload="f" * 64,
+            )
+            reabertura = ReaberturaEventoCobranca.objects.create(
+                organizacao=organizacao,
+                evento=evento,
+                motivo="Operação auditada",
+                ator=ator,
+                chave_idempotencia=f"rls:{sufixo}",
+                tentativas_anteriores=1,
+            )
+            solicitacao = SolicitacaoReconciliacaoCobranca.objects.create(
+                organizacao=organizacao,
+                variante="stripe",
+                ator=ator,
+                motivo="Reconciliação auditada",
+                chave_idempotencia=f"rls-reconcile:{sufixo}",
+                janela_inicio=timezone.now() - timedelta(minutes=1),
+                janela_fim=timezone.now(),
+            )
+            registros.append((reabertura.pk, solicitacao.pk))
+
+    database = settings.DATABASES["default"]
+    conexao = psycopg2.connect(
+        dbname=database["NAME"],
+        user=PAPEL_WEB,
+        password=SENHA_PAPEIS,
+        host=database["HOST"],
+        port=database["PORT"],
+    )
+    try:
+        with conexao, conexao.cursor() as cursor:
+            cursor.execute(
+                "SELECT current_user <> relowner::regrole::text, relforcerowsecurity FROM pg_class WHERE oid='reabertura_evento_cobranca'::regclass"
+            )
+            assert cursor.fetchone() == (True, True)
+            cursor.execute("SELECT set_config('rls.tenant_id', %s, true)", [str(org_a.pk)])
+            cursor.execute("SELECT id FROM reabertura_evento_cobranca ORDER BY id")
+            assert cursor.fetchall() == [(registros[0][0],)]
+            cursor.execute("SELECT id FROM solicitacao_reconciliacao_cobranca ORDER BY id")
+            assert cursor.fetchall() == [(registros[0][1],)]
+    finally:
+        conexao.close()
 
 
 @pytest.mark.django_db(transaction=True)
@@ -1208,5 +1319,65 @@ def test_migration_initial_zero_aplica_reverte_reaplica_atomicamente(papel_ingre
         executor = MigrationExecutor(connection)
         executor.migrate([("faturamento", "0001_initial")])
         assert catalogo() == estado
+    finally:
+        MigrationExecutor(connection).migrate(folhas)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_migrations_0009_0011_revertem_com_auditoria_automatica_e_fatos_nulos(papel_ingresso):
+    organizacao = Organizacao.objects.create(nome="Reverse financeiro", slug="reverse-financeiro")
+    assinatura = _criar_assinatura(organizacao, _criar_versao(codigo="reverse-financeiro"))
+    with organizacao_atual_privilegiada(organizacao.pk):
+        evento = EventoCobranca.objects.create(
+            organizacao=organizacao,
+            variante="stripe",
+            identificador_evento="evt_reverse_financeiro",
+            tipo="invoice.paid",
+            status=StatusEventoCobranca.FALHOU,
+            hash_payload="b" * 64,
+        )
+        ReaberturaEventoCobranca.objects.create(
+            organizacao=organizacao,
+            evento=evento,
+            motivo="Reconciliação automática",
+            ator=None,
+            automatica=True,
+            chave_idempotencia="system:reverse",
+            tentativas_anteriores=1,
+        )
+        FaturaAssinatura.objects.create(
+            organizacao=organizacao,
+            assinatura=assinatura,
+            variante="stripe",
+            identificador_externo="in_reverse_financeiro",
+            status=StatusFatura.ABERTA,
+            moeda="BRL",
+            subtotal_centavos=None,
+            desconto_centavos=None,
+            imposto_centavos=None,
+            total_centavos=None,
+        )
+
+    folhas = MigrationExecutor(connection).loader.graph.leaf_nodes()
+    try:
+        MigrationExecutor(connection).migrate([("faturamento", "0008_fronteira_recovery_e_rls_auditoria")])
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT is_nullable FROM information_schema.columns WHERE table_name='reabertura_evento_cobranca' AND column_name='ator_id'"
+            )
+            assert cursor.fetchone() == ("NO",)
+            cursor.execute("SELECT COUNT(*) FROM reabertura_evento_cobranca")
+            assert cursor.fetchone() == (0,)
+            cursor.execute(
+                "SELECT subtotal_centavos,desconto_centavos,imposto_centavos,total_centavos "
+                "FROM fatura_assinatura WHERE identificador_externo='in_reverse_financeiro'"
+            )
+            assert cursor.fetchone() == (0, 0, 0, 0)
+        MigrationExecutor(connection).migrate(folhas)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name='evento_cobranca' AND column_name='recuperacao_arrendada_ate'"
+            )
+            assert cursor.fetchone() == ("recuperacao_arrendada_ate",)
     finally:
         MigrationExecutor(connection).migrate(folhas)

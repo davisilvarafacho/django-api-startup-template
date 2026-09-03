@@ -22,7 +22,7 @@ from prometheus_client import Counter, Histogram
 
 from apps.assinaturas.models import AssinaturaOrganizacao, StatusAssinatura, StatusFinanceiro
 from apps.assinaturas.proposals import Propostas
-from apps.assinaturas.subapps.faturamento.checkouts import decodificar_referencia_checkout
+from apps.assinaturas.subapps.faturamento.checkouts import ConflitoCheckout, decodificar_referencia_checkout
 from apps.assinaturas.subapps.faturamento.events import EventosCobranca
 from apps.assinaturas.subapps.faturamento.models import (
     AssinaturaGateway,
@@ -148,6 +148,7 @@ def claim_evento(evento_id: int, organizacao_id: int, *, variante: str, agora: d
         evento.tentativas_processamento += 1
         evento.tentativas_automaticas_ciclo += 1
         evento.proxima_tentativa_em = agora + LEASE
+        evento.recuperacao_arrendada_ate = None
         evento.erro = ""
         evento.save(
             update_fields=[
@@ -155,6 +156,7 @@ def claim_evento(evento_id: int, organizacao_id: int, *, variante: str, agora: d
                 "tentativas_processamento",
                 "tentativas_automaticas_ciclo",
                 "proxima_tentativa_em",
+                "recuperacao_arrendada_ate",
                 "erro",
                 "last_modified_at",
             ]
@@ -222,8 +224,25 @@ def _validar_identidade(claim: ClaimEvento, kind, remoto) -> None:
         invoice, subscription = remoto
         if invoice.subscription_id != claim.assinatura_id:
             raise ValueError("remote_invoice_subscription_mismatch")
-        if subscription is not None and (subscription.variant != claim.variante or subscription.external_id != claim.assinatura_id):
+        referencias = tuple(
+            referencia
+            for referencia in (getattr(invoice, "reference_id", None), getattr(subscription, "reference_id", None) if subscription else None)
+            if referencia is not None
+        )
+        try:
+            for referencia in referencias:
+                decodificar_referencia_checkout(referencia, organizacao_id=claim.organizacao_id)
+        except ConflitoCheckout as exc:
+            raise ValueError("remote_invoice_reference_tenant_mismatch") from exc
+        if len(referencias) == 2 and referencias[0] != referencias[1]:
             raise ValueError("remote_invoice_subscription_mismatch")
+        if subscription is not None:
+            if (
+                subscription.variant != claim.variante
+                or subscription.external_id != claim.assinatura_id
+                or (claim.gateway and str(subscription.gateway) != claim.gateway)
+            ):
+                raise ValueError("remote_invoice_subscription_mismatch")
 
 
 def finalizar_evento(claim: ClaimEvento, kind, remoto, *, agora: datetime | None = None) -> bool:
@@ -429,12 +448,11 @@ def _aplicar_fatura(assinatura, invoice: Invoice, *, agora):
         return
     fatura.status = mapa[invoice.status]
     fatura.motivo = str(invoice.reason)
-    # `None` significa que outro adapter não expôs a categoria. Persistimos
-    # zero como indisponível, nunca como diferença inferida entre outros fatos.
-    fatura.subtotal_centavos = invoice.subtotal if invoice.subtotal is not None else 0
-    fatura.desconto_centavos = invoice.discount_total if invoice.discount_total is not None else 0
-    fatura.imposto_centavos = invoice.tax_total if invoice.tax_total is not None else 0
-    fatura.total_centavos = invoice.total if invoice.total is not None else 0
+    # `None` preserva indisponibilidade; zero continua significando fato explícito.
+    fatura.subtotal_centavos = invoice.subtotal
+    fatura.desconto_centavos = invoice.discount_total
+    fatura.imposto_centavos = invoice.tax_total
+    fatura.total_centavos = invoice.total
     fatura.moeda = invoice.currency
     fatura.vencimento_em, fatura.paga_em = invoice.due_at, invoice.paid_at
     inicios = [linha.period_start for linha in invoice.lines if linha.period_start is not None]
@@ -466,8 +484,9 @@ def registrar_falha(claim: ClaimEvento, exc: Exception, *, agora: datetime | Non
         if evento.status != StatusEventoCobranca.PROCESSANDO or evento.tentativas_processamento != claim.tentativa:
             return
         esgotou = evento.tentativas_automaticas_ciclo >= MAX_TENTATIVAS
+        reconciliar = bool(advice is not None and advice.disposition == RetryDisposition.RECONCILE_FIRST and not esgotou)
         evento.status = StatusEventoCobranca.ROTEADO if retry and not esgotou else StatusEventoCobranca.FALHOU
-        evento.aguarda_reconciliacao = bool(advice is not None and advice.disposition == RetryDisposition.RECONCILE_FIRST)
+        evento.aguarda_reconciliacao = reconciliar
         espera = (
             advice.retry_after if advice is not None and advice.retry_after is not None else calcular_backoff(evento.tentativas_automaticas_ciclo)
         )
@@ -476,8 +495,13 @@ def registrar_falha(claim: ClaimEvento, exc: Exception, *, agora: datetime | Non
         evento.save(update_fields=["status", "aguarda_reconciliacao", "proxima_tentativa_em", "erro", "last_modified_at"])
         disposicao = advice.disposition.value if advice is not None else "unknown"
         RETRIES.labels(evento.variante, disposicao, "scheduled" if evento.status == StatusEventoCobranca.ROTEADO else "terminal").inc()
-        if advice is not None and advice.disposition == RetryDisposition.RECONCILE_FIRST:
-            transaction.on_commit(lambda: current_app.send_task("faturamento.reconciliar_eventos_stripe"))
+        if reconciliar:
+            transaction.on_commit(
+                lambda: current_app.send_task(
+                    "faturamento.reconciliar_evento_cobranca",
+                    args=(evento.pk, evento.variante, claim.organizacao_id),
+                )
+            )
 
 
 def reabrir_evento_operacional(*, evento: EventoCobranca, ator, motivo: str, chave_idempotencia: str) -> EventoCobranca:
@@ -538,7 +562,8 @@ def reabrir_evento_reconciliado(*, evento_id: int, organizacao_id: int) -> Event
             return None
         chave = f"system:reconcile:{evento.pk}:{evento.tentativas_processamento}"
         auditoria = ReaberturaEventoCobranca.objects.filter(chave_idempotencia=chave).first()
-        if evento.aguarda_reconciliacao:
+        reaberto = evento.aguarda_reconciliacao
+        if reaberto:
             if auditoria is None:
                 ReaberturaEventoCobranca.objects.create(
                     organizacao_id=organizacao_id,
@@ -551,14 +576,12 @@ def reabrir_evento_reconciliado(*, evento_id: int, organizacao_id: int) -> Event
                 )
             evento.status = StatusEventoCobranca.ROTEADO
             evento.aguarda_reconciliacao = False
-            evento.tentativas_automaticas_ciclo = 0
             evento.proxima_tentativa_em = timezone.now()
             evento.erro = ""
             evento.save(
                 update_fields=[
                     "status",
                     "aguarda_reconciliacao",
-                    "tentativas_automaticas_ciclo",
                     "proxima_tentativa_em",
                     "erro",
                     "last_modified_at",
@@ -566,9 +589,10 @@ def reabrir_evento_reconciliado(*, evento_id: int, organizacao_id: int) -> Event
             )
         elif auditoria is None or evento.status != StatusEventoCobranca.ROTEADO:
             return None
-        transaction.on_commit(
-            lambda: current_app.send_task("faturamento.processar_evento_cobranca", args=(evento.pk, evento.variante, organizacao_id))
-        )
+        if reaberto:
+            transaction.on_commit(
+                lambda: current_app.send_task("faturamento.processar_evento_cobranca", args=(evento.pk, evento.variante, organizacao_id))
+            )
         return evento
 
 
@@ -602,7 +626,12 @@ def solicitar_reconciliacao_operacional(
                 solicitacao.resultado = "variante_ignorada"
                 solicitacao.save(update_fields=["resultado", "last_modified_at"])
             else:
-                transaction.on_commit(lambda: current_app.send_task(tarefa))
+                transaction.on_commit(
+                    lambda: current_app.send_task(
+                        "faturamento.executar_reconciliacao_operacional",
+                        args=(solicitacao.pk, organizacao_id),
+                    )
+                )
         return solicitacao
 
 

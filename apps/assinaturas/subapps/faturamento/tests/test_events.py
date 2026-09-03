@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from threading import Barrier, Lock
 from types import SimpleNamespace
 from unittest.mock import Mock, call
 
-from django.db import connection, transaction
+from django.db import close_old_connections, connection, connections, transaction
 from django.db.migrations.executor import MigrationExecutor
 from django.test import override_settings
 from django.urls import reverse
@@ -39,6 +41,7 @@ from apps.assinaturas.subapps.faturamento.models import (
     StatusCheckout,
     StatusEventoCobranca,
 )
+from apps.assinaturas.subapps.faturamento.processing import reconciliar_janela
 from apps.assinaturas.tests.test_subscription_models import _criar_assinatura, _criar_versao
 from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.models import Organizacao
@@ -428,6 +431,84 @@ def test_repositorio_ingresso_deduplica_evento_roteado_sem_grants_diretos():
             "payment_status": "paid",
         }
         assert persistido.status == StatusEventoCobranca.ROTEADO
+
+
+@pytest.mark.django_db(transaction=True)
+def test_corrida_webhook_e_reconciliacao_persiste_e_enfileira_uma_unica_vez():
+    organizacao = Organizacao.objects.create(nome="Corrida webhook", slug="corrida-webhook")
+    assinatura = _criar_assinatura(organizacao, _criar_versao(codigo="corrida-webhook"))
+    AssinaturaGateway.objects.create(
+        organizacao=organizacao,
+        assinatura=assinatura,
+        variante="stripe",
+        identificador_externo="sub_corrida_webhook",
+    )
+    recurso = SimpleNamespace(
+        external_id="sub_corrida_webhook",
+        status=SubscriptionStatus.ACTIVE,
+        current_period_start=None,
+        current_period_end=None,
+        reference_id=None,
+    )
+    evento = WebhookEvent(
+        gateway=Gateway.STRIPE,
+        variant="stripe",
+        event_id="evt_corrida_webhook_reconcile",
+        event_type=str(EventType.SUBSCRIPTION_UPDATED),
+        type=EventType.SUBSCRIPTION_UPDATED,
+        occurred_at=datetime(2026, 9, 1, tzinfo=UTC),
+        resource_kind=ResourceKind.SUBSCRIPTION,
+        resource_id=recurso.external_id,
+        resource=recurso,
+        livemode=False,
+        raw={},
+    )
+    barreira = Barrier(2)
+    lock = Lock()
+    enviados = []
+
+    def enqueue(*args):
+        with lock:
+            enviados.append(args)
+
+    class Events:
+        def list(self, **kwargs):
+            del kwargs
+            return SimpleNamespace(items=(evento,), next_cursor=None)
+
+    servico = EventosCobranca(enqueue=enqueue)
+    client = SimpleNamespace(events=Events())
+
+    def webhook():
+        close_old_connections()
+        try:
+            barreira.wait(timeout=10)
+            return servico.receber("stripe", evento, client=client)
+        finally:
+            connections.close_all()
+
+    def reconciliacao():
+        close_old_connections()
+        try:
+            barreira.wait(timeout=10)
+            return reconciliar_janela(
+                variante="stripe",
+                inicio=datetime(2026, 8, 31, tzinfo=UTC),
+                fim=datetime(2026, 9, 2, tzinfo=UTC),
+                client=client,
+                receber=servico.receber,
+            )
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        resultados = [futuro.result(timeout=15) for futuro in (pool.submit(webhook), pool.submit(reconciliacao))]
+
+    assert resultados[1] == 1
+    with organizacao_atual_privilegiada(organizacao.pk):
+        assert EventoCobranca.objects.filter(identificador_evento=evento.event_id).count() == 1
+        evento_id = EventoCobranca.objects.get(identificador_evento=evento.event_id).pk
+    assert enviados == [(evento_id, "stripe", organizacao.pk)]
 
 
 def test_rota_webhook_e_publica_e_sem_schema_de_payload():

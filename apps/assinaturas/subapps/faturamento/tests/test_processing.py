@@ -1,6 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
-from threading import Barrier
+from threading import Barrier, Lock
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -18,6 +18,7 @@ from apps.assinaturas.subapps.faturamento.models import (
     CheckoutCobranca,
     CheckpointReconciliacao,
     EventoCobranca,
+    FaturaAssinatura,
     FinalidadeCheckout,
     ReaberturaEventoCobranca,
     SolicitacaoReconciliacaoCobranca,
@@ -26,10 +27,13 @@ from apps.assinaturas.subapps.faturamento.models import (
 )
 from apps.assinaturas.subapps.faturamento.processing import (
     ClaimEvento,
+    _aplicar_fatura,
     _validar_identidade,
+    _validar_itens_assinatura,
     calcular_backoff,
     claim_evento,
     finalizar_evento,
+    processar_evento,
     reabrir_evento_operacional,
     reabrir_evento_reconciliado,
     reconciliar_duravel,
@@ -90,9 +94,100 @@ def test_backoff_exponencial_tem_cap_e_jitter_deterministico():
     ],
 )
 def test_matriz_remota_rejeita_kind_variante_ids_e_invoice_subscription(tipo, kind, remoto):
-    claim = ClaimEvento(1, 1, "stripe", tipo, "cs_1", "sub_1", "in_1", 1, 1, 1, None, None)
+    recurso = remoto[0] if kind == ResourceKind.INVOICE else remoto
+    if not hasattr(recurso, "gateway"):
+        recurso.gateway = Gateway.STRIPE
+    claim = ClaimEvento(1, 1, "stripe", tipo, "cs_1", "sub_1", "in_1", 1, 1, 1, None, None, "stripe")
     with pytest.raises(ValueError, match="remote_"):
         _validar_identidade(claim, kind, remoto)
+
+
+@pytest.mark.parametrize(
+    ("gateway", "checkout_referencia"),
+    [
+        ("outro", 1),
+        ("stripe", 2),
+    ],
+)
+def test_invoice_valida_gateway_e_referencia_da_assinatura_relacionada(gateway, checkout_referencia):
+    claim = ClaimEvento(1, 7, "stripe", "invoice.paid", "", "sub_1", "in_1", 1, 1, 1, None, 2, "stripe")
+    referencia = criar_referencia_checkout(1, 7)
+    invoice = SimpleNamespace(
+        gateway="stripe",
+        variant="stripe",
+        external_id="in_1",
+        subscription_id="sub_1",
+        reference_id=referencia,
+    )
+    subscription = SimpleNamespace(
+        gateway=gateway,
+        variant="stripe",
+        external_id="sub_1",
+        reference_id=criar_referencia_checkout(checkout_referencia, 7),
+    )
+    with pytest.raises(ValueError, match="remote_invoice_subscription_mismatch"):
+        _validar_identidade(claim, ResourceKind.INVOICE, (invoice, subscription))
+
+
+def test_invoice_rejeita_referencias_assinadas_para_outro_tenant():
+    claim = ClaimEvento(1, 7, "stripe", "invoice.paid", "", "sub_1", "in_1", 1, 1, 1, None, 2, "stripe")
+    referencia_alheia = criar_referencia_checkout(99, 8)
+    invoice = SimpleNamespace(
+        gateway=Gateway.STRIPE,
+        variant="stripe",
+        external_id="in_1",
+        subscription_id="sub_1",
+        reference_id=referencia_alheia,
+    )
+    subscription = SimpleNamespace(
+        gateway=Gateway.STRIPE,
+        variant="stripe",
+        external_id="sub_1",
+        reference_id=referencia_alheia,
+    )
+
+    with pytest.raises(ValueError, match="remote_invoice_reference_tenant_mismatch"):
+        _validar_identidade(claim, ResourceKind.INVOICE, (invoice, subscription))
+
+
+def test_itens_enterprise_sem_versao_aceitam_mapeamento_inequivoco():
+    assinatura = SimpleNamespace(
+        versao_plano=None,
+        periodicidade=10,
+        moeda="BRL",
+        valor_base_centavos=1_000,
+        valor_seat_centavos=250,
+        seats_contratados=4,
+        seats_inclusos=2,
+    )
+    remoto = SimpleNamespace(
+        variant="stripe",
+        items=(
+            SimpleNamespace(price_id=None, unit_amount=1_000, currency="BRL", quantity=1),
+            SimpleNamespace(price_id=None, unit_amount=250, currency="BRL", quantity=2),
+        ),
+    )
+
+    _validar_itens_assinatura(assinatura, remoto)
+
+
+def test_itens_enterprise_sem_versao_rejeitam_componentes_ambiguos():
+    assinatura = SimpleNamespace(
+        versao_plano=None,
+        periodicidade=10,
+        moeda="BRL",
+        valor_base_centavos=500,
+        valor_seat_centavos=500,
+        seats_contratados=2,
+        seats_inclusos=1,
+    )
+    remoto = SimpleNamespace(
+        variant="stripe",
+        items=(SimpleNamespace(price_id=None, unit_amount=500, currency="BRL", quantity=1),),
+    )
+
+    with pytest.raises(ValueError, match="remote_subscription_price_mismatch"):
+        _validar_itens_assinatura(assinatura, remoto)
 
 
 def test_reconciliacao_pagina_e_reusa_ingestao_fora_de_transacao():
@@ -181,6 +276,46 @@ def test_dois_workers_com_conexoes_reais_produzem_um_unico_claim_sem_deadlock():
         assert evento.tentativas_processamento == 1
         assert evento.status == StatusEventoCobranca.PROCESSANDO
         assert evento.tentativas_processamento == 1
+
+
+@pytest.mark.django_db(transaction=True)
+def test_dois_workers_completos_fazem_uma_unica_recuperacao_remota():
+    organizacao, evento, _ = _evento_mapeado(sufixo="worker-completo")
+    barreira = Barrier(2)
+    lock = Lock()
+    recuperacoes = 0
+    remoto = SimpleNamespace(
+        gateway=Gateway.STRIPE,
+        variant="stripe",
+        external_id="sub_worker-completo",
+        status=SubscriptionStatus.CANCELED,
+    )
+
+    class Subscriptions:
+        def retrieve(self, external_id):
+            nonlocal recuperacoes
+            assert external_id == remoto.external_id
+            with lock:
+                recuperacoes += 1
+            return remoto
+
+    def executar_worker():
+        close_old_connections()
+        try:
+            barreira.wait(timeout=10)
+            client = SimpleNamespace(variant="stripe", gateway=Gateway.STRIPE, subscriptions=Subscriptions())
+            return processar_evento(evento.pk, organizacao.pk, "stripe", client=client)
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        resultados = [futuro.result(timeout=15) for futuro in (pool.submit(executar_worker), pool.submit(executar_worker))]
+
+    assert sorted(resultados) == [False, True]
+    assert recuperacoes == 1
+    with organizacao_atual_privilegiada(organizacao.pk):
+        evento.refresh_from_db()
+    assert evento.status == StatusEventoCobranca.PROCESSADO
 
 
 @pytest.mark.parametrize("status", [StatusEventoCobranca.FALHOU, StatusEventoCobranca.PROCESSADO, StatusEventoCobranca.IGNORADO])
@@ -425,6 +560,48 @@ def test_finalize_atrasado_atualiza_apenas_contrato_historico(familia):
 
 
 @pytest.mark.django_db(transaction=True)
+def test_fatura_preserva_fatos_indisponiveis_distintos_de_zero_explicito():
+    agora = timezone.now()
+    organizacao = Organizacao.objects.create(nome="Fatos opcionais", slug="fatos-opcionais")
+    assinatura = _criar_assinatura(organizacao, _criar_versao(codigo="fatos-opcionais"))
+
+    def invoice(external_id, valor):
+        return SimpleNamespace(
+            gateway=Gateway.STRIPE,
+            variant="stripe",
+            external_id=external_id,
+            subscription_id="sub_fatos",
+            status=InvoiceStatus.DRAFT,
+            reason=InvoiceReason.RENEWAL,
+            currency="BRL",
+            lines=(),
+            amount_due=0,
+            amount_paid=0,
+            amount_remaining=0,
+            subtotal=valor,
+            discount_total=valor,
+            tax_total=valor,
+            total=valor,
+            due_at=None,
+            paid_at=None,
+            next_payment_attempt_at=None,
+            attempt_count=0,
+            hosted_url=None,
+            reference_id=None,
+        )
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        _aplicar_fatura(assinatura, invoice("in_indisponivel", None), agora=agora)
+        _aplicar_fatura(assinatura, invoice("in_zero", 0), agora=agora)
+        indisponivel = FaturaAssinatura.objects.get(identificador_externo="in_indisponivel")
+        zero = FaturaAssinatura.objects.get(identificador_externo="in_zero")
+
+    campos = ("subtotal_centavos", "desconto_centavos", "imposto_centavos", "total_centavos")
+    assert tuple(getattr(indisponivel, campo) for campo in campos) == (None, None, None, None)
+    assert tuple(getattr(zero, campo) for campo in campos) == (0, 0, 0, 0)
+
+
+@pytest.mark.django_db(transaction=True)
 def test_reconciliacao_crash_na_ingestao_nao_avanca_cursor_e_restart_repete_pagina():
     agora = timezone.now()
     evento = SimpleNamespace(variant="stripe")
@@ -550,7 +727,10 @@ def test_reconciliacao_operacional_persiste_parametros_ator_resultado_e_idempote
     assert auditoria.janela_fim == agora
     assert auditoria.parametros == {"evento_id": evento.pk, "janela_segundos": 1200}
     assert auditoria.resultado == "agendada"
-    envio.assert_called_once_with("faturamento.reconciliar_eventos_stripe")
+    envio.assert_called_once_with(
+        "faturamento.executar_reconciliacao_operacional",
+        args=(primeira.pk, organizacao.pk),
+    )
 
 
 @pytest.mark.django_db(transaction=True)
@@ -570,6 +750,7 @@ def test_reconcile_first_reabre_automaticamente_uma_vez_e_preserva_auditoria(mon
         evento.refresh_from_db()
     assert evento.status == StatusEventoCobranca.FALHOU
     assert evento.aguarda_reconciliacao is True
+    envio.reset_mock()
 
     primeiro = reabrir_evento_reconciliado(evento_id=evento.pk, organizacao_id=organizacao.pk)
     segundo = reabrir_evento_reconciliado(evento_id=evento.pk, organizacao_id=organizacao.pk)
@@ -581,6 +762,56 @@ def test_reconcile_first_reabre_automaticamente_uma_vez_e_preserva_auditoria(mon
         auditorias = list(ReaberturaEventoCobranca.objects.filter(evento=evento))
     assert evento.status == StatusEventoCobranca.ROTEADO
     assert evento.aguarda_reconciliacao is False
+    assert evento.tentativas_automaticas_ciclo == 1
     assert len(auditorias) == 1
     assert auditorias[0].automatica is True
     assert auditorias[0].ator is None
+    envio.assert_called_once_with(
+        "faturamento.processar_evento_cobranca",
+        args=(evento.pk, "stripe", organizacao.pk),
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_reconcile_first_enfileira_ciclo_direcionado_uma_unica_vez(monkeypatch):
+    organizacao, evento, agora = _evento_mapeado(sufixo="reconcile-directed")
+    claim = claim_evento(evento.pk, organizacao.pk, variante="stripe", agora=agora)
+    envio = Mock()
+    monkeypatch.setattr("apps.assinaturas.subapps.faturamento.processing.current_app", SimpleNamespace(send_task=envio))
+    erro = GatewayPermanentError(
+        "incerto",
+        gateway="stripe",
+        variant="stripe",
+        retry_advice=RetryAdvice(disposition=RetryDisposition.RECONCILE_FIRST),
+    )
+
+    registrar_falha(claim, erro, agora=agora)
+    registrar_falha(claim, erro, agora=agora)
+
+    envio.assert_called_once_with(
+        "faturamento.reconciliar_evento_cobranca",
+        args=(evento.pk, "stripe", organizacao.pk),
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_reconcile_first_na_oitava_tentativa_fica_terminal_sem_novo_ciclo(monkeypatch):
+    organizacao, evento, agora = _evento_mapeado(sufixo="reconcile-cap8", tentativas_ciclo=7)
+    claim = claim_evento(evento.pk, organizacao.pk, variante="stripe", agora=agora)
+    envio = Mock()
+    monkeypatch.setattr("apps.assinaturas.subapps.faturamento.processing.current_app", SimpleNamespace(send_task=envio))
+    erro = GatewayPermanentError(
+        "incerto",
+        gateway="stripe",
+        variant="stripe",
+        retry_advice=RetryAdvice(disposition=RetryDisposition.RECONCILE_FIRST),
+    )
+
+    registrar_falha(claim, erro, agora=agora)
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        evento.refresh_from_db()
+    assert evento.status == StatusEventoCobranca.FALHOU
+    assert evento.tentativas_automaticas_ciclo == 8
+    assert evento.aguarda_reconciliacao is False
+    envio.assert_not_called()

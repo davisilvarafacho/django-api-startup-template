@@ -1,18 +1,26 @@
 import inspect
+from datetime import timedelta
+from types import SimpleNamespace
 
 from django.db import connection, transaction
 from django.utils import timezone
 
 import pytest
 
-from apps.assinaturas.subapps.faturamento.models import AssinaturaGateway, EventoCobranca, StatusEventoCobranca
+from apps.assinaturas.subapps.faturamento import tasks as billing_tasks
+from apps.assinaturas.subapps.faturamento.models import (
+    AssinaturaGateway,
+    EventoCobranca,
+    SolicitacaoReconciliacaoCobranca,
+    StatusEventoCobranca,
+)
 from apps.assinaturas.subapps.faturamento.tasks import processar_evento_cobranca, recuperar_eventos_cobranca
 from apps.assinaturas.tests.test_subscription_models import _criar_assinatura, _criar_versao
 from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.models import Organizacao
 
 
-def _evento_recebido_sem_tenant(*, identificador_assinatura: str) -> int:
+def _evento_recebido_sem_tenant(*, identificador_assinatura: str, tentativas_roteamento: int = 0) -> int:
     with transaction.atomic(), connection.cursor() as cursor:
         cursor.execute("SET LOCAL ROLE billing_functions_owner")
         cursor.execute(
@@ -21,9 +29,17 @@ def _evento_recebido_sem_tenant(*, identificador_assinatura: str) -> int:
                 identificador_assinatura,identificador_checkout,identificador_fatura,status,exige_tenant,
                 tentativas_roteamento,tentativas_processamento,tentativas_automaticas_ciclo,
                 payload_normalizado,hash_payload,erro,ocorrido_em)
-               VALUES (%s,%s,true,false,'stripe',%s,'subscription.updated',%s,'','',10,true,0,0,0,
+               VALUES (%s,%s,true,false,'stripe',%s,'subscription.updated',%s,'','',10,true,%s,0,0,
                        '{}'::jsonb,%s,'',%s) RETURNING id""",
-            [timezone.now(), timezone.now(), f"evt_recovery_{identificador_assinatura}", identificador_assinatura, "e" * 64, timezone.now()],
+            [
+                timezone.now(),
+                timezone.now(),
+                f"evt_recovery_{identificador_assinatura}",
+                identificador_assinatura,
+                tentativas_roteamento,
+                "e" * 64,
+                timezone.now(),
+            ],
         )
         return cursor.fetchone()[0]
 
@@ -84,3 +100,176 @@ def test_recovery_sem_destino_mantem_recebido_sem_efeitos(monkeypatch):
         status, organizacao_id, tentativas, proxima = cursor.fetchone()
         assert (status, organizacao_id, tentativas) == (StatusEventoCobranca.RECEBIDO, None, 1)
         assert proxima is not None
+
+
+@pytest.mark.django_db(transaction=True)
+def test_recovery_arrenda_roteado_antes_do_enqueue_e_nao_duplica_mensagem(monkeypatch):
+    organizacao = Organizacao.objects.create(nome="Recovery lease", slug="recovery-lease")
+    assinatura = _criar_assinatura(organizacao, _criar_versao(codigo="recovery-lease"))
+    AssinaturaGateway.objects.create(
+        organizacao=organizacao,
+        assinatura=assinatura,
+        variante="stripe",
+        identificador_externo="sub_recovery_lease",
+    )
+    with organizacao_atual_privilegiada(organizacao.pk):
+        evento = EventoCobranca.objects.create(
+            organizacao=organizacao,
+            variante="stripe",
+            identificador_evento="evt_recovery_lease",
+            tipo="subscription.updated",
+            identificador_assinatura="sub_recovery_lease",
+            status=StatusEventoCobranca.ROTEADO,
+            hash_payload="f" * 64,
+            ocorrido_em=timezone.now(),
+        )
+    enviados = []
+    monkeypatch.setattr("apps.assinaturas.subapps.faturamento.tasks.processar_evento_cobranca.delay", lambda *args: enviados.append(args))
+
+    assert recuperar_eventos_cobranca.run(limite=1) == 1
+    assert recuperar_eventos_cobranca.run(limite=1) == 0
+    assert enviados == [(evento.pk, "stripe", organizacao.pk)]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_recovery_orfao_no_prefixo_nao_causa_starvation_acima_do_limite(monkeypatch):
+    _evento_recebido_sem_tenant(identificador_assinatura="sub_orfao_prefixo")
+    organizacao = Organizacao.objects.create(nome="Recovery justo", slug="recovery-justo")
+    assinatura = _criar_assinatura(organizacao, _criar_versao(codigo="recovery-justo"))
+    AssinaturaGateway.objects.create(
+        organizacao=organizacao,
+        assinatura=assinatura,
+        variante="stripe",
+        identificador_externo="sub_recovery_justo",
+    )
+    evento_id = _evento_recebido_sem_tenant(identificador_assinatura="sub_recovery_justo")
+    enviados = []
+    monkeypatch.setattr("apps.assinaturas.subapps.faturamento.tasks.processar_evento_cobranca.delay", lambda *args: enviados.append(args))
+
+    assert recuperar_eventos_cobranca.run(limite=1) == 1
+    assert enviados == [(evento_id, "stripe", organizacao.pk)]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_recovery_torna_orfao_terminal_ao_esgotar_oito_tentativas(monkeypatch):
+    evento_id = _evento_recebido_sem_tenant(identificador_assinatura="sub_orfao_esgotado", tentativas_roteamento=7)
+    monkeypatch.setattr("apps.assinaturas.subapps.faturamento.tasks.processar_evento_cobranca.delay", lambda *args: None)
+
+    assert recuperar_eventos_cobranca.run(limite=1) == 0
+
+    with transaction.atomic(), connection.cursor() as cursor:
+        cursor.execute("SET LOCAL ROLE billing_functions_owner")
+        cursor.execute("SELECT status,tentativas_roteamento,proxima_tentativa_em,erro FROM evento_cobranca WHERE id=%s", [evento_id])
+        assert cursor.fetchone() == (StatusEventoCobranca.FALHOU, 8, None, "routing_exhausted")
+
+
+@pytest.mark.django_db(transaction=True)
+def test_task_reconcile_first_reabre_e_enfileira_processador_exato_uma_vez(monkeypatch):
+    organizacao = Organizacao.objects.create(nome="Reconcile direcionado", slug="reconcile-direcionado")
+    assinatura = _criar_assinatura(organizacao, _criar_versao(codigo="reconcile-direcionado"))
+    AssinaturaGateway.objects.create(
+        organizacao=organizacao,
+        assinatura=assinatura,
+        variante="stripe",
+        identificador_externo="sub_reconcile_direcionado",
+    )
+    with organizacao_atual_privilegiada(organizacao.pk):
+        evento = EventoCobranca.objects.create(
+            organizacao=organizacao,
+            variante="stripe",
+            identificador_evento="evt_reconcile_direcionado",
+            tipo="subscription.updated",
+            identificador_assinatura="sub_reconcile_direcionado",
+            status=StatusEventoCobranca.FALHOU,
+            aguarda_reconciliacao=True,
+            hash_payload="c" * 64,
+        )
+    enviados = []
+    monkeypatch.setattr(
+        "apps.assinaturas.subapps.faturamento.processing.current_app",
+        SimpleNamespace(send_task=lambda *args, **kwargs: enviados.append((args, kwargs))),
+    )
+
+    assert billing_tasks.reconciliar_evento_cobranca.run(evento.pk, "stripe", organizacao.pk) is True
+    assert billing_tasks.reconciliar_evento_cobranca.run(evento.pk, "stripe", organizacao.pk) is False
+
+    assert enviados == [
+        (
+            ("faturamento.processar_evento_cobranca",),
+            {"args": (evento.pk, "stripe", organizacao.pk)},
+        )
+    ]
+
+
+def _solicitacao_operacional(organizacao, ator):
+    agora = timezone.now()
+    with organizacao_atual_privilegiada(organizacao.pk):
+        return SolicitacaoReconciliacaoCobranca.objects.create(
+            organizacao=organizacao,
+            variante="stripe",
+            ator=ator,
+            motivo="Diagnóstico operacional",
+            chave_idempotencia=f"solicitacao:{organizacao.pk}",
+            janela_inicio=agora - timedelta(minutes=10),
+            janela_fim=agora,
+            parametros={"evento_id": 123, "janela_segundos": 600},
+        )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_task_reconciliacao_operacional_usa_janela_auditada_e_registra_contagem(monkeypatch):
+    from tests.support.usuarios import criar_usuario
+
+    organizacao = Organizacao.objects.create(nome="Auditoria concluída", slug="auditoria-concluida")
+    solicitacao = _solicitacao_operacional(organizacao, criar_usuario(email="auditoria-concluida@example.com"))
+    chamadas = []
+
+    class Events:
+        def list(self, **kwargs):
+            assert connection.in_atomic_block is False
+            chamadas.append(kwargs)
+            return SimpleNamespace(items=(), next_cursor=None)
+
+    monkeypatch.setattr(billing_tasks, "get_checkout_gateway", lambda variante: SimpleNamespace(events=Events()))
+
+    assert billing_tasks.executar_reconciliacao_operacional.run(solicitacao.pk, organizacao.pk) == 0
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        solicitacao.refresh_from_db()
+    assert chamadas == [
+        {
+            "occurred_since": solicitacao.janela_inicio,
+            "occurred_before": solicitacao.janela_fim,
+            "cursor": None,
+            "limit": 100,
+        }
+    ]
+    assert solicitacao.resultado == "concluida"
+    assert solicitacao.parametros == {"evento_id": 123, "janela_segundos": 600, "eventos_ingeridos": 0}
+
+
+@pytest.mark.django_db(transaction=True)
+def test_task_reconciliacao_operacional_registra_falha_sem_persistir_mensagem(monkeypatch):
+    from tests.support.usuarios import criar_usuario
+
+    organizacao = Organizacao.objects.create(nome="Auditoria falha", slug="auditoria-falha")
+    solicitacao = _solicitacao_operacional(organizacao, criar_usuario(email="auditoria-falha@example.com"))
+
+    class Events:
+        def list(self, **kwargs):
+            del kwargs
+            raise RuntimeError("segredo remoto que não deve persistir")
+
+    monkeypatch.setattr(billing_tasks, "get_checkout_gateway", lambda variante: SimpleNamespace(events=Events()))
+
+    with pytest.raises(RuntimeError, match="segredo remoto"):
+        billing_tasks.executar_reconciliacao_operacional.run(solicitacao.pk, organizacao.pk)
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        solicitacao.refresh_from_db()
+    assert solicitacao.resultado == "falhou"
+    assert solicitacao.parametros == {
+        "evento_id": 123,
+        "janela_segundos": 600,
+        "erro_codigo": "RuntimeError",
+    }
