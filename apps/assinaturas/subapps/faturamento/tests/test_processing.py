@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from threading import Barrier, Lock
 from types import SimpleNamespace
@@ -13,6 +14,7 @@ from django_checkouts.enums import Gateway, InvoiceReason, InvoiceStatus, Resour
 from django_checkouts.exceptions import GatewayPermanentError, GatewayTemporaryError, RetryAdvice
 
 from apps.assinaturas.models import StatusAssinatura, StatusFinanceiro
+from apps.assinaturas.subapps.faturamento import processing
 from apps.assinaturas.subapps.faturamento.checkouts import criar_referencia_checkout
 from apps.assinaturas.subapps.faturamento.models import (
     AssinaturaGateway,
@@ -79,6 +81,22 @@ def test_backoff_exponencial_tem_cap_e_jitter_deterministico():
     assert calcular_backoff(4, jitter=0) == timedelta(minutes=4)
     assert calcular_backoff(8, jitter=0) == timedelta(hours=1)
     assert calcular_backoff(8, jitter=0.5) == timedelta(hours=1)
+
+
+def test_processamento_de_familia_desconhecida_e_terminal_e_auditavel(monkeypatch):
+    claim = ClaimEvento(1, 7, "stripe", "unknown.event", "", "", "", 1, 2, 1, None, None, "stripe")
+    evento = SimpleNamespace(status=None, processado_em=None, save=Mock())
+    manager = Mock()
+    manager.select_for_update.return_value.get.return_value = evento
+    monkeypatch.setattr(processing, "claim_evento", lambda *args, **kwargs: claim)
+    monkeypatch.setattr(processing, "recuperar_remoto", lambda *args, **kwargs: (None, None))
+    monkeypatch.setattr(processing, "organizacao_atual_privilegiada", lambda organizacao_id: nullcontext())
+    monkeypatch.setattr(processing.EventoCobranca, "objects", manager)
+
+    assert processar_evento(1, 7, "stripe", client=Mock()) is True
+    assert evento.status == StatusEventoCobranca.IGNORADO
+    assert evento.processado_em is not None
+    evento.save.assert_called_once_with()
 
 
 @pytest.mark.parametrize(

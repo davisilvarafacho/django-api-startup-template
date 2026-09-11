@@ -42,6 +42,8 @@ from apps.assinaturas.subapps.faturamento.models import (
     StatusFatura,
 )
 from apps.assinaturas.subapps.faturamento.payloads import normalizar_payload_evento, validar_tipo_evento
+from apps.assinaturas.subapps.faturamento.policies import IngressoUpdatePolicy
+from apps.assinaturas.subapps.faturamento.views import ListarCheckoutsView, ListarFaturasView
 from apps.assinaturas.tests.test_proposal_models import _criar_proposta
 from apps.assinaturas.tests.test_subscription_models import _criar_assinatura, _criar_versao
 from apps.organizacoes.context import organizacao_atual_privilegiada
@@ -364,6 +366,38 @@ def test_check_migration_permite_catalogo_zero_no_preflight():
         cursor_patch.stop()
 
 
+def test_check_deploy_aceita_catalogo_real_instalado():
+    with override_settings(BILLING_DATABASE_MODE="migration"):
+        assert role_ingresso_check(None) == []
+
+
+def test_policy_de_ingresso_expoe_predicados_distintos_e_fechados():
+    policy = IngressoUpdatePolicy(name="ingresso", expression="true")
+
+    assert policy.get_using_expression().startswith("organizacao_id IS NULL")
+    assert policy.get_check_expression().startswith("organizacao_id IS NOT NULL")
+    assert "rls.billing_ingress" in policy.get_using_expression()
+    assert "rls.billing_ingress" in policy.get_check_expression()
+
+
+@pytest.mark.parametrize(("view_class", "model"), [(ListarCheckoutsView, CheckoutCobranca), (ListarFaturasView, FaturaAssinatura)])
+def test_listagens_financeiras_paginam_sem_expor_queryset_bruto(view_class, model):
+    class Paginador:
+        def paginate_queryset(self, queryset, request, view):
+            assert queryset.model is model
+            assert view.pagination_class is Paginador
+            return []
+
+        def get_paginated_response(self, data):
+            return {"results": data}
+
+    view = view_class()
+    view.pagination_class = Paginador
+    request = SimpleNamespace(vinculo=SimpleNamespace(papel=Papel.ADMINISTRADOR))
+
+    assert view.get(request) == {"results": []}
+
+
 def test_check_deploy_rejeita_nomes_e_modo_arbitrarios():
     with override_settings(BILLING_INGRESS_DATABASE_ROLE="role-arbitraria"):
         assert [erro.id for erro in role_ingresso_check(None)] == ["faturamento.E002"]
@@ -442,6 +476,10 @@ def test_check_deploy_rejeita_nomes_e_modo_arbitrarios():
         (
             "CREATE POLICY checkout_permissiva ON checkout_cobranca USING (true)",
             "DROP POLICY checkout_permissiva ON checkout_cobranca",
+        ),
+        (
+            "ALTER POLICY checkout_recovery_owner_select ON checkout_cobranca USING (false)",
+            "ALTER POLICY checkout_recovery_owner_select ON checkout_cobranca USING (true)",
         ),
         (
             "ALTER POLICY isolamento_organizacao ON fatura_assinatura USING (true) WITH CHECK (true)",

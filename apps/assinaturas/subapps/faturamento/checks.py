@@ -145,7 +145,8 @@ def role_ingresso_check(app_configs, **kwargs):
                    WHERE p.oid IS NULL OR NOT p.polpermissive OR p.polcmd<>'*' OR p.polroles<>ARRAY[0::oid]
                      OR regexp_replace(pg_get_expr(p.polqual,p.polrelid),'[[:space:]]','','g')
                         IS DISTINCT FROM '(organizacao_id=(NULLIF(current_setting(''rls.tenant_id''::text,true),''''::text))::integer)'
-                     OR p.polqual::text IS DISTINCT FROM p.polwithcheck::text
+                     OR regexp_replace(pg_get_expr(p.polwithcheck,p.polrelid),'[[:space:]]','','g')
+                        IS DISTINCT FROM '(organizacao_id=(NULLIF(current_setting(''rls.tenant_id''::text,true),''''::text))::integer)'
                  )
                  AND NOT EXISTS (
                    SELECT 1 FROM pg_policy p
@@ -162,9 +163,19 @@ def role_ingresso_check(app_configs, **kwargs):
                                 OR pg_get_expr(p.polwithcheck,p.polrelid) IS DISTINCT FROM 'true'))
                        OR p.polname NOT IN ('evento_tenant','evento_interface_definidor_select',
                                             'evento_interface_definidor_insert','evento_interface_definidor_update'))
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM pg_policy p
+                   WHERE p.polrelid=to_regclass('public.checkout_cobranca')
+                     AND ((p.polname='checkout_recovery_owner_select'
+                           AND (NOT p.polpermissive OR p.polcmd<>'r'
+                                OR p.polroles<>ARRAY[(SELECT oid FROM pg_roles WHERE rolname=%s)]
+                                OR pg_get_expr(p.polqual,p.polrelid) IS DISTINCT FROM 'true'
+                                OR p.polwithcheck IS NOT NULL))
+                       OR p.polname NOT IN ('isolamento_organizacao','checkout_recovery_owner_select'))
                  ),
                  (SELECT count(*) FROM esperadas JOIN pg_proc p ON p.oid=esperadas.oid)""",
-            [owner, runtime, owner, runtime, runtime, owner, owner, owner, owner, owner],
+            [owner, runtime, owner, runtime, runtime, owner, owner, owner, owner, owner, owner],
         )
         catalogo = cursor.fetchone()
 
