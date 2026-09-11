@@ -6,8 +6,12 @@ Scalar em `/api/docs/`.
 Para validar o schema localmente:
 
 ```bash
-uv run python manage.py spectacular --validate --file schema.yml
+uv run python manage.py spectacular --validate --file schema.yml --skip-checks
 ```
+
+`--skip-checks` limita esse comando ao contrato OpenAPI. A validação operacional
+das credenciais, das roles de banco e do rollout continua sendo feita por
+`python manage.py check --deploy` no ambiente de destino.
 
 ## Erros
 
@@ -143,6 +147,36 @@ inicializada usa `503 billing.subscription_required`. Após expirar uma carênci
 rotas comuns usam `403 billing.organization_restricted`; as rotas acima são
 marcadas para permitir somente a consulta ou regularização por proprietário e
 administrador, sem ampliar o papel do usuário.
+
+## Faturamento
+
+As rotas financeiras autenticadas aceitam somente sessões humanas, exigem
+`X-Organization` e respeitam o mesmo isolamento RLS da assinatura. Criação de
+checkout exige autenticação recente; quando MFA estiver habilitado para a
+conta, o step-up também exige o segundo fator. Valores são inteiros em centavos.
+
+| Rota | Contrato |
+| --- | --- |
+| `POST /assinatura/checkouts/` | Proprietário. Cria checkout recorrente para contratação (`finalidade=10`), alteração (`20`) ou proposta aceita (`30`). Recebe `chave_idempotencia` e a referência exigida pela finalidade. |
+| `GET /faturamento/checkouts/` | Proprietário ou administrador. Lista até 50 checkouts por página, do mais recente para o mais antigo. |
+| `GET /faturamento/faturas/` | Proprietário ou administrador. Lista o estado normalizado das faturas, sem expor payload do gateway. |
+| `POST /faturamento/forma-pagamento/checkouts/` | Proprietário ou administrador com autenticação recente. Abre um setup hospedado, sem item ou cobrança, usando `chave_idempotencia`. |
+| `POST /faturamento/webhooks/{variante}/` | Pública e sem autenticação de sessão. Autentica os bytes originais pela assinatura do gateway; para Stripe, a variante é `stripe`. |
+
+Uma chave idempotente repetida com o mesmo snapshot devolve a operação vigente;
+se for reutilizada para outro conteúdo, a API responde
+`409 billing.checkout_conflict`. Enquanto já existir checkout da mesma operação
+em criação ou aberto, responde `409 billing.checkout_pending`. Ausência de
+capability ou referência de preço obrigatória usa
+`422 billing.checkout_unavailable`. Uma falha externa inconclusiva usa
+`503 billing.checkout_uncertain`: o cliente não deve criar outra chave nem
+assumir falha; a reconciliação decide o estado remoto.
+
+O webhook responde `200` tanto para um evento novo quanto para uma duplicata
+idempotente (`received=true`, `duplicate=false|true`). Assinatura, variante ou
+protocolo inválido respondem `400`; reutilizar o mesmo identificador remoto com
+conteúdo autenticado diferente responde `409 billing.webhook_collision`. O
+schema deliberadamente não descreve nem persiste o corpo bruto do provedor.
 
 ## MFA
 

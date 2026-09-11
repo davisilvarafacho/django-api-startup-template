@@ -20,7 +20,7 @@ dependencies = [
     "django-axes==8.0.0",
     "django-cachalot==2.8.0",
     "django-celery-beat>=2.9.0",
-    "django-checkouts[stripe]",
+    "django-checkouts[stripe]==1.0.1",
     "django-cors-headers==4.9.0",
     "django-dbbackup==5.0.1",
     "django-filter==25.2",
@@ -271,6 +271,3 @@ changelog_incremental = true
 version_files = [
     "api/settings.py:\"VERSION\"",
 ]
-
-[tool.uv.sources]
-django-checkouts = { path = "../../../django-checkouts", editable = true }

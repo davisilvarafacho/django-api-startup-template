@@ -8,6 +8,10 @@ ele consulta cada tenant sob sua própria policy `FORCE RLS` e restaura o
 contexto anterior. O comando entra no contexto RLS de cada organização antes
 de criar o contrato.
 
+O projeto instala a release publicada
+`django-checkouts[stripe]==1.0.1`. O lockfile de entrega deve apontar para a
+PyPI, nunca para um path local ou revisão VCS.
+
 ## Fazer o rollout
 
 Antes da migration de faturamento, o administrador do banco deve
@@ -74,8 +78,8 @@ uv run python manage.py initialize_subscriptions --apply --batch-size 100
 uv run python manage.py check --deploy --tag database
 ```
 
-Os dois primeiros comandos comerciais são dry-runs. Revise suas saídas antes
-dos respectivos `--apply`. `initialize_subscriptions` considera somente
+O primeiro comando de cada par é um dry-run. Revise sua saída antes do
+respectivo `--apply`. `initialize_subscriptions` considera somente
 organizações ativas sem contrato corrente, não altera contratos existentes e
 cria o plano gratuito pelo caso de uso nominal. O processamento é paginado e
 idempotente: se houver interrupção, corrija a causa e repita o mesmo comando.
@@ -84,6 +88,33 @@ O check de deploy `assinaturas.E003` usa uma única consulta e precisa retornar
 zero organizações ativas sem assinatura. Não habilite tráfego na nova versão
 enquanto ele falhar. O middleware responde
 `503 billing.subscription_required` se encontrar essa lacuna em runtime.
+
+## Configurar o Stripe e o webhook
+
+Injete `STRIPE_API_KEY` e `STRIPE_WEBHOOK_SECRET` pelo gerenciador de segredos.
+Use `STRIPE_SANDBOX=True` somente com chave de teste/sandbox; em produção use
+`False`. `BILLING_CHECKOUT_SUCCESS_URL` e `BILLING_CHECKOUT_CANCEL_URL` precisam
+ser HTTPS em produção. Não registre os valores dessas variáveis em arquivos,
+logs, tickets ou relatórios.
+
+Cadastre no Stripe o endpoint público:
+
+```text
+POST https://api.example.com/faturamento/webhooks/stripe/
+```
+
+O proxy deve encaminhar o corpo sem decodificar, reconstruir ou normalizar JSON:
+a verificação usa os bytes originais e o header `Stripe-Signature`. O endpoint
+não usa sessão, mas falha fechado para assinatura inválida. Nunca habilite log
+de corpo ou headers nessa rota. O template persiste somente fatos normalizados
+em allowlist e um hash canônico; o payload bruto e o `raw` da biblioteca são
+descartados.
+
+Antes de liberar checkout pago, rode `python manage.py check --deploy` em cada
+modo de processo. O modo web não pode assumir nenhuma role financeira; o worker
+de ingresso pode assumir apenas `billing_ingress_runtime`; migrations usam a
+credencial DDL efêmera. Uma configuração sem as duas credenciais Stripe falha
+com `django_checkouts.E001`/`faturamento.E001` e não deve receber tráfego.
 
 ## Verificar jobs e acesso
 
@@ -99,6 +130,19 @@ assinatura, revalidam o estado sob lock e só depois calculam a ocupação. Eles
 registram somente duração e contagem. É seguro reexecutá-los: um trial já
 convertido e uma carência já coerente não ganham outra revisão.
 
+O faturamento acrescenta estes jobs:
+
+- `faturamento.recuperar_eventos_cobranca`, a cada 5 minutos, reivindica no
+  máximo 100 eventos abandonados ou cujo retry venceu;
+- `faturamento.reconciliar_eventos_stripe`, a cada 15 minutos, percorre uma
+  janela de 20 minutos com 5 minutos de sobreposição e deduplica pelo ID remoto.
+
+O retry automático usa backoff exponencial, começa em 30 segundos, respeita o
+`retry_after` normalizado quando presente e para depois de oito tentativas no
+ciclo. Não altere status financeiro manualmente. Falha inconclusiva fica em
+`billing.checkout_uncertain` ou `RECONCILE_FIRST` até uma consulta remota
+conclusiva.
+
 Depois do rollout, valide com uma sessão de administrador:
 
 ```text
@@ -111,6 +155,81 @@ prazo. Após o prazo, rotas comuns respondem
 `403 billing.organization_restricted`; somente proprietário ou administrador
 alcançam ações marcadas de consulta ou regularização. O marcador é declarativo
 na view, não uma lista textual de URLs.
+
+## Investigar e recuperar faturamento
+
+Use o Django Admin sempre com uma organização selecionada. Checkouts, faturas,
+mapeamentos de assinatura e eventos são somente leitura; URLs, payload
+normalizado, hash e erro interno ficam ocultos. `ReferenciaPrecoGateway` é o
+cadastro separado para IDs de preço quando uma variante não aceitar preço
+inline. Operadores recebem permissões separadas:
+
+- `faturamento.retry_failed_eventocobranca` reabre um evento terminal falho e
+  zera somente o contador do novo ciclo automático;
+- `faturamento.reconcile_eventocobranca` agenda uma janela de reconciliação
+  ligada ao evento selecionado.
+
+As duas actions exigem motivo, ator e chave idempotente e criam registros de
+auditoria tenantizados. Repetir uma action não duplica o pedido. Prefira a
+reconciliação quando houve timeout ou outra falha externa inconclusiva; retry
+cego pode duplicar uma mutação remota.
+
+Monitore as métricas de checkout, webhook, retry, processamento, recuperação e
+reconciliação por variante e resultado. Os labels são conjuntos finitos e não
+incluem IDs, e-mails, URLs ou mensagens externas. Um aumento de eventos não
+roteados indica referência assinada/assinatura remota ainda desconhecida; a
+recuperação periódica tenta novamente depois que o mapeamento existir.
+
+## Validar sem credenciais e executar o smoke sandbox
+
+O gate determinístico deste template usa `FakeCheckoutGateway` pela interface
+pública de `django-checkouts` e não toca a rede:
+
+```bash
+uv run --group test pytest apps/assinaturas/subapps/faturamento \
+  apps/assinaturas/tests/test_tenant_access_middleware.py
+```
+
+O smoke ao vivo pertence à fronteira da biblioteca e é deliberadamente
+separado do gate de cobertura. Com uma credencial de sandbox disponível no
+gerenciador de segredos, execute a release publicada em um ambiente isolado; o
+roteiro cria, recupera e expira um checkout de R$ 1,00 sem imprimir IDs ou a
+chave:
+
+```bash
+DJC_STRIPE_API_KEY="$(secret-manager read stripe-sandbox-api-key)" \
+uv run --no-project --with 'django-checkouts[stripe]==1.0.1' python - <<'PY'
+import os
+from uuid import uuid4
+
+from django_checkouts.client import CheckoutClient
+from django_checkouts.gateways.stripe import StripeGateway
+from django_checkouts.types import CheckoutCreate, CheckoutItem, InlinePrice
+
+key = f"smoke:{uuid4()}"
+client = CheckoutClient(
+    StripeGateway(api_key=os.environ["DJC_STRIPE_API_KEY"], sandbox=True)
+)
+created = client.checkouts.create(
+    CheckoutCreate(
+        items=(CheckoutItem(price=InlinePrice(name="Smoke", unit_amount=100)),),
+        success_url="https://example.com/smoke/success",
+        cancel_url="https://example.com/smoke/cancel",
+        reference_id=key,
+    ),
+    idempotency_key=f"{key}:create",
+)
+retrieved = client.checkouts.retrieve(created.external_id)
+assert retrieved.external_id == created.external_id
+client.checkouts.cancel(created.external_id, idempotency_key=f"{key}:cancel")
+print("stripe sandbox smoke: ok")
+PY
+```
+
+`secret-manager read ...` é um placeholder para o CLI aprovado pela sua
+organização; não cole a chave no histórico do shell. Sem
+`DJC_STRIPE_API_KEY`, registre o smoke como ignorado por ausência de credencial,
+nunca como aprovado e nunca substitua a chave por um valor inventado.
 
 ## Reverter com segurança
 

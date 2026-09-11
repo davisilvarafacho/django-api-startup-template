@@ -14,3 +14,49 @@ Django — converge para o mesmo envelope de erro, com código estável tipado,
 mensagem traduzível e `request_id` de correlação. Ver `docs/reference/api.md`
 para o contrato e `.ai/brainstorming/spec/2026-07-28-api-errors-design.md`
 para a spec completa.
+
+## Organizações, assinaturas e faturamento
+
+`apps.organizacoes` é dono do tenant, dos vínculos e do contexto imutável
+anexado à requisição. `apps.assinaturas` é o núcleo comercial: catálogo
+versionado, contratos, propostas, seats e política de acesso. O subapp
+`apps.assinaturas.subapps.faturamento` depende desse núcleo e é o único código
+da aplicação autorizado a importar `django_checkouts`; o núcleo comercial não
+depende do subapp nem de um gateway.
+
+Essa direção mantém plano gratuito, trial e contratos enterprise locais
+operacionais sem Stripe. Operações pagas usam fases explícitas de preparação,
+I/O e confirmação. Locks e transações protegem somente o estado local; a chamada
+externa ocorre fora de `atomic`, com chave idempotente derivada da organização e
+do pedido. Depois do I/O, a confirmação relê revisão e snapshot. Resultado
+remoto divergente ou incerto não é transformado em sucesso ou falha presumida:
+fica para reconciliação.
+
+O template fixa `django-checkouts[stripe]==1.0.1` da PyPI. A biblioteca é
+stateless e normaliza checkouts, setups, assinaturas, faturas, webhooks e
+eventos; os models e as decisões contratuais continuam locais. Nenhum módulo do
+template importa o SDK `stripe` ou persiste o campo diagnóstico `raw` da
+biblioteca.
+
+### Entrada assíncrona e RLS
+
+O webhook autentica o corpo bruto antes de normalizar uma allowlist de fatos
+financeiros. Corpo, headers, e-mail, dados de cartão e segredo não são
+persistidos. A unicidade global `(variante, identificador_evento)` permite
+deduplicar antes de conhecer o tenant; uma referência assinada ou o mapeamento
+de assinatura resolve a organização. Só então o evento entra no contexto RLS e
+é entregue ao processador.
+
+A fronteira anterior ao tenant usa funções PostgreSQL `SECURITY DEFINER` com
+`search_path` fixo. A role `billing_ingress_runtime` pode somente executar essas
+interfaces estreitas; ela não possui privilégios diretos nas tabelas. As
+funções pertencem a `billing_functions_owner`, role `NOLOGIN` que nunca é
+concedida ao web ou worker. Checkouts, faturas, eventos roteados e registros de
+operação usam `FORCE ROW LEVEL SECURITY`.
+
+O processador recupera o recurso atual pela interface normalizada antes de
+aplicar efeitos monotônicos. Falhas temporárias usam backoff exponencial e no
+máximo oito tentativas automáticas por ciclo. Falhas `RECONCILE_FIRST`, eventos
+abandonados e a varredura periódica convergem no mesmo ingresso e processador;
+pedidos manuais de retry ou reconciliação são explícitos, idempotentes e
+auditados.
