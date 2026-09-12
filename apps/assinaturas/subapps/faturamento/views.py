@@ -82,6 +82,16 @@ class _FaturamentoSessionView(APIView):
             raise APIError(OrganizationErrorCode.ROLE_INSUFFICIENT, status_code=status.HTTP_403_FORBIDDEN)
 
 
+class _PaginacaoFinanceira(CustomPagination):
+    page_size = 50
+    max_page_size = 50
+
+    def get_page_size(self, request):
+        if request.query_params.get(self.page_size_query_param) == "all":
+            return self.page_size
+        return super().get_page_size(request)
+
+
 def _executar(criacao):
     try:
         return criar_checkout(criacao)
@@ -179,28 +189,26 @@ class CriarCheckoutAssinaturaView(_FaturamentoSessionView):
 
 @regularizacao_assinatura
 class ListarCheckoutsView(_FaturamentoSessionView):
-    pagination_class = CustomPagination
+    pagination_class = _PaginacaoFinanceira
 
     @document_checkout_list
     def get(self, request):
         self.exigir_papel(request, Papel.ADMINISTRADOR)
         checkouts = CheckoutCobranca.objects.order_by("-created_at", "-pk")
         paginator = self.pagination_class()
-        paginator.page_size = 50
         page = paginator.paginate_queryset(checkouts, request, view=self)
         return paginator.get_paginated_response(CheckoutResponseSerializer(page, many=True).data)
 
 
 @regularizacao_assinatura
 class ListarFaturasView(_FaturamentoSessionView):
-    pagination_class = CustomPagination
+    pagination_class = _PaginacaoFinanceira
 
     @document_invoice_list
     def get(self, request):
         self.exigir_papel(request, Papel.ADMINISTRADOR)
         faturas = FaturaAssinatura.objects.order_by("-created_at", "-pk")
         paginator = self.pagination_class()
-        paginator.page_size = 50
         page = paginator.paginate_queryset(faturas, request, view=self)
         return paginator.get_paginated_response(FaturaResponseSerializer(page, many=True).data)
 

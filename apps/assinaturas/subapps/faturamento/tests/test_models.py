@@ -312,6 +312,18 @@ def test_check_de_configuracao_malformada_retorna_error(config):
     assert isinstance(resultado[0], Error)
 
 
+def test_check_de_credenciais_continua_fail_closed_em_producao():
+    with override_settings(
+        IN_PRODUCTION=True,
+        CHECKOUT_VARIANTS={"stripe": ("gateway", {"api_key": "", "webhook_secret": ""})},
+        BILLING_CHECKOUT_SUCCESS_URL="https://app.example.com/sucesso",
+        BILLING_CHECKOUT_CANCEL_URL="https://app.example.com/cancelado",
+    ):
+        resultado = configuracao_faturamento_check(None)
+
+    assert [erro.id for erro in resultado] == ["faturamento.E001"]
+
+
 def _mock_role_check(modo, owner_set, runtime_set, *, owner_outbound=False, runtime_replication=False, catalogo=(True, True, 2)):
     cursor_patch = patch("apps.assinaturas.subapps.faturamento.checks.connection.cursor")
     cursor_factory = cursor_patch.start()
@@ -398,6 +410,16 @@ def test_listagens_financeiras_paginam_sem_expor_queryset_bruto(view_class, mode
     assert view.get(request) == {"results": []}
 
 
+@pytest.mark.parametrize("view_class", [ListarCheckoutsView, ListarFaturasView])
+def test_paginacao_financeira_aceita_lotes_menores_mas_nunca_ultrapassa_cinquenta(view_class):
+    paginator = view_class.pagination_class()
+
+    assert paginator.get_page_size(SimpleNamespace(query_params={})) == 50
+    assert paginator.get_page_size(SimpleNamespace(query_params={"size": "7"})) == 7
+    assert paginator.get_page_size(SimpleNamespace(query_params={"size": "51"})) == 50
+    assert paginator.get_page_size(SimpleNamespace(query_params={"size": "all"})) == 50
+
+
 def test_check_deploy_rejeita_nomes_e_modo_arbitrarios():
     with override_settings(BILLING_INGRESS_DATABASE_ROLE="role-arbitraria"):
         assert [erro.id for erro in role_ingresso_check(None)] == ["faturamento.E002"]
@@ -480,6 +502,13 @@ def test_check_deploy_rejeita_nomes_e_modo_arbitrarios():
         (
             "ALTER POLICY checkout_recovery_owner_select ON checkout_cobranca USING (false)",
             "ALTER POLICY checkout_recovery_owner_select ON checkout_cobranca USING (true)",
+        ),
+        (
+            "DROP POLICY checkout_recovery_owner_select ON checkout_cobranca; "
+            "CREATE POLICY fatura_compensatoria_permissiva ON fatura_assinatura FOR SELECT USING (true)",
+            "DROP POLICY fatura_compensatoria_permissiva ON fatura_assinatura; "
+            "CREATE POLICY checkout_recovery_owner_select ON checkout_cobranca "
+            "FOR SELECT TO billing_functions_owner USING (true)",
         ),
         (
             "ALTER POLICY isolamento_organizacao ON fatura_assinatura USING (true) WITH CHECK (true)",

@@ -87,6 +87,22 @@ def role_ingresso_check(app_configs, **kwargs):
                  CROSS JOIN LATERAL aclexplode(att.attacl) a
                  JOIN roles_faturamento r ON r.oid=a.grantee
                  WHERE c.relnamespace='public'::regnamespace
+               ), policies_esperadas(relname,polname) AS (VALUES
+                 ('evento_cobranca','evento_tenant'),
+                 ('evento_cobranca','evento_interface_definidor_select'),
+                 ('evento_cobranca','evento_interface_definidor_insert'),
+                 ('evento_cobranca','evento_interface_definidor_update'),
+                 ('checkout_cobranca','isolamento_organizacao'),
+                 ('checkout_cobranca','checkout_recovery_owner_select'),
+                 ('fatura_assinatura','isolamento_organizacao'),
+                 ('reabertura_evento_cobranca','isolamento_organizacao'),
+                 ('solicitacao_reconciliacao_cobranca','isolamento_organizacao')
+               ), policies_encontradas(relname,polname) AS (
+                 SELECT c.relname,p.polname FROM pg_policy p
+                 JOIN pg_class c ON c.oid=p.polrelid
+                 WHERE c.relnamespace='public'::regnamespace
+                   AND c.relname IN ('evento_cobranca','checkout_cobranca','fatura_assinatura','reabertura_evento_cobranca',
+                                     'solicitacao_reconciliacao_cobranca')
                ), policies_tenant(relname,polname) AS (VALUES
                  ('evento_cobranca','evento_tenant'),
                  ('checkout_cobranca','isolamento_organizacao'),
@@ -131,10 +147,16 @@ def role_ingresso_check(app_configs, **kwargs):
                         AND c.relname IN ('evento_cobranca','checkout_cobranca','fatura_assinatura','reabertura_evento_cobranca',
                                           'solicitacao_reconciliacao_cobranca')
                         AND c.relrowsecurity AND c.relforcerowsecurity) = 5
-                 AND (SELECT count(*) FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid
-                      WHERE c.relnamespace='public'::regnamespace
-                        AND c.relname IN ('evento_cobranca','checkout_cobranca','fatura_assinatura','reabertura_evento_cobranca',
-                                          'solicitacao_reconciliacao_cobranca')) = 9
+                 AND NOT EXISTS (
+                   SELECT 1 FROM policies_esperadas e
+                   LEFT JOIN policies_encontradas a ON (a.relname,a.polname)=(e.relname,e.polname)
+                   WHERE a.polname IS NULL
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM policies_encontradas a
+                   LEFT JOIN policies_esperadas e ON (e.relname,e.polname)=(a.relname,a.polname)
+                   WHERE e.polname IS NULL
+                 )
                  AND (SELECT count(*) FROM policies_tenant e JOIN pg_class c ON c.relname=e.relname
                       AND c.relnamespace='public'::regnamespace
                       JOIN pg_policy p ON p.polrelid=c.oid AND p.polname=e.polname) = 5

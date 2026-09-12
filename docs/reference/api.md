@@ -159,7 +159,7 @@ conta, o step-up também exige o segundo fator. Valores são inteiros em centavo
 | --- | --- |
 | `POST /assinatura/checkouts/` | Proprietário. Cria checkout recorrente para contratação (`finalidade=10`), alteração (`20`) ou proposta aceita (`30`). Recebe `chave_idempotencia` e a referência exigida pela finalidade. |
 | `GET /faturamento/checkouts/` | Proprietário ou administrador. Lista até 50 checkouts por página, do mais recente para o mais antigo. |
-| `GET /faturamento/faturas/` | Proprietário ou administrador. Lista o estado normalizado das faturas, sem expor payload do gateway. |
+| `GET /faturamento/faturas/` | Proprietário ou administrador. Lista até 50 estados normalizados de fatura por página, sem expor payload do gateway. |
 | `POST /faturamento/forma-pagamento/checkouts/` | Proprietário ou administrador com autenticação recente. Abre um setup hospedado, sem item ou cobrança, usando `chave_idempotencia`. |
 | `POST /faturamento/webhooks/{variante}/` | Pública e sem autenticação de sessão. Autentica os bytes originais pela assinatura do gateway; para Stripe, a variante é `stripe`. |
 
@@ -177,6 +177,11 @@ idempotente (`received=true`, `duplicate=false|true`). Assinatura, variante ou
 protocolo inválido respondem `400`; reutilizar o mesmo identificador remoto com
 conteúdo autenticado diferente responde `409 billing.webhook_collision`. O
 schema deliberadamente não descreve nem persiste o corpo bruto do provedor.
+
+As duas listagens financeiras aceitam `size` inteiro positivo para reduzir a
+página, mas sempre limitam a resposta a 50 registros. `size=all` não é
+suportado e nunca desativa a paginação; valores inválidos usam a página padrão
+de 50 registros.
 
 ## MFA
 

@@ -26,11 +26,13 @@ IN_DEVELOPMENT = ENVIROMENT == "development"
 
 IN_PRODUCTION = ENVIROMENT == "production"
 
+IN_TEST = ENVIROMENT == "test"
+
 EXECUTION = get_env_var("DJANGO_EXECUTION_MODE")
 
 # ambiente efetivo usado para carregar apps/middlewares/storages específicos.
 # sempre resolve para um valor suportado por `configure_enviroment`.
-TESTING = "pytest" in sys.modules or "test" in sys.argv
+TESTING = IN_TEST or "pytest" in sys.modules or "test" in sys.argv
 
 if TESTING:
     CONFIG_ENVIRONMENT = "test"
@@ -346,6 +348,10 @@ AUTHENTICATION_BACKENDS = [
 # esconde os excluídos, `get_by_natural_key()` continua enxergando um único
 # registro por e-mail.
 SILENCED_SYSTEM_CHECKS = ["guardian.W001", "auth.W004"]
+if CONFIG_ENVIRONMENT == "test":
+    # Os gates determinísticos não fazem I/O com o gateway. As credenciais
+    # continuam obrigatórias e fail-closed em qualquer processo não-test.
+    SILENCED_SYSTEM_CHECKS.extend(["django_checkouts.E001", "faturamento.E001"])
 
 # Não criar o usuário anônimo do guardian (o modelo de usuário usa e-mail como
 # username e o isolamento por organização torna esse registro desnecessário).

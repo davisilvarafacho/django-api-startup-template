@@ -48,6 +48,42 @@ def test_rls_connection_context_reset_is_disabled_during_tests():
     assert settings.DJANGO_RLS["RESET_CONTEXT_ON_CONNECT"] is False
 
 
+def test_explicit_test_environment_selects_test_profile_and_silences_missing_billing_credentials():
+    environment = {
+        **os.environ,
+        "DJANGO_ENVIRONMENT": "test",
+        "DJANGO_SECRET_KEY": "test-secret",
+        "DJANGO_SETTINGS_MODULE": "api.settings",
+    }
+    for key in ("STRIPE_API_KEY", "STRIPE_WEBHOOK_SECRET", "DJC_STRIPE_API_KEY"):
+        environment.pop(key, None)
+
+    result = _read_setting(
+        "(settings.CONFIG_ENVIRONMENT, settings.TESTING, "
+        "'django_checkouts.E001' in settings.SILENCED_SYSTEM_CHECKS, "
+        "'faturamento.E001' in settings.SILENCED_SYSTEM_CHECKS)",
+        environment,
+    )
+
+    assert result == "('test', True, True, True)"
+
+
+def test_production_does_not_silence_missing_billing_credentials():
+    environment = {
+        **os.environ,
+        "DJANGO_ENVIRONMENT": "production",
+        "DJANGO_SECRET_KEY": "test-secret",
+        "DJANGO_SETTINGS_MODULE": "api.settings",
+    }
+
+    result = _read_setting(
+        "('django_checkouts.E001' in settings.SILENCED_SYSTEM_CHECKS, 'faturamento.E001' in settings.SILENCED_SYSTEM_CHECKS)",
+        environment,
+    )
+
+    assert result == "(False, False)"
+
+
 def test_alias_migration_exige_credenciais_completas():
     base = {**os.environ, "DJANGO_SETTINGS_MODULE": "api.settings", "DJANGO_SECRET_KEY": "test"}
     for key in ("BILLING_MIGRATION_DATABASE_USER", "BILLING_MIGRATION_DATABASE_PASSWORD"):

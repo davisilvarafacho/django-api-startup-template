@@ -2,10 +2,12 @@
 
 Este procedimento inicializa contratos para organizações criadas antes da
 política comercial e verifica o estado necessário para ativar o middleware.
-Execute os comandos com a credencial normal da aplicação. A leitura global usa
-um selector `SECURITY INVOKER`, com `search_path` fixo e privilégios mínimos;
-ele consulta cada tenant sob sua própria policy `FORCE RLS` e restaura o
-contexto anterior. O comando entra no contexto RLS de cada organização antes
+Execute `sync_plans` e `initialize_subscriptions` com a credencial normal da
+aplicação. `make billing-migrate` é a exceção: usa somente o alias
+`billing_migration` e a credencial DDL dedicada descrita abaixo. A leitura
+global usa um selector `SECURITY INVOKER`, com `search_path` fixo e privilégios
+mínimos; ele consulta cada tenant sob sua própria policy `FORCE RLS` e restaura
+o contexto anterior. O comando entra no contexto RLS de cada organização antes
 de criar o contrato.
 
 O projeto instala a release publicada
@@ -39,19 +41,29 @@ aplicação, injete-a somente durante a janela de migration e revogue ou rotacio
 o segredo ao final.
 
 Não conceda `billing_functions_owner` a web ou worker, nem
-`billing_ingress_runtime` ao web. A role owner recebe apenas os
-privilégios internos necessários às duas funções e às policies dedicadas. A
-role runtime recebe `USAGE` no schema e `EXECUTE` nas interfaces estreitas
-`faturamento_receber_evento` e `faturamento_rotear_evento`, sem grants em
-tabelas, colunas ou sequências. O worker faz `SET ROLE
-billing_ingress_runtime`; a função executa como `billing_functions_owner`.
+`billing_ingress_runtime` ao web. A role owner recebe apenas os privilégios
+internos necessários às quatro funções e às policies dedicadas. A role runtime
+recebe `USAGE` no schema e `EXECUTE`, sem grants em tabelas, colunas ou
+sequências, nestas interfaces `SECURITY DEFINER` atuais:
+
+- `faturamento_ingress_evento(text,text,text,text,text,text,boolean,jsonb,text,timestamptz)`;
+- `faturamento_rotear_evento_destino(bigint,bigint)`;
+- `faturamento_claim_recovery(integer,timestamptz)`;
+- `faturamento_destino_reconcile(bigint)`.
+
+Todas pertencem a `billing_functions_owner`, fixam
+`search_path=pg_catalog,pg_temp` e revogam `EXECUTE` de `PUBLIC`. O worker faz
+`SET ROLE billing_ingress_runtime`; a função executa como
+`billing_functions_owner`. Os nomes antigos `faturamento_receber_evento` e
+`faturamento_rotear_evento` não pertencem ao catálogo atual.
 
 Configure `BILLING_DATABASE_MODE=web`, `ingress` ou `migration` em cada
 processo. O check de deploy prova atributos, memberships transitivas, owner das
-funções e roles das policies: web não pode assumir nenhuma role e ingress pode
-assumir runtime, mas nunca owner. No modo migration o check exige acesso ao
-owner e trata a credencial como a trust boundary administrativa. Use o alias
-explícito e nunca substitua automaticamente `DATABASE_USER`:
+quatro funções e o conjunto exato de policies por tabela: web não pode assumir
+nenhuma role e ingress pode assumir runtime, mas nunca owner. No modo migration
+o check exige acesso ao owner e trata a credencial como a trust boundary
+administrativa. Use o alias explícito e nunca substitua automaticamente
+`DATABASE_USER`:
 
 ```bash
 make billing-migrate
@@ -115,6 +127,9 @@ modo de processo. O modo web não pode assumir nenhuma role financeira; o worker
 de ingresso pode assumir apenas `billing_ingress_runtime`; migrations usam a
 credencial DDL efêmera. Uma configuração sem as duas credenciais Stripe falha
 com `django_checkouts.E001`/`faturamento.E001` e não deve receber tráfego.
+Somente `DJANGO_ENVIRONMENT=test` silencia esses dois checks de presença para a
+suíte determinística; os checks continuam registrados e nenhum outro ambiente
+recebe essa exceção.
 
 ## Verificar jobs e acesso
 
@@ -136,6 +151,14 @@ O faturamento acrescenta estes jobs:
   máximo 100 eventos abandonados ou cujo retry venceu;
 - `faturamento.reconciliar_eventos_stripe`, a cada 15 minutos, percorre uma
   janela de 20 minutos com 5 minutos de sobreposição e deduplica pelo ID remoto.
+
+Outras três tasks financeiras não pertencem ao Beat:
+`faturamento.processar_evento_cobranca`,
+`faturamento.reconciliar_evento_cobranca` e
+`faturamento.executar_reconciliacao_operacional`. Elas são disparadas pela
+ingestão, pelo recovery ou por uma solicitação operacional auditada. O recovery
+agendado usa lote padrão de 100; a função SQL aceita explicitamente limites de
+1 a 1.000 para invocações operacionais controladas.
 
 O retry automático usa backoff exponencial, começa em 30 segundos, respeita o
 `retry_after` normalizado quando presente e para depois de oito tentativas no
@@ -237,15 +260,30 @@ Se a falha ocorrer antes do `--apply`, não há escrita para desfazer. Se ocorre
 durante a inicialização, preserve os contratos já criados e repita o comando;
 apagá-los criaria uma janela de indisponibilidade e não é necessário.
 
-Para rollback da aplicação, retire a versão nova de tráfego e volte o código
-mantendo as migrations aplicadas. O schema e os contratos gratuitos são
-compatíveis como dados históricos. Pause os dois schedules comerciais se o
-código anterior não registrar essas tasks.
+O rollback preferido é retirar a versão nova de tráfego e voltar o código
+mantendo o schema aplicado, mas somente quando a versão anterior tiver sido
+validada contra esse schema. Pause os quatro schedules comerciais — os dois de
+assinatura e os dois de faturamento listados acima — se a versão anterior não
+registrar suas tasks. Antes de qualquer rollback de schema, interrompa a
+ingestão de webhooks, drene as três tasks financeiras disparadas por evento e
+pare os workers que poderiam escrever durante a manutenção.
 
-Só reverta as migrations `0012`, `0011` e `0010`, nessa ordem, em uma
-manutenção separada, depois de
-confirmar que não existem alterações `FALLBACK_TRIAL` nem transições que
-dependam das novas proteções. A reversão de `0012` remove o selector e restaura
-a guarda da `0011`; a reversão de `0011` remove os triggers novos e restaura o
-trigger contratual anterior. Fazê-las enquanto workers ou tráfego continuam
-ativos reabre uma janela de bypass e não é um rollback seguro.
+Não use uma sequência de números de migration sem o app e não remova
+manualmente funções, triggers ou policies. Primeiro faça backup, teste a
+restauração e inspecione o grafo efetivamente aplicado com
+`uv run python manage.py showmigrations assinaturas faturamento --plan`,
+identificando cada alvo como `app_label.nome_completo`. O grafo atual
+termina em `assinaturas.0014_permitir_ativacao_proposta_paga` e
+`faturamento.0011_fatos_invoice_e_lease_recovery`; a cadeia de faturamento
+depende de `assinaturas.0013_proteger_revisao_e_upserts`, portanto reverter
+assinaturas abaixo desse ponto também exige um plano explícito para toda a
+cadeia financeira.
+
+Rollback de banco é uma manutenção separada e potencialmente destrutiva. A
+reversão de `faturamento.0011_fatos_invoice_e_lease_recovery` converte fatos
+financeiros indisponíveis (`NULL`) em zero e remove o lease de recovery;
+`faturamento.0009_reconcile_first_conclusivo` remove auditorias automáticas; e
+`faturamento.0008_fronteira_recovery_e_rls_auditoria` desativa o RLS da tabela
+de reaberturas. Antes de aprovar qualquer alvo, confira esses impactos nos
+dados, gere o plano da versão a restaurar em homologação e valide depois as
+quatro funções, ACLs, policies `FORCE RLS` e o `check --deploy --tag database`.
