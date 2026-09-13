@@ -30,6 +30,7 @@ from apps.organizacoes.schema import (
     document_organization_closure_post,
 )
 from apps.organizacoes.serializers import (
+    AceitarConviteResponseSerializer,
     AceitarConviteSerializer,
     ConviteCreateSerializer,
     ConviteSerializer,
@@ -203,7 +204,11 @@ class VinculoViewSet(
         return super().get_queryset().filter(organizacao_id=self.get_organizacao_id(), is_active=True).order_by("usuario__email")
 
     def perform_destroy(self, instance):
-        Vinculos.remover_vinculo(instance)
+        Vinculos.remover_vinculo(
+            instance,
+            ator=self.request.user,
+            validar_papel_ator=getattr(getattr(self.request, "auth", None), "type", None) != TokenType.API_KEY,
+        )
 
 
 class ConviteViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
@@ -243,10 +248,11 @@ class ConviteViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         vinculo = serializer.save()
+        response_serializer = AceitarConviteResponseSerializer(
+            {"organizacao": vinculo.organizacao, "vinculo": vinculo},
+            context={"request": request},
+        )
         return Response(
-            {
-                "organizacao": OrganizacaoSerializer(vinculo.organizacao, context={"request": request}).data,
-                "vinculo": VinculoSerializer(vinculo, context={"request": request}).data,
-            },
+            response_serializer.data,
             status=status.HTTP_200_OK,
         )

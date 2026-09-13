@@ -36,10 +36,10 @@ class Vinculos:
         *,
         organizacao: Organizacao,
         usuario: Usuario,
-        papel_minimo: Papel,
+        papel_minimo: Papel | None,
         using: str = "default",
     ) -> Vinculo:
-        """Revalida vínculo e papel sob lock, depois do lock da organização."""
+        """Revalida conta/vínculo e, quando aplicável, o papel sob lock."""
         if not transaction.get_connection(using).in_atomic_block:
             raise RuntimeError("A revalidação de vínculo exige uma seção crítica já aberta.")
         if usuario.is_deleted or not usuario.is_active or usuario.exclusao_agendada_para is not None:
@@ -49,7 +49,7 @@ class Vinculos:
             raise APIError(OrganizationErrorCode.MEMBERSHIP_REQUIRED, status_code=403)
         if not vinculo.is_active:
             raise APIError(OrganizationErrorCode.MEMBERSHIP_INACTIVE, status_code=403)
-        if vinculo.papel < papel_minimo:
+        if papel_minimo is not None and vinculo.papel < papel_minimo:
             raise APIError(OrganizationErrorCode.ROLE_INSUFFICIENT, status_code=403)
         return vinculo
 
@@ -66,14 +66,26 @@ class Vinculos:
         papel: Papel,
         convidado_por: Usuario | None,
         expira_em=None,
+        ator: Usuario | None = None,
+        validar_papel_ator: bool = True,
     ) -> Convite:
         erro_capacidade = None
         convite_criado = None
         using = organizacao._state.db or "default"
         with transaction.atomic(using=using):
-            usuarios_bloqueados = lock_user_accounts((convidado_por,), using=using)
+            usuarios_bloqueados = lock_user_accounts((ator, convidado_por), using=using)
+            ator_bloqueado = usuarios_bloqueados.get(ator.pk) if ator is not None else None
             convidado_por_bloqueado = usuarios_bloqueados.get(convidado_por.pk) if convidado_por is not None else None
             organizacao = cls._bloquear_organizacao_aberta(organizacao.pk, using=using)
+            if ator_bloqueado is not None:
+                vinculo_ator = cls.bloquear_e_exigir_papel(
+                    organizacao=organizacao,
+                    usuario=ator_bloqueado,
+                    papel_minimo=Papel.GESTOR if validar_papel_ator else None,
+                    using=using,
+                )
+                if validar_papel_ator:
+                    cls._exigir_papel_concedivel(papel, vinculo_ator, mensagem="Você não pode convidar alguém para um papel acima do seu.")
             assinatura, papeis_isentos = cls._bloquear_contrato_corrente(organizacao)
             if assinatura is not None:
                 ocupacao = cls.calcular_ocupacao(organizacao, papeis_isentos)
@@ -174,17 +186,41 @@ class Vinculos:
         return vinculo
 
     @classmethod
-    def atualizar_convite(cls, convite: Convite, *, dados: dict) -> Convite:
+    def atualizar_convite(
+        cls,
+        convite: Convite,
+        *,
+        dados: dict,
+        ator: Usuario | None = None,
+        validar_papel_ator: bool = True,
+    ) -> Convite:
         """Atualiza convite sem permitir que papel/expiração burlem a capacidade."""
         if {"convidado_por", "convidado_por_id"} & dados.keys():
             raise ValueError("O campo convidado_por é imutável.")
         erro_capacidade = None
         convite_atualizado = None
-        with transaction.atomic():
-            organizacao = cls._bloquear_organizacao_aberta(convite.organizacao_id)
-            assinatura, papeis_isentos = cls._bloquear_contrato_corrente(organizacao)
-            convite_bloqueado = Convite.all_objects.select_for_update().get(pk=convite.pk, organizacao=organizacao)
+        using = convite._state.db or "default"
+        with transaction.atomic(using=using):
+            usuarios_bloqueados = lock_user_accounts((ator,), using=using)
+            ator_bloqueado = usuarios_bloqueados.get(ator.pk) if ator is not None else None
+            organizacao = cls._bloquear_organizacao_aberta(convite.organizacao_id, using=using)
+            vinculo_ator = None
+            if ator_bloqueado is not None:
+                vinculo_ator = cls.bloquear_e_exigir_papel(
+                    organizacao=organizacao,
+                    usuario=ator_bloqueado,
+                    papel_minimo=Papel.GESTOR if validar_papel_ator else None,
+                    using=using,
+                )
             novos_dados = dict(dados)
+            if validar_papel_ator and vinculo_ator is not None and "papel" in novos_dados:
+                cls._exigir_papel_concedivel(
+                    novos_dados["papel"],
+                    vinculo_ator,
+                    mensagem="Você não pode conceder um papel acima do seu.",
+                )
+            assinatura, papeis_isentos = cls._bloquear_contrato_corrente(organizacao)
+            convite_bloqueado = Convite.all_objects.using(using).select_for_update().get(pk=convite.pk, organizacao=organizacao)
             papel_pretendido = novos_dados.get("papel", convite_bloqueado.papel)
             expira_em_pretendido = novos_dados.get("expira_em", convite_bloqueado.expira_em)
 
@@ -220,7 +256,7 @@ class Vinculos:
             if erro_capacidade is None:
                 for campo, valor in novos_dados.items():
                     setattr(convite_bloqueado, campo, valor)
-                convite_bloqueado.save()
+                convite_bloqueado.save(using=using)
                 convite_atualizado = convite_bloqueado
 
         if erro_capacidade is not None:
@@ -229,7 +265,14 @@ class Vinculos:
         return convite_atualizado
 
     @classmethod
-    def atualizar_vinculo(cls, vinculo: Vinculo, *, dados: dict) -> Vinculo:
+    def atualizar_vinculo(
+        cls,
+        vinculo: Vinculo,
+        *,
+        dados: dict,
+        ator: Usuario | None = None,
+        validar_papel_ator: bool = True,
+    ) -> Vinculo:
         """Atualiza vínculo projetando qualquer mudança de papel sob os locks globais."""
         if {"usuario", "usuario_id"} & dados.keys():
             raise ValueError("O campo usuario é imutável.")
@@ -237,10 +280,26 @@ class Vinculos:
         vinculo_atualizado = None
         using = vinculo._state.db or "default"
         with transaction.atomic(using=using):
+            usuarios_bloqueados = lock_user_accounts((ator,), using=using)
+            ator_bloqueado = usuarios_bloqueados.get(ator.pk) if ator is not None else None
             organizacao = cls._bloquear_organizacao_aberta(vinculo.organizacao_id, using=using)
+            vinculo_ator = None
+            if ator_bloqueado is not None:
+                vinculo_ator = cls.bloquear_e_exigir_papel(
+                    organizacao=organizacao,
+                    usuario=ator_bloqueado,
+                    papel_minimo=Papel.ADMINISTRADOR if validar_papel_ator else None,
+                    using=using,
+                )
+            novos_dados = dict(dados)
+            if validar_papel_ator and vinculo_ator is not None and "papel" in novos_dados:
+                cls._exigir_papel_concedivel(
+                    novos_dados["papel"],
+                    vinculo_ator,
+                    mensagem="Você não pode conceder um papel acima do seu.",
+                )
             assinatura, papeis_isentos = cls._bloquear_contrato_corrente(organizacao)
             vinculo_bloqueado = Vinculo.all_objects.using(using).select_for_update().get(pk=vinculo.pk, organizacao=organizacao)
-            novos_dados = dict(dados)
             times = novos_dados.pop("times", None)
             papel_pretendido = novos_dados.get("papel", vinculo_bloqueado.papel)
             cls._proteger_ultimo_proprietario(
@@ -282,11 +341,26 @@ class Vinculos:
         return vinculo_atualizado
 
     @classmethod
-    def remover_vinculo(cls, vinculo: Vinculo) -> None:
+    def remover_vinculo(
+        cls,
+        vinculo: Vinculo,
+        *,
+        ator: Usuario | None = None,
+        validar_papel_ator: bool = True,
+    ) -> None:
         """Remove logicamente um vínculo sem abandonar a organização sem dono."""
         using = vinculo._state.db or "default"
         with transaction.atomic(using=using):
+            usuarios_bloqueados = lock_user_accounts((ator,), using=using)
+            ator_bloqueado = usuarios_bloqueados.get(ator.pk) if ator is not None else None
             organizacao = cls._bloquear_organizacao_aberta(vinculo.organizacao_id, using=using)
+            if ator_bloqueado is not None:
+                cls.bloquear_e_exigir_papel(
+                    organizacao=organizacao,
+                    usuario=ator_bloqueado,
+                    papel_minimo=Papel.ADMINISTRADOR if validar_papel_ator else None,
+                    using=using,
+                )
             vinculo_bloqueado = Vinculo.all_objects.using(using).select_for_update().get(pk=vinculo.pk, organizacao=organizacao)
             cls._proteger_ultimo_proprietario(
                 vinculo_bloqueado,
@@ -296,6 +370,16 @@ class Vinculos:
                 using=using,
             )
             vinculo_bloqueado.delete(using=using)
+
+    @staticmethod
+    def _exigir_papel_concedivel(papel: int | Papel, vinculo_ator: Vinculo, *, mensagem: str) -> None:
+        if papel > vinculo_ator.papel:
+            raise APIError(
+                OrganizationErrorCode.ROLE_INSUFFICIENT,
+                status_code=422,
+                field="papel",
+                message=mensagem,
+            )
 
     @staticmethod
     def _proteger_ultimo_proprietario(

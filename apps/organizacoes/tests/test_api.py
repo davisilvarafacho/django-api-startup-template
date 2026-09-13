@@ -556,6 +556,47 @@ def test_api_key_sem_scope_teams_read_e_recusada():
     assert response.data["errors"][0]["code"] == "auth.insufficient_scope"
 
 
+def test_api_key_com_scopes_crud_ignora_papel_pessoal_em_convites_e_vinculos():
+    responsavel = criar_usuario(email="api-key-crud-responsavel@example.com")
+    proprietario = criar_usuario(email="api-key-crud-owner@example.com")
+    alvo = criar_usuario(email="api-key-crud-alvo@example.com")
+    organizacao = Organizacao.objects.create(nome="Org API key CRUD", slug="org-api-key-crud")
+    vincular(responsavel, organizacao, Papel.MEMBRO)
+    vincular(proprietario, organizacao, Papel.PROPRIETARIO)
+    vinculo_alvo = vincular(alvo, organizacao, Papel.MEMBRO)
+    client = client_com_api_key(
+        responsavel,
+        ["invitations:create", "invitations:update", "memberships:update", "memberships:delete"],
+        organizacao,
+    )
+
+    criacao = client.post(
+        "/convites/",
+        {"email": "api-key-crud-convite@example.com", "papel": Papel.MEMBRO},
+        format="json",
+    )
+    convite = Convite.objects.get(email="api-key-crud-convite@example.com")
+    atualizacao_convite = client.patch(
+        f"/convites/{convite.pk}/",
+        {"papel": Papel.PROPRIETARIO},
+        format="json",
+    )
+    atualizacao_vinculo = client.patch(
+        f"/vinculos/{vinculo_alvo.pk}/",
+        {"papel": Papel.GESTOR},
+        format="json",
+    )
+    remocao_vinculo = client.delete(f"/vinculos/{vinculo_alvo.pk}/")
+
+    assert criacao.status_code == status.HTTP_201_CREATED
+    assert atualizacao_convite.status_code == status.HTTP_200_OK
+    assert atualizacao_vinculo.status_code == status.HTTP_200_OK
+    assert remocao_vinculo.status_code == status.HTTP_204_NO_CONTENT
+    convite.refresh_from_db()
+    assert convite.papel == Papel.PROPRIETARIO
+    assert Vinculo.objects.filter(pk=vinculo_alvo.pk).exists() is False
+
+
 def test_api_key_nao_atualiza_email_de_faturamento_mesmo_com_scope():
     responsavel = criar_usuario(email="api-key-email-faturamento@example.com", email_verificado_em=timezone.now())
     organizacao = Organizacao.objects.create(

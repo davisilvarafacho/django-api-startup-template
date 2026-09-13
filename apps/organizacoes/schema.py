@@ -7,6 +7,7 @@ from apps.api.core.errors import CoreErrorCode, ValidationErrorCode
 from apps.api.core.schema import document_error_codes
 from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.serializers import (
+    AceitarConviteResponseSerializer,
     AceitarConviteSerializer,
     EncerramentoAgendadoResponseSerializer,
     OrganizacaoEmailFaturamentoSerializer,
@@ -63,7 +64,7 @@ document_organization_billing_email_update = extend_schema(
 document_invitation_accept = extend_schema(
     request=AceitarConviteSerializer,
     responses={
-        200: AceitarConviteSerializer,
+        200: AceitarConviteResponseSerializer,
         403: document_error_codes(AccountErrorCode.EMAIL_NOT_VERIFIED),
     },
 )

@@ -71,10 +71,18 @@ def test_atualizacao_email_faturamento_documenta_body_e_erros_reais():
         assert "validation.required" in operation["responses"]["422"]["description"]
 
 
-def test_aceite_de_convite_documenta_precondicao_de_email_verificado():
+def test_aceite_de_convite_documenta_payload_de_resposta_e_precondicao_de_email_verificado():
     schema = SchemaGenerator(patterns=organizacoes_urls.urlpatterns).get_schema(request=None, public=True)
     post = schema["paths"]["/convites/aceitar/"]["post"]
 
+    assert post["requestBody"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/AceitarConvite"}
+    assert post["responses"]["200"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/AceitarConviteResponse"}
+    componente = schema["components"]["schemas"]["AceitarConviteResponse"]
+    assert componente["required"] == ["organizacao", "vinculo"]
+    assert componente["properties"] == {
+        "organizacao": {"$ref": "#/components/schemas/Organizacao"},
+        "vinculo": {"$ref": "#/components/schemas/Vinculo"},
+    }
     assert "account.email_not_verified" in post["responses"]["403"]["description"]
 
 

@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from apps.api.autenticacao.models import TokenType
 from apps.api.core.errors import APIError
 from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.memberships import Vinculos
@@ -92,6 +93,8 @@ class VinculoSerializer(serializers.ModelSerializer):
 
     def validate_papel(self, papel):
         request = self.context["request"]
+        if getattr(getattr(request, "auth", None), "type", None) == TokenType.API_KEY:
+            return papel
         if papel > request.tenant.role:
             raise APIError(
                 OrganizationErrorCode.ROLE_INSUFFICIENT,
@@ -102,7 +105,13 @@ class VinculoSerializer(serializers.ModelSerializer):
         return papel
 
     def update(self, instance, validated_data):
-        return Vinculos.atualizar_vinculo(instance, dados=validated_data)
+        request = self.context["request"]
+        return Vinculos.atualizar_vinculo(
+            instance,
+            dados=validated_data,
+            ator=request.user,
+            validar_papel_ator=getattr(getattr(request, "auth", None), "type", None) != TokenType.API_KEY,
+        )
 
 
 class ConviteSerializer(serializers.ModelSerializer):
@@ -125,7 +134,13 @@ class ConviteSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "convidado_por", "aceito_em", "pendente", "expirado"]
 
     def update(self, instance, validated_data):
-        return Vinculos.atualizar_convite(instance, dados=validated_data)
+        request = self.context["request"]
+        return Vinculos.atualizar_convite(
+            instance,
+            dados=validated_data,
+            ator=request.user,
+            validar_papel_ator=getattr(getattr(request, "auth", None), "type", None) != TokenType.API_KEY,
+        )
 
 
 class ConviteCreateSerializer(ConviteSerializer):
@@ -136,6 +151,8 @@ class ConviteCreateSerializer(ConviteSerializer):
 
     def validate_papel(self, papel):
         request = self.context["request"]
+        if getattr(getattr(request, "auth", None), "type", None) == TokenType.API_KEY:
+            return papel
         if papel > request.tenant.role:
             raise APIError(
                 OrganizationErrorCode.ROLE_INSUFFICIENT,
@@ -148,7 +165,13 @@ class ConviteCreateSerializer(ConviteSerializer):
     def create(self, validated_data):
         organizacao_id = validated_data.pop("organizacao_id")
         organizacao = Organizacao.objects.get(pk=organizacao_id)
-        return Vinculos.criar_convite(organizacao=organizacao, **validated_data)
+        request = self.context["request"]
+        return Vinculos.criar_convite(
+            organizacao=organizacao,
+            ator=request.user,
+            validar_papel_ator=getattr(getattr(request, "auth", None), "type", None) != TokenType.API_KEY,
+            **validated_data,
+        )
 
 
 class AceitarConviteSerializer(serializers.Serializer):
@@ -181,3 +204,8 @@ class AceitarConviteSerializer(serializers.Serializer):
         convite = self.validated_data["token"]
         usuario = self.context["request"].user
         return Vinculos.aceitar_convite(convite, usuario)
+
+
+class AceitarConviteResponseSerializer(serializers.Serializer):
+    organizacao = OrganizacaoSerializer()
+    vinculo = VinculoSerializer()

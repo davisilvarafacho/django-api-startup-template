@@ -12,13 +12,13 @@ from apps.api.core.errors import APIError
 from apps.organizacoes.access import TenantAccessResolver
 from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.middleware import OrganizacaoMiddleware
-from apps.organizacoes.models import Organizacao, Papel, Time, Vinculo
+from apps.organizacoes.models import Convite, Organizacao, Papel, Time, Vinculo
 from apps.organizacoes.permissions import PapelMinimoPermission, TenantPermission
 from apps.organizacoes.rules import e_gestor
-from apps.organizacoes.serializers import ConviteCreateSerializer, VinculoSerializer
+from apps.organizacoes.serializers import ConviteCreateSerializer, ConviteSerializer, VinculoSerializer
 from apps.organizacoes.tests.test_api import client_autenticado
 from apps.organizacoes.tests.test_tenant_context import _contexto_liberado
-from apps.organizacoes.views import TimeViewSet
+from apps.organizacoes.views import TimeViewSet, VinculoViewSet
 from internal_frameworks.permission_cache.types import TenantAccess
 from tests.support.usuarios import criar_usuario
 
@@ -114,6 +114,98 @@ def test_convite_serializer_compares_tenant_role():
 
     assert excinfo.value.code == OrganizationErrorCode.ROLE_INSUFFICIENT.value
     assert "papel acima do seu" in excinfo.value.message
+
+
+@pytest.mark.django_db
+def test_criacao_de_convite_revalida_papel_atual_do_ator():
+    ator = criar_usuario(email="ator-convite@example.com")
+    organizacao = Organizacao.objects.create(nome="Acme", slug="acme-ator-convite")
+    vinculo_ator = Vinculo.objects.create(usuario=ator, organizacao=organizacao, papel=Papel.MEMBRO)
+    request = Mock(
+        user=ator,
+        tenant=TenantAccess(organizacao.pk, organizacao.slug, vinculo_ator.pk, Papel.GESTOR),
+    )
+    serializer = ConviteCreateSerializer(
+        data={"email": "new@example.com", "papel": Papel.MEMBRO},
+        context={"request": request},
+    )
+    serializer.is_valid(raise_exception=True)
+
+    with pytest.raises(APIError) as excinfo:
+        serializer.save(organizacao_id=organizacao.pk, convidado_por=ator)
+
+    assert excinfo.value.code == OrganizationErrorCode.ROLE_INSUFFICIENT.value
+    assert Convite.objects.filter(organizacao=organizacao, email="new@example.com").exists() is False
+
+
+@pytest.mark.django_db
+def test_atualizacao_de_convite_revalida_teto_do_papel_atual_do_ator():
+    ator = criar_usuario(email="ator-patch-convite@example.com")
+    organizacao = Organizacao.objects.create(nome="Acme", slug="acme-ator-patch-convite")
+    vinculo_ator = Vinculo.objects.create(usuario=ator, organizacao=organizacao, papel=Papel.GESTOR)
+    convite = Convite.objects.create(organizacao=organizacao, email="convite@example.com", papel=Papel.MEMBRO)
+    request = Mock(
+        user=ator,
+        tenant=TenantAccess(organizacao.pk, organizacao.slug, vinculo_ator.pk, Papel.PROPRIETARIO),
+    )
+    serializer = ConviteSerializer(
+        convite,
+        data={"papel": Papel.PROPRIETARIO},
+        partial=True,
+        context={"request": request},
+    )
+    serializer.is_valid(raise_exception=True)
+
+    with pytest.raises(APIError) as excinfo:
+        serializer.save()
+
+    assert excinfo.value.code == OrganizationErrorCode.ROLE_INSUFFICIENT.value
+    convite.refresh_from_db()
+    assert convite.papel == Papel.MEMBRO
+
+
+@pytest.mark.django_db
+def test_atualizacao_de_vinculo_revalida_teto_do_papel_atual_do_ator():
+    ator = criar_usuario(email="ator-patch-vinculo@example.com")
+    alvo = criar_usuario(email="alvo-patch-vinculo@example.com")
+    organizacao = Organizacao.objects.create(nome="Acme", slug="acme-ator-patch-vinculo")
+    vinculo_ator = Vinculo.objects.create(usuario=ator, organizacao=organizacao, papel=Papel.ADMINISTRADOR)
+    vinculo_alvo = Vinculo.objects.create(usuario=alvo, organizacao=organizacao, papel=Papel.MEMBRO)
+    request = Mock(
+        user=ator,
+        tenant=TenantAccess(organizacao.pk, organizacao.slug, vinculo_ator.pk, Papel.PROPRIETARIO),
+    )
+    serializer = VinculoSerializer(
+        vinculo_alvo,
+        data={"papel": Papel.PROPRIETARIO},
+        partial=True,
+        context={"request": request},
+    )
+    serializer.is_valid(raise_exception=True)
+
+    with pytest.raises(APIError) as excinfo:
+        serializer.save()
+
+    assert excinfo.value.code == OrganizationErrorCode.ROLE_INSUFFICIENT.value
+    vinculo_alvo.refresh_from_db()
+    assert vinculo_alvo.papel == Papel.MEMBRO
+
+
+@pytest.mark.django_db
+def test_remocao_de_vinculo_revalida_papel_atual_do_ator():
+    ator = criar_usuario(email="ator-delete-vinculo@example.com")
+    alvo = criar_usuario(email="alvo-delete-vinculo@example.com")
+    organizacao = Organizacao.objects.create(nome="Acme", slug="acme-ator-delete-vinculo")
+    Vinculo.objects.create(usuario=ator, organizacao=organizacao, papel=Papel.GESTOR)
+    vinculo_alvo = Vinculo.objects.create(usuario=alvo, organizacao=organizacao, papel=Papel.MEMBRO)
+    view = VinculoViewSet()
+    view.request = Mock(user=ator)
+
+    with pytest.raises(APIError) as excinfo:
+        view.perform_destroy(vinculo_alvo)
+
+    assert excinfo.value.code == OrganizationErrorCode.ROLE_INSUFFICIENT.value
+    assert Vinculo.objects.filter(pk=vinculo_alvo.pk).exists() is True
 
 
 @pytest.mark.django_db
