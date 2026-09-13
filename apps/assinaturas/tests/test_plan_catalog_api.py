@@ -10,9 +10,8 @@ from apps.api.core.errors import discover_error_codes
 from apps.api.core.route_markers import MARCADOR_SEM_TENANCY, rota_tem_marcador
 from apps.assinaturas import urls as assinaturas_urls
 from apps.assinaturas.models import Periodicidade, Plano, PrecoPlano, VersaoPlano
-from apps.assinaturas.tests.test_subscription_access_transitions import _trial
 from apps.assinaturas.views import CatalogoPlanosView
-from apps.organizacoes.models import Papel, Vinculo
+from apps.organizacoes.models import Organizacao, Papel, Vinculo
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
@@ -120,8 +119,8 @@ def test_get_planos_exige_autenticacao():
     assert APIClient().get("/planos/").status_code == 401
 
 
-def test_get_planos_recusa_api_key_sem_inventar_scope_de_catalogo():
-    organizacao, _ = _trial(slug="catalogo-api-key")
+def test_get_planos_recusa_api_key_sem_resolver_assinatura():
+    organizacao = Organizacao.objects.create(nome="Catálogo API key", slug="catalogo-api-key")
     usuario = criar_usuario(email="catalogo-api-key@example.com", email_verificado_em=timezone.now())
     Vinculo.objects.create(organizacao=organizacao, usuario=usuario, papel=Papel.PROPRIETARIO)
     token, plain_token = AuthToken.objects.create(
@@ -139,6 +138,7 @@ def test_get_planos_recusa_api_key_sem_inventar_scope_de_catalogo():
     response = client.get("/planos/")
 
     assert response.status_code == 403
+    assert response.json()["errors"][0]["code"] == "auth.permission_denied"
 
 
 def test_get_planos_documenta_array_e_erro_de_autenticacao(monkeypatch):

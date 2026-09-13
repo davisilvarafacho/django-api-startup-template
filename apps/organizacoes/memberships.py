@@ -265,6 +265,30 @@ class Vinculos:
         return convite_atualizado
 
     @classmethod
+    def remover_convite(
+        cls,
+        convite: Convite,
+        *,
+        ator: Usuario | None = None,
+        validar_papel_ator: bool = True,
+    ) -> None:
+        """Remove um convite após revalidar o ator sob os mesmos locks da API."""
+        using = convite._state.db or "default"
+        with transaction.atomic(using=using):
+            usuarios_bloqueados = lock_user_accounts((ator,), using=using)
+            ator_bloqueado = usuarios_bloqueados.get(ator.pk) if ator is not None else None
+            organizacao = cls._bloquear_organizacao_aberta(convite.organizacao_id, using=using)
+            if ator_bloqueado is not None:
+                cls.bloquear_e_exigir_papel(
+                    organizacao=organizacao,
+                    usuario=ator_bloqueado,
+                    papel_minimo=Papel.GESTOR if validar_papel_ator else None,
+                    using=using,
+                )
+            convite_bloqueado = Convite.all_objects.using(using).select_for_update().get(pk=convite.pk, organizacao=organizacao)
+            convite_bloqueado.delete(using=using)
+
+    @classmethod
     def atualizar_vinculo(
         cls,
         vinculo: Vinculo,

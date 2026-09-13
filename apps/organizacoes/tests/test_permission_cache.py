@@ -15,10 +15,10 @@ from apps.organizacoes.middleware import OrganizacaoMiddleware
 from apps.organizacoes.models import Convite, Organizacao, Papel, Time, Vinculo
 from apps.organizacoes.permissions import PapelMinimoPermission, TenantPermission
 from apps.organizacoes.rules import e_gestor
-from apps.organizacoes.serializers import ConviteCreateSerializer, ConviteSerializer, VinculoSerializer
+from apps.organizacoes.serializers import ConviteCreateSerializer, ConviteSerializer, TimeSerializer, VinculoSerializer
 from apps.organizacoes.tests.test_api import client_autenticado
 from apps.organizacoes.tests.test_tenant_context import _contexto_liberado
-from apps.organizacoes.views import TimeViewSet, VinculoViewSet
+from apps.organizacoes.views import ConviteViewSet, TimeViewSet, VinculoViewSet
 from internal_frameworks.permission_cache.types import TenantAccess
 from tests.support.usuarios import criar_usuario
 
@@ -206,6 +206,78 @@ def test_remocao_de_vinculo_revalida_papel_atual_do_ator():
 
     assert excinfo.value.code == OrganizationErrorCode.ROLE_INSUFFICIENT.value
     assert Vinculo.objects.filter(pk=vinculo_alvo.pk).exists() is True
+
+
+@pytest.mark.django_db
+def test_criacao_de_time_revalida_papel_atual_do_ator():
+    ator = criar_usuario(email="ator-create-time@example.com")
+    organizacao = Organizacao.objects.create(nome="Acme", slug="acme-ator-create-time")
+    vinculo_ator = Vinculo.objects.create(usuario=ator, organizacao=organizacao, papel=Papel.MEMBRO)
+    request = Mock(
+        user=ator,
+        tenant=TenantAccess(organizacao.pk, organizacao.slug, vinculo_ator.pk, Papel.GESTOR),
+    )
+    serializer = TimeSerializer(data={"nome": "Produto"}, context={"request": request})
+    serializer.is_valid(raise_exception=True)
+
+    with pytest.raises(APIError) as excinfo:
+        serializer.save(organizacao_id=organizacao.pk)
+
+    assert excinfo.value.code == OrganizationErrorCode.ROLE_INSUFFICIENT.value
+    assert Time.objects.filter(organizacao=organizacao, nome="Produto").exists() is False
+
+
+@pytest.mark.django_db
+def test_atualizacao_de_time_revalida_papel_atual_do_ator():
+    ator = criar_usuario(email="ator-patch-time@example.com")
+    organizacao = Organizacao.objects.create(nome="Acme", slug="acme-ator-patch-time")
+    vinculo_ator = Vinculo.objects.create(usuario=ator, organizacao=organizacao, papel=Papel.MEMBRO)
+    time = Time.objects.create(organizacao=organizacao, nome="Antes")
+    request = Mock(
+        user=ator,
+        tenant=TenantAccess(organizacao.pk, organizacao.slug, vinculo_ator.pk, Papel.GESTOR),
+    )
+    serializer = TimeSerializer(time, data={"nome": "Depois"}, partial=True, context={"request": request})
+    serializer.is_valid(raise_exception=True)
+
+    with pytest.raises(APIError) as excinfo:
+        serializer.save()
+
+    assert excinfo.value.code == OrganizationErrorCode.ROLE_INSUFFICIENT.value
+    time.refresh_from_db()
+    assert time.nome == "Antes"
+
+
+@pytest.mark.django_db
+def test_remocao_de_time_revalida_papel_atual_do_ator():
+    ator = criar_usuario(email="ator-delete-time@example.com")
+    organizacao = Organizacao.objects.create(nome="Acme", slug="acme-ator-delete-time")
+    Vinculo.objects.create(usuario=ator, organizacao=organizacao, papel=Papel.MEMBRO)
+    time = Time.objects.create(organizacao=organizacao, nome="Produto")
+    view = TimeViewSet()
+    view.request = Mock(user=ator)
+
+    with pytest.raises(APIError) as excinfo:
+        view.perform_destroy(time)
+
+    assert excinfo.value.code == OrganizationErrorCode.ROLE_INSUFFICIENT.value
+    assert Time.objects.filter(pk=time.pk).exists() is True
+
+
+@pytest.mark.django_db
+def test_remocao_de_convite_revalida_papel_atual_do_ator():
+    ator = criar_usuario(email="ator-delete-convite@example.com")
+    organizacao = Organizacao.objects.create(nome="Acme", slug="acme-ator-delete-convite")
+    Vinculo.objects.create(usuario=ator, organizacao=organizacao, papel=Papel.MEMBRO)
+    convite = Convite.objects.create(organizacao=organizacao, email="convidado@example.com")
+    view = ConviteViewSet()
+    view.request = Mock(user=ator)
+
+    with pytest.raises(APIError) as excinfo:
+        view.perform_destroy(convite)
+
+    assert excinfo.value.code == OrganizationErrorCode.ROLE_INSUFFICIENT.value
+    assert Convite.objects.filter(pk=convite.pk).exists() is True
 
 
 @pytest.mark.django_db

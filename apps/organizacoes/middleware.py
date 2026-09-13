@@ -14,6 +14,7 @@ from apps.api.core.route_markers import (
     MARCADOR_REGULARIZACAO_ASSINATURA,
     MARCADOR_SEM_TENANCY,
     rota_tem_marcador,
+    view_do_path,
 )
 from apps.api.core.routes_registry import routes_registry
 from apps.organizacoes.constants import HEADER_ORGANIZACAO, META_HEADER_ORGANIZACAO
@@ -143,6 +144,10 @@ class OrganizacaoMiddleware:
 
     def _preparar_contexto(self, request):
         request.organizacao_slug = resolve_token_organization(request, getattr(request, "auth", None))
+
+        if _is_api_key(request) and self._is_tenant_free(request) and getattr(view_do_path(request.path_info), "session_only", False):
+            request.tenant_required = False
+            return
 
         if _is_api_key(request):
             self._resolver_api_key(request)

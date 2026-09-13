@@ -597,6 +597,31 @@ def test_api_key_com_scopes_crud_ignora_papel_pessoal_em_convites_e_vinculos():
     assert Vinculo.objects.filter(pk=vinculo_alvo.pk).exists() is False
 
 
+def test_api_key_com_scopes_crud_ignora_papel_pessoal_em_times_e_remocao_de_convite():
+    responsavel = criar_usuario(email="api-key-times-responsavel@example.com")
+    organizacao = Organizacao.objects.create(nome="Org API key times", slug="org-api-key-times")
+    vincular(responsavel, organizacao, Papel.MEMBRO)
+    convite = Convite.objects.create(organizacao=organizacao, email="api-key-delete-convite@example.com")
+    client = client_com_api_key(
+        responsavel,
+        ["teams:create", "teams:update", "teams:delete", "invitations:delete"],
+        organizacao,
+    )
+
+    criacao = client.post("/times/", {"nome": "Antes"}, format="json")
+    time = Time.objects.get(organizacao=organizacao, nome="Antes")
+    atualizacao = client.patch(f"/times/{time.pk}/", {"nome": "Depois"}, format="json")
+    remocao_time = client.delete(f"/times/{time.pk}/")
+    remocao_convite = client.delete(f"/convites/{convite.pk}/")
+
+    assert criacao.status_code == status.HTTP_201_CREATED
+    assert atualizacao.status_code == status.HTTP_200_OK
+    assert remocao_time.status_code == status.HTTP_204_NO_CONTENT
+    assert remocao_convite.status_code == status.HTTP_204_NO_CONTENT
+    assert Time.objects.filter(pk=time.pk).exists() is False
+    assert Convite.objects.filter(pk=convite.pk).exists() is False
+
+
 def test_api_key_nao_atualiza_email_de_faturamento_mesmo_com_scope():
     responsavel = criar_usuario(email="api-key-email-faturamento@example.com", email_verificado_em=timezone.now())
     organizacao = Organizacao.objects.create(

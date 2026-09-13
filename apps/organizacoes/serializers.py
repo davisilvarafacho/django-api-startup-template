@@ -6,6 +6,12 @@ from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.memberships import Vinculos
 from apps.organizacoes.models import Convite, Organizacao, Time, Vinculo
 from apps.organizacoes.organizations import Organizacoes
+from apps.organizacoes.teams import Times
+
+
+def _validar_papel_ator(request) -> bool:
+    """API keys usam scopes; sessões humanas também revalidam papel pessoal."""
+    return getattr(getattr(request, "auth", None), "type", None) != TokenType.API_KEY
 
 
 class UsuarioResumoSerializer(serializers.Serializer):
@@ -73,6 +79,26 @@ class TimeSerializer(serializers.ModelSerializer):
         fields = ["id", "nome"]
         read_only_fields = ["id"]
 
+    def create(self, validated_data):
+        organizacao_id = validated_data.pop("organizacao_id")
+        organizacao = Organizacao.objects.get(pk=organizacao_id)
+        request = self.context["request"]
+        return Times.criar(
+            organizacao=organizacao,
+            dados=validated_data,
+            ator=request.user,
+            validar_papel_ator=_validar_papel_ator(request),
+        )
+
+    def update(self, instance, validated_data):
+        request = self.context["request"]
+        return Times.atualizar(
+            instance,
+            dados=validated_data,
+            ator=request.user,
+            validar_papel_ator=_validar_papel_ator(request),
+        )
+
 
 class VinculoSerializer(serializers.ModelSerializer):
     usuario = UsuarioResumoSerializer(read_only=True)
@@ -93,7 +119,7 @@ class VinculoSerializer(serializers.ModelSerializer):
 
     def validate_papel(self, papel):
         request = self.context["request"]
-        if getattr(getattr(request, "auth", None), "type", None) == TokenType.API_KEY:
+        if not _validar_papel_ator(request):
             return papel
         if papel > request.tenant.role:
             raise APIError(
@@ -110,7 +136,7 @@ class VinculoSerializer(serializers.ModelSerializer):
             instance,
             dados=validated_data,
             ator=request.user,
-            validar_papel_ator=getattr(getattr(request, "auth", None), "type", None) != TokenType.API_KEY,
+            validar_papel_ator=_validar_papel_ator(request),
         )
 
 
@@ -139,7 +165,7 @@ class ConviteSerializer(serializers.ModelSerializer):
             instance,
             dados=validated_data,
             ator=request.user,
-            validar_papel_ator=getattr(getattr(request, "auth", None), "type", None) != TokenType.API_KEY,
+            validar_papel_ator=_validar_papel_ator(request),
         )
 
 
@@ -151,7 +177,7 @@ class ConviteCreateSerializer(ConviteSerializer):
 
     def validate_papel(self, papel):
         request = self.context["request"]
-        if getattr(getattr(request, "auth", None), "type", None) == TokenType.API_KEY:
+        if not _validar_papel_ator(request):
             return papel
         if papel > request.tenant.role:
             raise APIError(
@@ -169,7 +195,7 @@ class ConviteCreateSerializer(ConviteSerializer):
         return Vinculos.criar_convite(
             organizacao=organizacao,
             ator=request.user,
-            validar_papel_ator=getattr(getattr(request, "auth", None), "type", None) != TokenType.API_KEY,
+            validar_papel_ator=_validar_papel_ator(request),
             **validated_data,
         )
 

@@ -1227,7 +1227,7 @@ def test_matriz_unicidades_coerencia_e_rls_tenant_no_postgresql(papel_ingresso):
             moeda_esperada="BRL",
         ).pk
 
-        ator = criar_usuario(email="owner-matriz@example.test")
+        ator = criar_usuario(email="owner-matriz@example.test", email_verificado_em=timezone.now())
         Vinculo.objects.create(organizacao=org_a, usuario=ator, papel=Papel.PROPRIETARIO)
         proposta = _criar_proposta(org_a)
         proposta = Propostas.enviar(proposta, revisao_esperada=proposta.revisao)

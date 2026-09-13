@@ -39,6 +39,7 @@ from apps.organizacoes.serializers import (
     TimeSerializer,
     VinculoSerializer,
 )
+from apps.organizacoes.teams import Times
 from apps.usuarios.policies import exigir_email_verificado
 
 
@@ -176,6 +177,13 @@ class TimeViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(organizacao_id=self.get_organizacao_id())
 
+    def perform_destroy(self, instance):
+        Times.remover(
+            instance,
+            ator=self.request.user,
+            validar_papel_ator=getattr(getattr(self.request, "auth", None), "type", None) != TokenType.API_KEY,
+        )
+
 
 @extend_schema_view(
     update=document_membership_update,
@@ -240,6 +248,13 @@ class ConviteViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(organizacao_id=self.get_organizacao_id(), convidado_por=self.request.user)
+
+    def perform_destroy(self, instance):
+        Vinculos.remover_convite(
+            instance,
+            ator=self.request.user,
+            validar_papel_ator=getattr(getattr(self.request, "auth", None), "type", None) != TokenType.API_KEY,
+        )
 
     @document_invitation_accept
     @action(detail=False, methods=["post"], url_path="aceitar")
