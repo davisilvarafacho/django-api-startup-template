@@ -71,19 +71,54 @@ def test_atualizacao_email_faturamento_documenta_body_e_erros_reais():
         assert "validation.required" in operation["responses"]["422"]["description"]
 
 
-def test_aceite_de_convite_documenta_payload_de_resposta_e_precondicao_de_email_verificado():
+def test_aceite_de_convite_documenta_payload_de_resposta_e_erros_reais():
     schema = SchemaGenerator(patterns=organizacoes_urls.urlpatterns).get_schema(request=None, public=True)
     post = schema["paths"]["/convites/aceitar/"]["post"]
 
     assert post["requestBody"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/AceitarConvite"}
     assert post["responses"]["200"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/AceitarConviteResponse"}
+    assert set(post["responses"]) == {"200", "401", "403", "409", "422", "503"}
     componente = schema["components"]["schemas"]["AceitarConviteResponse"]
     assert componente["required"] == ["organizacao", "vinculo"]
     assert componente["properties"] == {
         "organizacao": {"$ref": "#/components/schemas/Organizacao"},
         "vinculo": {"$ref": "#/components/schemas/Vinculo"},
     }
-    assert "account.email_not_verified" in post["responses"]["403"]["description"]
+    codigos_por_status = {
+        "401": {
+            "auth.not_authenticated",
+            "auth.token_not_provided",
+            "auth.invalid_token",
+            "auth.expired_token",
+            "auth.revoked_token",
+            "auth.api_key_suspended",
+            "auth.responsible_inactive",
+            "auth.user_inactive",
+        },
+        "403": {
+            "auth.permission_denied",
+            "auth.insufficient_scope",
+            "account.email_not_verified",
+            "organizations.organization_inactive",
+            "billing.organization_restricted",
+        },
+        "409": {
+            "organizations.tenant_mismatch",
+            "organizations.closure_pending",
+            "billing.seat_limit_reached",
+        },
+        "422": {
+            "validation.invalid",
+            "validation.required",
+            "organizations.invitation_invalid",
+            "organizations.invitation_expired",
+            "organizations.invitation_email_mismatch",
+        },
+        "503": {"billing.subscription_required"},
+    }
+    for status_code, codigos in codigos_por_status.items():
+        descricao = post["responses"][status_code]["description"]
+        assert all(codigo in descricao for codigo in codigos)
 
 
 def test_mutacoes_de_vinculo_documentam_protecao_do_ultimo_proprietario():
