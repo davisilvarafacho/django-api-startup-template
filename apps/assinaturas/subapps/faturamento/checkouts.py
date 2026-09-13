@@ -17,6 +17,7 @@ from django_checkouts.exceptions import GatewayPermanentError, GatewayTemporaryE
 from django_checkouts.types import CatalogPrice, Checkout, CheckoutCreate, CheckoutItem, InlinePrice, Recurrence, Setup, SetupCreate
 from prometheus_client import Counter
 
+from apps.api.autenticacao.services import lock_user_accounts
 from apps.assinaturas.models import (
     AlteracaoAssinatura,
     AssinaturaOrganizacao,
@@ -29,6 +30,9 @@ from apps.assinaturas.models import (
 from apps.assinaturas.subapps.faturamento.models import CheckoutCobranca, ComponentePreco, FinalidadeCheckout, ReferenciaPrecoGateway, StatusCheckout
 from apps.assinaturas.subscriptions import Assinaturas
 from apps.organizacoes.context import organizacao_atual_privilegiada
+from apps.organizacoes.memberships import Vinculos
+from apps.organizacoes.models import Organizacao, Papel
+from apps.usuarios.policies import exigir_email_verificado
 
 if TYPE_CHECKING:
     from django_checkouts.client import CheckoutClient
@@ -178,8 +182,25 @@ class CheckoutsCobranca:
     @classmethod
     def preparar(cls, criacao: CriacaoCheckout, *, client: CheckoutClient) -> _Preparacao:
         organizacao_id = criacao.assinatura.organizacao_id
+        using = criacao.assinatura._state.db or "default"
         with organizacao_atual_privilegiada(organizacao_id):
-            assinatura = AssinaturaOrganizacao.all_objects.select_for_update(of=("self",)).get(pk=criacao.assinatura.pk)
+            usuarios_bloqueados = lock_user_accounts((criacao.ator,), using=using)
+            if criacao.ator is not None:
+                ator = usuarios_bloqueados[criacao.ator.pk]
+                exigir_email_verificado(ator)
+            organizacao = Organizacao.all_objects.using(using).select_for_update().get(pk=organizacao_id)
+            cls._validar_organizacao_checkout(organizacao)
+            if criacao.ator is not None:
+                Vinculos.bloquear_e_exigir_papel(
+                    organizacao=organizacao,
+                    usuario=ator,
+                    papel_minimo=Papel.ADMINISTRADOR if criacao.finalidade == FinalidadeCheckout.FORMA_PAGAMENTO else Papel.PROPRIETARIO,
+                    using=using,
+                )
+            assinatura = AssinaturaOrganizacao.all_objects.select_for_update(of=("self",)).get(
+                pk=criacao.assinatura.pk,
+                organizacao=organizacao,
+            )
             alteracao = None
             if criacao.alteracao is not None:
                 alteracao = AlteracaoAssinatura.all_objects.select_for_update(of=("self",)).get(pk=criacao.alteracao.pk)
@@ -286,6 +307,7 @@ class CheckoutsCobranca:
     def confirmar(cls, preparacao: _Preparacao, remoto: Checkout | Setup, *, referencia: str) -> CheckoutCobranca:
         falha_incerta: FalhaCheckoutIncerta | None = None
         with organizacao_atual_privilegiada(preparacao.organizacao_id):
+            organizacao = Organizacao.all_objects.select_for_update().get(pk=preparacao.organizacao_id)
             ponte = CheckoutCobranca.objects.only("assinatura_id").get(pk=preparacao.checkout_id)
             assinatura = AssinaturaOrganizacao.all_objects.select_for_update(of=("self",)).get(pk=ponte.assinatura_id)
             checkout = CheckoutCobranca.objects.select_for_update().get(pk=preparacao.checkout_id)
@@ -308,6 +330,7 @@ class CheckoutsCobranca:
                 variante=checkout.variante,
             )
             try:
+                cls._validar_organizacao_checkout(organizacao)
                 cls._validar_finalidade(intencao, assinatura, alteracao=alteracao, proposta=proposta, confirmacao=True)
             except ConflitoCheckout as exc:
                 falha_incerta = FalhaCheckoutIncerta("A operação deixou de ser vigente; exige conciliação.")
@@ -342,6 +365,7 @@ class CheckoutsCobranca:
     @classmethod
     def falhar(cls, preparacao: _Preparacao, *, incerta: bool) -> None:
         with organizacao_atual_privilegiada(preparacao.organizacao_id):
+            Organizacao.all_objects.select_for_update().get(pk=preparacao.organizacao_id)
             ponte = CheckoutCobranca.objects.only("assinatura_id").get(pk=preparacao.checkout_id)
             assinatura = AssinaturaOrganizacao.all_objects.select_for_update(of=("self",)).get(pk=ponte.assinatura_id)
             checkout = CheckoutCobranca.objects.select_for_update().get(pk=preparacao.checkout_id)
@@ -388,6 +412,8 @@ class CheckoutsCobranca:
     def _validar_finalidade(criacao, assinatura, *, alteracao=None, proposta=None, confirmacao=False) -> None:
         if assinatura.status == StatusAssinatura.ENCERRADA:
             raise ConflitoCheckout("Assinatura encerrada não aceita checkout.")
+        if assinatura.cancelamento_agendado_para is not None:
+            raise ConflitoCheckout("Assinatura com cancelamento agendado não aceita checkout.")
         if criacao.finalidade == FinalidadeCheckout.CONTRATACAO and assinatura.status != StatusAssinatura.PENDENTE:
             raise ConflitoCheckout("Contratação exige assinatura pendente.")
         if criacao.finalidade == FinalidadeCheckout.ALTERACAO:
@@ -401,6 +427,13 @@ class CheckoutsCobranca:
                 raise ConflitoCheckout("Proposta não está aceita para checkout.")
         elif criacao.proposta is not None:
             raise ConflitoCheckout("Esta finalidade não aceita proposta.")
+
+    @staticmethod
+    def _validar_organizacao_checkout(organizacao: Organizacao) -> None:
+        if organizacao.is_deleted or not organizacao.is_active:
+            raise ConflitoCheckout("Organização inativa não aceita checkout.")
+        if organizacao.encerramento_solicitado_em is not None:
+            raise ConflitoCheckout("Organização com encerramento solicitado não aceita checkout.")
 
     @staticmethod
     def _snapshot(criacao: CriacaoCheckout, assinatura: AssinaturaOrganizacao, *, alteracao=None, proposta=None):

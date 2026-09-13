@@ -22,7 +22,8 @@ anexado à requisição. `apps.assinaturas` é o núcleo comercial: catálogo
 versionado, contratos, propostas, seats e política de acesso. O subapp
 `apps.assinaturas.subapps.faturamento` depende desse núcleo e é o único código
 da aplicação autorizado a importar `django_checkouts`; o núcleo comercial não
-depende do subapp nem de um gateway.
+depende do subapp nem de um gateway. Até a rota de aceite pago é registrada
+pelo subapp, de modo que importar ou instalar apenas o núcleo continua válido.
 
 Essa direção mantém plano gratuito, trial e contratos enterprise locais
 operacionais sem Stripe. Operações pagas usam fases explícitas de preparação,
@@ -48,11 +49,21 @@ de assinatura resolve a organização. Só então o evento entra no contexto RLS
 é entregue ao processador.
 
 A fronteira anterior ao tenant usa funções PostgreSQL `SECURITY DEFINER` com
-`search_path` fixo. A role `billing_ingress_runtime` pode somente executar essas
-interfaces estreitas; ela não possui privilégios diretos nas tabelas. As
+`search_path` fixo. A role `billing_ingress_runtime` executa essas interfaces
+estreitas e lê apenas as colunas de mapeamento necessárias para resolver uma
+assinatura ou referência; URL e fatos financeiros não entram nesse grant. As
 funções pertencem a `billing_functions_owner`, role `NOLOGIN` que nunca é
-concedida ao web ou worker. Checkouts, faturas, eventos roteados e registros de
-operação usam `FORCE ROW LEVEL SECURITY`.
+concedida aos processos da aplicação. Checkouts, faturas, eventos roteados e
+registros de operação usam `FORCE ROW LEVEL SECURITY`.
+
+Há duas filas e três principals de aplicação. O worker geral, sem roles
+financeiras, consome `celery` e processa eventos já tenantizados. O worker
+ingress consome `billing_ingress`, assume apenas `billing_ingress_runtime` nas
+operações globais e executa recovery/reconciliação. Um processo HTTP ingress,
+com login próprio sem grants diretos de tabela e URLConf mínimo, aceita apenas
+health checks e webhooks; o Nginx encaminha somente
+`/faturamento/webhooks/` para ele. O web comum não recebe credenciais ingress
+nem a credencial de migration.
 
 O processador recupera o recurso atual pela interface normalizada antes de
 aplicar efeitos monotônicos. Falhas temporárias usam backoff exponencial e no

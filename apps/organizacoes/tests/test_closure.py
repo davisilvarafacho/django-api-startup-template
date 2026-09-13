@@ -148,6 +148,25 @@ def test_termo_agendado_preserva_acesso_ate_o_fim_do_periodo():
     assert AssinaturasEncerramentoTeste.chamadas == []
 
 
+def test_servico_revalida_proprietario_antes_de_solicitar_encerramento():
+    agora = timezone.now()
+    _, organizacao, _, _, _, _ = _cenario_encerramento("ator-rebaixado")
+    ator = criar_usuario(email="admin-ator-rebaixado@example.com", email_verificado_em=agora)
+    Vinculo.objects.create(organizacao=organizacao, usuario=ator, papel=Papel.ADMINISTRADOR)
+
+    with pytest.raises(APIError) as erro:
+        _solicitar_encerramento(
+            organizacao,
+            TermoEncerramentoAgendado(agendado_para=agora + timedelta(days=10)),
+            ator=ator,
+            agora=agora,
+        )
+
+    assert erro.value.code == "organizations.role_insufficient"
+    organizacao.refresh_from_db()
+    assert organizacao.encerramento_solicitado_em is None
+
+
 def test_repetir_agendamento_devolve_resultado_idempotente_com_a_data_existente():
     agora = timezone.now()
     fim_periodo = agora + timedelta(days=20)
@@ -289,7 +308,7 @@ def test_rollback_depois_da_revogacao_nao_publica_auditoria_de_api_key(monkeypat
 def test_organizacao_pendente_nao_cria_nem_aceita_convite():
     agora = timezone.now()
     proprietario, organizacao, _, convite, _, _ = _cenario_encerramento("bloqueia-convite")
-    convidado = criar_usuario(email=convite.email)
+    convidado = criar_usuario(email=convite.email, email_verificado_em=timezone.now())
     _solicitar_encerramento(
         organizacao,
         TermoEncerramentoAgendado(agendado_para=agora + timedelta(days=20)),

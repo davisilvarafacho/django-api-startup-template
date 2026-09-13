@@ -28,9 +28,14 @@ from apps.assinaturas.proposals import Propostas
 from apps.assinaturas.tests.test_proposals import _criar_rascunho, _enviar
 from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
-from tests.support.usuarios import criar_usuario
+from tests.support.usuarios import criar_usuario as _criar_usuario
 
 pytestmark = pytest.mark.django_db
+
+
+def criar_usuario(**campos):
+    campos.setdefault("email_verificado_em", timezone.now())
+    return _criar_usuario(**campos)
 
 
 def _criar_proposta(organizacao: Organizacao) -> PropostaComercial:
@@ -151,7 +156,7 @@ def test_acao_admin_rejeita_lote_e_operador_sem_permissao(monkeypatch):
 
 
 def _proposta_contratual_aceita(organizacao: Organizacao) -> PropostaComercial:
-    proprietario = criar_usuario(email=f"owner-admin-{organizacao.slug}@example.com")
+    proprietario = criar_usuario(email=f"owner-admin-{organizacao.slug}@example.com", email_verificado_em=timezone.now())
     Vinculo.objects.create(organizacao=organizacao, usuario=proprietario, papel=Papel.PROPRIETARIO)
     proposta = _enviar(_criar_rascunho(organizacao, modo=ModoAtivacaoProposta.CONTRATUAL))
     return Propostas.aceitar(proposta, ator=proprietario, revisao_esperada=2).proposta

@@ -17,9 +17,16 @@ from apps.assinaturas.subapps.faturamento.serializers import (
     FaturaResponseSerializer,
 )
 from apps.organizacoes.errors import OrganizationErrorCode
+from apps.usuarios.errors import AccountErrorCode
 
 AUTH = document_error_codes(AuthErrorCode.TOKEN_NOT_PROVIDED, AuthErrorCode.INVALID_TOKEN, AuthErrorCode.REAUTHENTICATION_REQUIRED)
 TENANT = document_error_codes(
+    OrganizationErrorCode.MEMBERSHIP_REQUIRED,
+    OrganizationErrorCode.ORGANIZATION_INACTIVE,
+    OrganizationErrorCode.ROLE_INSUFFICIENT,
+)
+TENANT_MUTATION = document_error_codes(
+    AccountErrorCode.EMAIL_NOT_VERIFIED,
     OrganizationErrorCode.MEMBERSHIP_REQUIRED,
     OrganizationErrorCode.ORGANIZATION_INACTIVE,
     OrganizationErrorCode.ROLE_INSUFFICIENT,
@@ -43,6 +50,7 @@ document_proposal_accept = extend_schema(
         ),
         403: document_error_codes(
             AuthErrorCode.PERMISSION_DENIED,
+            AccountErrorCode.EMAIL_NOT_VERIFIED,
             OrganizationErrorCode.MEMBERSHIP_REQUIRED,
             OrganizationErrorCode.MEMBERSHIP_INACTIVE,
             OrganizationErrorCode.ORGANIZATION_INACTIVE,
@@ -69,7 +77,7 @@ def _create(request):
             201: CheckoutResponseSerializer,
             400: document_error_codes(ValidationErrorCode.INVALID, ValidationErrorCode.MALFORMED),
             401: AUTH,
-            403: TENANT,
+            403: TENANT_MUTATION,
             409: CONFLICT,
             422: document_error_codes(OrganizationErrorCode.HEADER_REQUIRED, ErrosFaturamento.CHECKOUT_INDISPONIVEL),
             503: UNCERTAIN,
@@ -93,21 +101,39 @@ def _paginated(name, item):
     )
 
 
+PAGINATION_PARAMETERS = [
+    OpenApiParameter(
+        "page",
+        {"type": "integer", "minimum": 1},
+        OpenApiParameter.QUERY,
+        description="Página solicitada (a partir de 1).",
+    ),
+    OpenApiParameter(
+        "size",
+        {"type": "integer", "minimum": 1, "maximum": 50},
+        OpenApiParameter.QUERY,
+        description="Quantidade de itens por página; o máximo efetivo é 50 e `all` não é aceito.",
+    ),
+]
+
+
 document_checkout_list = extend_schema(
+    parameters=PAGINATION_PARAMETERS,
     responses={
         200: _paginated("PaginaCheckouts", CheckoutResponseSerializer),
         401: AUTH,
         403: TENANT,
         422: document_error_codes(OrganizationErrorCode.HEADER_REQUIRED),
-    }
+    },
 )
 document_invoice_list = extend_schema(
+    parameters=PAGINATION_PARAMETERS,
     responses={
         200: _paginated("PaginaFaturas", FaturaResponseSerializer),
         401: AUTH,
         403: TENANT,
         422: document_error_codes(OrganizationErrorCode.HEADER_REQUIRED),
-    }
+    },
 )
 
 document_webhook = extend_schema(

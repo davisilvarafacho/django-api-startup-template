@@ -329,7 +329,10 @@ def test_task_e_evento_concorrentes_encerram_trial_uma_unica_vez():
 def test_aceite_de_convite_e_fallback_serializam_ocupacao_real():
     organizacao, assinatura = _trial(slug="trial-convite-concorrente")
     _criar_membros(organizacao, prefixo="trial-convite-concorrente-existente", quantidade=1)
-    convidado = criar_usuario(email="trial-convite-concorrente-convidado@example.com")
+    convidado = criar_usuario(
+        email="trial-convite-concorrente-convidado@example.com",
+        email_verificado_em=timezone.now(),
+    )
     convite = Vinculos.criar_convite(
         organizacao=organizacao,
         email=convidado.email,

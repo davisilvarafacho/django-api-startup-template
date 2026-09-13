@@ -7,8 +7,11 @@ from typing import TYPE_CHECKING, Protocol
 from django.db import transaction
 from django.utils import timezone
 
+from apps.api.autenticacao.services import lock_user_accounts
 from apps.organizacoes.context import organizacao_atual_privilegiada
-from apps.organizacoes.models import Convite, Organizacao, Vinculo
+from apps.organizacoes.memberships import Vinculos
+from apps.organizacoes.models import Convite, Organizacao, Papel, Vinculo
+from apps.usuarios.policies import exigir_email_verificado
 
 if TYPE_CHECKING:
     from apps.usuarios.models import Usuario
@@ -77,6 +80,30 @@ class Organizacoes:
         return Organizacao.objects.create(nome=nome, slug=slug, email_faturamento=proprietario.email)
 
     @classmethod
+    def atualizar_email_faturamento(
+        cls,
+        organizacao: Organizacao,
+        *,
+        email_faturamento: str | None,
+        ator: "Usuario",
+    ) -> Organizacao:
+        """Atualiza o endereço financeiro sob lock da raiz da organização."""
+        database_alias = organizacao._state.db or "default"
+        with transaction.atomic(using=database_alias):
+            ator = lock_user_accounts((ator,), using=database_alias)[ator.pk]
+            exigir_email_verificado(ator)
+            atual = Organizacao.all_objects.using(database_alias).select_for_update().get(pk=organizacao.pk)
+            Vinculos.bloquear_e_exigir_papel(
+                organizacao=atual,
+                usuario=ator,
+                papel_minimo=Papel.ADMINISTRADOR,
+                using=database_alias,
+            )
+            atual.email_faturamento = email_faturamento
+            atual.save(using=database_alias, update_fields=["email_faturamento", "last_modified_at"])
+            return atual
+
+    @classmethod
     def solicitar_encerramento(
         cls,
         organizacao: Organizacao,
@@ -89,10 +116,20 @@ class Organizacoes:
         agora = agora or timezone.now()
         database_alias = organizacao._state.db or "default"
         with transaction.atomic(using=database_alias):
+            atores_bloqueados = lock_user_accounts((ator,), using=database_alias)
+            if ator is not None:
+                ator = atores_bloqueados[ator.pk]
+                exigir_email_verificado(ator)
             atual = Organizacao.all_objects.using(database_alias).select_for_update().get(pk=organizacao.pk)
             if atual.is_deleted or not atual.is_active or atual.encerramento_solicitado_em is not None:
                 return EncerramentoSemAlteracao(agendado_para=atual.encerramento_agendado_para)
-
+            if ator is not None:
+                Vinculos.bloquear_e_exigir_papel(
+                    organizacao=atual,
+                    usuario=ator,
+                    papel_minimo=Papel.PROPRIETARIO,
+                    using=database_alias,
+                )
             with organizacao_atual_privilegiada(atual.pk):
                 termo = assinaturas.solicitar_encerramento(atual, agora=agora)
             if not isinstance(termo, TermoEncerramentoImediato | TermoEncerramentoAgendado):
@@ -122,13 +159,25 @@ class Organizacoes:
         organizacao: Organizacao,
         *,
         assinaturas: type[AssinaturasEncerramento],
+        ator=None,
     ) -> bool:
         """Cancela um pedido ainda não efetivado sem reabrir organização."""
         database_alias = organizacao._state.db or "default"
         with transaction.atomic(using=database_alias):
+            atores_bloqueados = lock_user_accounts((ator,), using=database_alias)
+            if ator is not None:
+                ator = atores_bloqueados[ator.pk]
+                exigir_email_verificado(ator)
             atual = Organizacao.all_objects.using(database_alias).select_for_update().get(pk=organizacao.pk)
             if atual.is_deleted or not atual.is_active or atual.encerramento_solicitado_em is None:
                 return False
+            if ator is not None:
+                Vinculos.bloquear_e_exigir_papel(
+                    organizacao=atual,
+                    usuario=ator,
+                    papel_minimo=Papel.PROPRIETARIO,
+                    using=database_alias,
+                )
             with organizacao_atual_privilegiada(atual.pk):
                 assinaturas.cancelar_encerramento(atual)
             atual.encerramento_solicitado_em = None

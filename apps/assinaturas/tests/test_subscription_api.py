@@ -10,6 +10,7 @@ from rest_framework.test import APIClient
 import pytest
 
 from apps.api.autenticacao.models import AuthToken, TokenMetaData, TokenType
+from apps.api.core.errors import APIError
 from apps.assinaturas.access_policies import MotivoRestricao, StatusAcesso
 from apps.assinaturas.catalogs import CatalogoPlanos
 from apps.assinaturas.features import CATALOGO_RECURSOS, ValoresRecursos
@@ -40,8 +41,8 @@ def _client(usuario, organizacao, *, recente=True):
     return client
 
 
-def _usuario_na(organizacao, *, email, papel):
-    usuario = criar_usuario(email=email)
+def _usuario_na(organizacao, *, email, papel, email_verificado=True):
+    usuario = criar_usuario(email=email, email_verificado_em=timezone.now() if email_verificado else None)
     Vinculo.objects.create(organizacao=organizacao, usuario=usuario, papel=papel)
     return usuario
 
@@ -186,6 +187,54 @@ def test_proprietario_solicita_alteracao_idempotente_com_revisao_e_recencia():
     assert alteracao.snapshot_pretendido["seats_contratados"] == 4
 
 
+def test_servico_de_encerramento_revalida_proprietario_sob_lock():
+    organizacao, assinatura = _assinatura_paga(slug="encerramento-ator-rebaixado")
+    ator = _usuario_na(
+        organizacao,
+        email="ator-rebaixado-encerramento@example.com",
+        papel=Papel.ADMINISTRADOR,
+    )
+
+    with organizacao_atual_privilegiada(organizacao.pk), pytest.raises(APIError) as erro:
+        Assinaturas.solicitar_encerramento(
+            organizacao,
+            agora=timezone.now(),
+            revisao_esperada=assinatura.revisao,
+            ator=ator,
+        )
+
+    assert erro.value.code == "organizations.role_insufficient"
+    with organizacao_atual_privilegiada(organizacao.pk):
+        assinatura.refresh_from_db()
+        assert assinatura.cancelamento_agendado_para is None
+
+
+def test_mutacao_contratual_exige_email_verificado():
+    organizacao, assinatura = _assinatura_ativa(slug="api-alteracao-email-nao-verificado", seats=2)
+    proprietario = _usuario_na(
+        organizacao,
+        email="owner-alteracao-email-nao-verificado@example.com",
+        papel=Papel.PROPRIETARIO,
+        email_verificado=False,
+    )
+
+    response = _client(proprietario, organizacao).post(
+        "/assinatura/alteracoes/",
+        {
+            "tipo": TipoAlteracaoAssinatura.AUMENTO_SEATS,
+            "seats_contratados": assinatura.seats_contratados + 1,
+            "revisao_esperada": assinatura.revisao,
+            "chave_idempotencia": "email-nao-verificado",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 403
+    assert response.json()["errors"][0]["code"] == "account.email_not_verified"
+    with organizacao_atual_privilegiada(organizacao.pk):
+        assert not AlteracaoAssinatura.objects.filter(organizacao=organizacao).exists()
+
+
 def test_proprietario_solicita_downgrade_e_mudanca_de_periodicidade_com_termos_publicados():
     organizacao_plano, assinatura_plano = _assinatura_paga(slug="api-downgrade")
     owner_plano = _usuario_na(organizacao_plano, email="owner-downgrade@example.com", papel=Papel.PROPRIETARIO)
@@ -286,6 +335,30 @@ def test_proprietario_agenda_e_desfaz_cancelamento_com_revisao():
         assinatura.refresh_from_db()
     assert assinatura.cancelamento_agendado_para is None
     assert assinatura.revisao == 4
+
+
+@pytest.mark.parametrize("method", ["post", "delete"])
+def test_cancelamento_exige_email_verificado(method):
+    organizacao, assinatura = _assinatura_paga(slug=f"api-cancelamento-email-nao-verificado-{method}")
+    proprietario = _usuario_na(
+        organizacao,
+        email=f"owner-cancelamento-email-nao-verificado-{method}@example.com",
+        papel=Papel.PROPRIETARIO,
+        email_verificado=False,
+    )
+
+    response = getattr(_client(proprietario, organizacao), method)(
+        "/assinatura/cancelamento/",
+        {"revisao_esperada": assinatura.revisao},
+        format="json",
+    )
+
+    assert response.status_code == 403
+    assert response.json()["errors"][0]["code"] == "account.email_not_verified"
+    with organizacao_atual_privilegiada(organizacao.pk):
+        assinatura.refresh_from_db()
+    assert assinatura.cancelamento_agendado_para is None
+    assert assinatura.revisao == 2
 
 
 def test_cancelamento_imediato_de_trial_encerra_contrato_e_retorna_estado_terminal():

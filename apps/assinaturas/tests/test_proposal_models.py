@@ -324,7 +324,7 @@ def test_banco_recusa_cronologia_incoerente_em_aceite_e_cancelamento(
 
 def test_banco_nao_admite_estado_ativado_para_proposta_de_pagamento():
     organizacao = Organizacao.objects.create(nome="Pagamento não ativa", slug="proposta-pagamento-nao-ativa")
-    ator = criar_usuario(email="pagamento-nao-ativa@example.com")
+    ator = criar_usuario(email="pagamento-nao-ativa@example.com", email_verificado_em=timezone.now())
     Vinculo.objects.create(organizacao=organizacao, usuario=ator, papel=Papel.PROPRIETARIO)
     agora = timezone.now()
     proposta = Propostas.enviar(_criar_proposta(organizacao), revisao_esperada=1, agora=agora)

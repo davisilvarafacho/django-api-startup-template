@@ -7,9 +7,12 @@ from django.db import connection, connections
 def configuracao_faturamento_check(app_configs, **kwargs):
     del app_configs, kwargs
     stripe = settings.CHECKOUT_VARIANTS.get("stripe")
-    configuracao = stripe[1] if isinstance(stripe, (tuple, list)) and len(stripe) == 2 and isinstance(stripe[1], dict) else {}
+    formato_valido = isinstance(stripe, (tuple, list)) and len(stripe) == 2 and isinstance(stripe[1], dict)
+    configuracao = stripe[1] if formato_valido else {}
+    credenciais = tuple(configuracao.get(key) for key in ("api_key", "webhook_secret"))
+    credenciais_parciais = any(credenciais) and not all(credenciais)
     erros = []
-    if not all(configuracao.get(key) for key in ("api_key", "webhook_secret")):
+    if not formato_valido or credenciais_parciais or (settings.IN_PRODUCTION and not all(credenciais)):
         erros.append(Error("Credenciais Stripe não configuradas.", id="faturamento.E001"))
     urls = (settings.BILLING_CHECKOUT_SUCCESS_URL, settings.BILLING_CHECKOUT_CANCEL_URL)
     if settings.IN_PRODUCTION and not all(url.startswith("https://") for url in urls):
@@ -82,11 +85,27 @@ def role_ingresso_check(app_configs, **kwargs):
                  FROM pg_namespace n CROSS JOIN LATERAL aclexplode(n.nspacl) a
                  JOIN roles_faturamento r ON r.oid=a.grantee WHERE n.nspname='public'
                ), acl_colunas AS (
-                 SELECT 1
+                 SELECT c.relname,att.attname,r.rolname,a.privilege_type,a.is_grantable
                  FROM pg_attribute att JOIN pg_class c ON c.oid=att.attrelid
                  CROSS JOIN LATERAL aclexplode(att.attacl) a
                  JOIN roles_faturamento r ON r.oid=a.grantee
                  WHERE c.relnamespace='public'::regnamespace
+               ), acl_colunas_esperadas(relname,attname,rolname,privilege_type) AS (VALUES
+                 ('assinatura_gateway','id',%s,'SELECT'),
+                 ('assinatura_gateway','organizacao_id',%s,'SELECT'),
+                 ('assinatura_gateway','assinatura_id',%s,'SELECT'),
+                 ('assinatura_gateway','variante',%s,'SELECT'),
+                 ('assinatura_gateway','identificador_externo',%s,'SELECT'),
+                 ('assinatura_gateway','is_active',%s,'SELECT'),
+                 ('assinatura_gateway','is_deleted',%s,'SELECT'),
+                 ('checkout_cobranca','id',%s,'SELECT'),
+                 ('checkout_cobranca','organizacao_id',%s,'SELECT'),
+                 ('checkout_cobranca','assinatura_id',%s,'SELECT'),
+                 ('checkout_cobranca','variante',%s,'SELECT'),
+                 ('checkout_cobranca','finalidade',%s,'SELECT'),
+                 ('checkout_cobranca','identificador_externo',%s,'SELECT'),
+                 ('checkout_cobranca','is_active',%s,'SELECT'),
+                 ('checkout_cobranca','is_deleted',%s,'SELECT')
                ), policies_esperadas(relname,polname) AS (VALUES
                  ('evento_cobranca','evento_tenant'),
                  ('evento_cobranca','evento_interface_definidor_select'),
@@ -138,7 +157,20 @@ def role_ingresso_check(app_configs, **kwargs):
                  )
                  AND (SELECT count(*) FROM acl_schema) = 2
                  AND NOT EXISTS (SELECT 1 FROM acl_schema WHERE privilege_type<>'USAGE' OR is_grantable)
-                 AND NOT EXISTS (SELECT 1 FROM acl_colunas),
+                 AND NOT EXISTS (
+                   SELECT 1 FROM acl_colunas a
+                   LEFT JOIN acl_colunas_esperadas e
+                     ON (e.relname,e.attname,e.rolname,e.privilege_type)
+                      =(a.relname,a.attname,a.rolname,a.privilege_type)
+                   WHERE e.attname IS NULL OR a.is_grantable
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM acl_colunas_esperadas e
+                   LEFT JOIN acl_colunas a
+                     ON (e.relname,e.attname,e.rolname,e.privilege_type)
+                      =(a.relname,a.attname,a.rolname,a.privilege_type)
+                   WHERE a.attname IS NULL
+                 ),
                  (SELECT count(*) FROM pg_policy
                    WHERE polrelid=to_regclass('public.evento_cobranca')
                      AND polname LIKE 'evento_interface_definidor_%%') = 3
@@ -197,7 +229,7 @@ def role_ingresso_check(app_configs, **kwargs):
                        OR p.polname NOT IN ('isolamento_organizacao','checkout_recovery_owner_select'))
                  ),
                  (SELECT count(*) FROM esperadas JOIN pg_proc p ON p.oid=esperadas.oid)""",
-            [owner, runtime, owner, runtime, runtime, owner, owner, owner, owner, owner, owner],
+            [owner, runtime, *([runtime] * 15), owner, runtime, runtime, owner, owner, owner, owner, owner, owner],
         )
         catalogo = cursor.fetchone()
 

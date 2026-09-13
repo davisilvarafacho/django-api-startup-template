@@ -11,7 +11,7 @@ from apps.api.core.errors import APIError, CoreErrorCode, ValidationErrorCode
 from apps.api.core.pagination import CustomPagination
 from apps.api.core.route_markers import io_externo_sem_transacao, public, regularizacao_assinatura
 from apps.assinaturas.errors import BillingErrorCode
-from apps.assinaturas.models import AlteracaoAssinatura, AssinaturaOrganizacao, ModoAtivacaoProposta, PropostaComercial
+from apps.assinaturas.models import AlteracaoAssinatura, ModoAtivacaoProposta, PropostaComercial
 from apps.assinaturas.proposals import ConflitoPropostaComercial, Propostas
 from apps.assinaturas.serializers import AceitarPropostaRequestSerializer, AceitarPropostaResponseSerializer
 from apps.assinaturas.subapps.faturamento.checkouts import (
@@ -45,10 +45,12 @@ from apps.assinaturas.subapps.faturamento.serializers import (
     CriarFormaPagamentoCheckoutRequestSerializer,
     FaturaResponseSerializer,
 )
+from apps.assinaturas.subscriptions import Assinaturas
 from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.models import Papel
 from apps.organizacoes.permissions import TenantPermission
+from apps.usuarios.policies import exigir_email_verificado
 
 
 @public
@@ -116,6 +118,7 @@ class AceitarPropostaView(_FaturamentoSessionView):
         serializer = AceitarPropostaRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         self.exigir_papel(request, Papel.PROPRIETARIO)
+        exigir_email_verificado(request.user)
         with organizacao_atual_privilegiada(request.organizacao_id):
             proposta = PropostaComercial.objects.filter(pk=id, organizacao_id=request.organizacao_id).first()
         if proposta is None:
@@ -132,7 +135,9 @@ class AceitarPropostaView(_FaturamentoSessionView):
         if preparacao is not None:
             assert chave is not None
             with organizacao_atual_privilegiada(request.organizacao_id):
-                assinatura = AssinaturaOrganizacao.objects.get(organizacao_id=request.organizacao_id)
+                assinatura = Assinaturas.obter_corrente(request.organizacao)
+            if assinatura is None:
+                raise APIError(BillingErrorCode.SUBSCRIPTION_REQUIRED, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
             checkout = _executar(
                 CriacaoCheckout(
                     assinatura=assinatura,
@@ -160,6 +165,7 @@ class CriarCheckoutAssinaturaView(_FaturamentoSessionView):
     @require_recent_auth()
     def post(self, request):
         self.exigir_papel(request, Papel.PROPRIETARIO)
+        exigir_email_verificado(request.user)
         serializer = CriarCheckoutRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         dados = serializer.validated_data
@@ -220,6 +226,7 @@ class CriarCheckoutFormaPagamentoView(_FaturamentoSessionView):
     @require_recent_auth()
     def post(self, request):
         self.exigir_papel(request, Papel.ADMINISTRADOR)
+        exigir_email_verificado(request.user)
         serializer = CriarFormaPagamentoCheckoutRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         resultado = _executar(

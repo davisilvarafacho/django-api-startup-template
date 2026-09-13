@@ -3,7 +3,7 @@ from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
 
 from apps.assinaturas.access_policies import MotivoRestricao, StatusAcesso
-from apps.assinaturas.models import Periodicidade, TipoAlteracaoAssinatura
+from apps.assinaturas.models import Periodicidade, Plano, PrecoPlano, TipoAlteracaoAssinatura, VersaoPlano
 from apps.organizacoes.models import Papel
 
 
@@ -11,6 +11,43 @@ class SituacaoAcessoResponseSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=StatusAcesso.choices)
     motivos = serializers.ListField(child=serializers.ChoiceField(choices=MotivoRestricao.choices))
     regularizar_ate = serializers.DateTimeField(allow_null=True)
+
+
+class PrecoPlanoCatalogoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PrecoPlano
+        fields = ["id", "periodicidade", "moeda", "valor_base_centavos", "valor_seat_centavos"]
+
+
+class VersaoPlanoCatalogoSerializer(serializers.ModelSerializer):
+    precos = PrecoPlanoCatalogoSerializer(source="precos_contrataveis", many=True)
+
+    class Meta:
+        model = VersaoPlano
+        fields = [
+            "id",
+            "numero",
+            "seats_inclusos",
+            "limite_seats_trial",
+            "duracao_trial_dias",
+            "carencia_pagamento_dias",
+            "carencia_excesso_seats_dias",
+            "expansao_automatica_seats",
+            "recursos",
+            "precos",
+        ]
+
+
+class PlanoCatalogoSerializer(serializers.ModelSerializer):
+    versao = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Plano
+        fields = ["id", "codigo", "nome", "descricao", "versao"]
+
+    @extend_schema_field(VersaoPlanoCatalogoSerializer)
+    def get_versao(self, plano):
+        return VersaoPlanoCatalogoSerializer(plano.versoes_contrataveis[0]).data
 
 
 class AssinaturaResponseSerializer(serializers.Serializer):

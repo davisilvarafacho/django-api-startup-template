@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import TYPE_CHECKING, Protocol
@@ -148,7 +148,9 @@ def enfileirar_processamento_evento(evento_id: int, variante: str, organizacao_i
 class RepositorioEventosPostgres:
     """Interface mínima que só opera pelas funções SECURITY DEFINER de ingresso."""
 
-    def receber(self, dados: EventoNormalizado) -> tuple[EventoPersistido, bool]:
+    @contextmanager
+    def contexto_ingresso(self):
+        """Abre a fronteira global antes de qualquer leitura de roteamento."""
         papel = settings.BILLING_INGRESS_DATABASE_ROLE
         if papel != "billing_ingress_runtime":
             raise RuntimeError("O papel operacional de ingresso não corresponde ao contrato instalado.")
@@ -156,6 +158,10 @@ class RepositorioEventosPostgres:
             cursor.execute("SET LOCAL ROLE billing_ingress_runtime")
             cursor.execute("SELECT set_config('rls.tenant_id', '0', true)")
             cursor.execute("SELECT set_config('rls.billing_ingress', '1', true)")
+            yield
+
+    def receber(self, dados: EventoNormalizado) -> tuple[EventoPersistido, bool]:
+        with self.contexto_ingresso(), connection.cursor() as cursor:
             cursor.execute(
                 "SELECT evento_id, criado, hash_payload, organizacao_id, status FROM faturamento_ingress_evento(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 [
@@ -176,10 +182,7 @@ class RepositorioEventosPostgres:
         return EventoPersistido(id=linha[0], organizacao_id=linha[3], status=linha[4], hash_payload=linha[2]), linha[1]
 
     def rotear(self, evento: EventoPersistido, destino: DestinoEvento) -> EventoPersistido:
-        with transaction.atomic(), connection.cursor() as cursor:
-            cursor.execute("SET LOCAL ROLE billing_ingress_runtime")
-            cursor.execute("SELECT set_config('rls.tenant_id', '0', true)")
-            cursor.execute("SELECT set_config('rls.billing_ingress', '1', true)")
+        with self.contexto_ingresso(), connection.cursor() as cursor:
             cursor.execute("SELECT faturamento_rotear_evento_destino(%s,%s)", [evento.id, destino.organizacao_id])
             roteado = cursor.fetchone()[0]
         if not roteado:
@@ -300,9 +303,11 @@ class EventosCobranca:
         except EventoWebhookInvalido:
             _registrar_metrica(variante, "protocol", familia)
             raise
-        destino = self.resolver_destino(evento) if dados.exige_tenant else None
-        escopo = transaction.atomic() if isinstance(self.repositorio, RepositorioEventosPostgres) else nullcontext()
+        escopo = self.repositorio.contexto_ingresso() if isinstance(self.repositorio, RepositorioEventosPostgres) else nullcontext()
         with escopo:
+            # AssinaturaGateway e CheckoutCobranca também são protegidos: o
+            # login NOINHERIT só pode resolver o destino depois do SET ROLE.
+            destino = self.resolver_destino(evento) if dados.exige_tenant else None
             evento_local, novo = self.repositorio.receber(dados)
             if not novo:
                 if evento_local.hash_payload != dados.hash_payload:

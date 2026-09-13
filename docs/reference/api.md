@@ -125,14 +125,29 @@ Erros comuns desses endpoints: `auth.invalid_credentials`,
 `organizations.tenant_mismatch`,
 `organizations.membership_required`.
 
-## Assinatura
-
-Todas as rotas exigem uma sessão humana e o header `X-Organization`; API keys
-não recebem acesso financeiro por padrão. Alteração e cancelamento exigem
-reautenticação recente e MFA quando o usuário o tiver habilitado.
+## Organizações
 
 | Rota | Contrato |
 | --- | --- |
+| `PUT/PATCH /organizacoes/{id}/` | Proprietário ou administrador atualiza exclusivamente `email_faturamento`; exige sessão humana, autenticação recente e e-mail verificado. |
+
+O corpo deve informar `email_faturamento` mesmo no `PATCH`. O valor pode ser um
+endereço de e-mail válido ou `null`, que remove o destinatário específico de
+faturamento. Campo ausente, vazio ou com formato inválido responde `422`; outros
+campos da organização não são alterados por essa rota.
+
+## Assinatura
+
+`GET /planos/` exige autenticação, dispensa `X-Organization` e lista somente
+planos visíveis com versão atual publicada e preços ativos contratáveis. As
+demais rotas exigem uma sessão humana e o header `X-Organization`; API keys não
+recebem acesso financeiro por padrão. Alteração e cancelamento exigem
+reautenticação recente e MFA quando o usuário o tiver habilitado. Toda mutação
+contratual ou financeira exige também e-mail verificado.
+
+| Rota | Contrato |
+| --- | --- |
+| `GET /planos/` | Catálogo contratável global; retorna plano, versão atual publicada, recursos/seats/carências e preços ativos. |
 | `GET /assinatura/` | Proprietário ou administrador; devolve o snapshot corrente, revisão e situação de acesso com motivos e menor prazo de regularização. |
 | `GET /assinatura/recursos/` | Qualquer vínculo ativo; devolve todos os recursos efetivos em tipos JSON. |
 | `GET /assinatura/utilizacao-seats/` | Proprietário ou administrador; devolve contratados, consumo, reservas, disponibilidade e excessos. |

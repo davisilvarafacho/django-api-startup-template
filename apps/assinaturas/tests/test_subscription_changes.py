@@ -32,7 +32,7 @@ from apps.assinaturas.subscriptions import (
     TermosAssinatura,
 )
 from apps.organizacoes.context import organizacao_atual_privilegiada
-from apps.organizacoes.models import Organizacao
+from apps.organizacoes.models import Organizacao, Papel, Vinculo
 from apps.usuarios.models import Usuario
 from tests.support.usuarios import criar_usuario
 
@@ -168,8 +168,10 @@ def test_solicitacao_idempotente_retorna_existente_e_recusa_payload_divergente()
 
 def test_idempotencia_de_alteracao_inclui_assinatura_solicitante_e_momento_resolvido():
     organizacao, assinatura, versao, preco = _assinatura_profissional(periodo=True)
-    solicitante_a = criar_usuario(email="autor-a@example.com")
-    solicitante_b = criar_usuario(email="autor-b@example.com")
+    solicitante_a = criar_usuario(email="autor-a@example.com", email_verificado_em=timezone.now())
+    solicitante_b = criar_usuario(email="autor-b@example.com", email_verificado_em=timezone.now())
+    Vinculo.objects.create(organizacao=organizacao, usuario=solicitante_a, papel=Papel.PROPRIETARIO)
+    Vinculo.objects.create(organizacao=organizacao, usuario=solicitante_b, papel=Papel.PROPRIETARIO)
     aplicar_em = assinatura.periodo_atual_termina_em
     comando = replace(
         _comando(
@@ -199,7 +201,8 @@ def test_idempotencia_de_alteracao_inclui_assinatura_solicitante_e_momento_resol
 @pytest.mark.django_db(transaction=True)
 def test_solicitacao_de_alteracao_bloqueia_solicitante_antes_da_organizacao():
     organizacao, assinatura, versao, preco = _assinatura_profissional()
-    solicitante = criar_usuario(email="ordem-alteracao@example.com")
+    solicitante = criar_usuario(email="ordem-alteracao@example.com", email_verificado_em=timezone.now())
+    Vinculo.objects.create(organizacao=organizacao, usuario=solicitante, papel=Papel.PROPRIETARIO)
     comando = replace(
         _comando(assinatura, versao, preco, seats=8, chave="ordem-alteracao"),
         solicitada_por=solicitante,

@@ -67,3 +67,11 @@ ausentes e troca a versão atual retirando primeiro a flag anterior. Se o mesmo
 `(plano, numero)` ou preço publicado tiver conteúdo diferente, o comando falha
 e orienta declarar o próximo número; nenhuma escrita parcial permanece. Ele
 não cria assinaturas, produtos remotos nem chama gateway.
+
+## Consulta contratável
+
+`GET /planos/` exige autenticação, mas é uma rota global sem header de tenant.
+A resposta inclui somente planos visíveis e ativos cuja versão atual esteja
+publicada, além dos preços ativos dessa versão. Versões históricas, rascunhos e
+preços desativados não aparecem; a consulta não instancia Stripe nem outro
+gateway.

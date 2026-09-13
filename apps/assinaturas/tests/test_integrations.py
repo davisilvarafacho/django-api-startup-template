@@ -215,7 +215,7 @@ def test_convite_real_bloqueia_quando_ultimo_seat_ja_esta_comprometido():
 
 def test_aceite_troca_reserva_por_consumo_sem_exceder_capacidade():
     organizacao, _ = _organizacao_com_contrato(seats=1, slug="aceite-reserva")
-    usuario = criar_usuario(email="aceite-reserva@example.com")
+    usuario = criar_usuario(email="aceite-reserva@example.com", email_verificado_em=timezone.now())
     convite = Convite.objects.create(
         organizacao=organizacao,
         email=usuario.email,
@@ -299,7 +299,7 @@ def test_convite_e_desativacao_seguem_usuario_antes_de_organizacao_sem_deadlock(
 @pytest.mark.django_db(transaction=True)
 def test_aceite_bloqueia_usuario_antes_da_organizacao():
     organizacao = Organizacao.objects.create(nome="Ordem aceite", slug="ordem-aceite")
-    usuario = criar_usuario(email="ordem-aceite@example.com")
+    usuario = criar_usuario(email="ordem-aceite@example.com", email_verificado_em=timezone.now())
     convite = Convite.objects.create(
         organizacao=organizacao,
         email=usuario.email,
@@ -516,7 +516,7 @@ def test_expansoes_automaticas_concorrentes_convergem_para_uma_alteracao_local()
 def test_aceite_em_excesso_solicita_expansao_e_mantem_convite_pendente_ate_confirmacao():
     organizacao, assinatura = _organizacao_com_contrato(seats=1, slug="expansao-aceite", expansao_automatica=True)
     proprietario = criar_usuario(email="owner-expansao-aceite@example.com")
-    convidado = criar_usuario(email="convidado-expansao-aceite@example.com")
+    convidado = criar_usuario(email="convidado-expansao-aceite@example.com", email_verificado_em=timezone.now())
     Vinculo.objects.create(organizacao=organizacao, usuario=proprietario, papel=Papel.PROPRIETARIO)
     convite = Convite.objects.create(
         organizacao=organizacao,

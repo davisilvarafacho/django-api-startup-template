@@ -1,8 +1,18 @@
 import copy
+import hashlib
+import hmac
+import json
+import os
+import socket
+import subprocess
+import sys
+import time
 from datetime import timedelta
 from importlib import import_module
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from django.conf import settings
 from django.contrib import admin
@@ -54,6 +64,8 @@ pytestmark = pytest.mark.django_db
 
 PAPEL_INGRESSO = "billing_ingress_tester"
 SENHA_INGRESSO = "billing_ingress_tester"
+PAPEL_HTTP_INGRESSO = "billing_http_ingress_tester"
+SENHA_HTTP_INGRESSO = "billing_http_ingress_tester"
 PAPEL_WEB = "billing_web_tester"
 PAPEL_MIGRATION = "billing_migration_tester"
 SENHA_PAPEIS = "billing_roles_tester"
@@ -91,6 +103,23 @@ def papel_ingresso(django_db_setup, django_db_blocker):
         cursor.execute(f"DROP OWNED BY {PAPEL_MIGRATION}")
         cursor.execute(f"DROP ROLE IF EXISTS {PAPEL_WEB}")
         cursor.execute(f"DROP ROLE IF EXISTS {PAPEL_MIGRATION}")
+
+
+@pytest.fixture(scope="module")
+def papel_http_ingresso(django_db_setup, django_db_blocker):
+    """Login HTTP sem grants ORM: somente a interface runtime estreita."""
+    with django_db_blocker.unblock(), connection.cursor() as cursor:
+        cursor.execute(f"DROP ROLE IF EXISTS {PAPEL_HTTP_INGRESSO}")
+        cursor.execute(
+            f"CREATE ROLE {PAPEL_HTTP_INGRESSO} LOGIN PASSWORD %s NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB NOINHERIT NOREPLICATION",
+            [SENHA_HTTP_INGRESSO],
+        )
+        cursor.execute(f"GRANT USAGE ON SCHEMA public TO {PAPEL_HTTP_INGRESSO}")
+        cursor.execute(f"GRANT billing_ingress_runtime TO {PAPEL_HTTP_INGRESSO} WITH SET TRUE")
+    yield
+    with django_db_blocker.unblock(), connection.cursor() as cursor:
+        cursor.execute(f"DROP OWNED BY {PAPEL_HTTP_INGRESSO}")
+        cursor.execute(f"DROP ROLE IF EXISTS {PAPEL_HTTP_INGRESSO}")
 
 
 def test_modelos_respeitam_fronteira_global_e_tenantizada():
@@ -324,6 +353,14 @@ def test_check_de_credenciais_continua_fail_closed_em_producao():
     assert [erro.id for erro in resultado] == ["faturamento.E001"]
 
 
+def test_check_de_credenciais_permite_par_vazio_apenas_fora_de_producao():
+    with override_settings(
+        IN_PRODUCTION=False,
+        CHECKOUT_VARIANTS={"stripe": ("gateway", {"api_key": "", "webhook_secret": ""})},
+    ):
+        assert configuracao_faturamento_check(None) == []
+
+
 def _mock_role_check(modo, owner_set, runtime_set, *, owner_outbound=False, runtime_replication=False, catalogo=(True, True, 2)):
     cursor_patch = patch("apps.assinaturas.subapps.faturamento.checks.connection.cursor")
     cursor_factory = cursor_patch.start()
@@ -433,7 +470,9 @@ def test_check_deploy_rejeita_nomes_e_modo_arbitrarios():
     [
         (
             "GRANT SELECT ON assinatura_gateway TO billing_ingress_runtime",
-            "REVOKE SELECT ON assinatura_gateway FROM billing_ingress_runtime",
+            "REVOKE SELECT ON assinatura_gateway FROM billing_ingress_runtime; "
+            "GRANT SELECT(id, organizacao_id, assinatura_id, variante, identificador_externo, is_active, is_deleted) "
+            "ON assinatura_gateway TO billing_ingress_runtime",
         ),
         (
             "GRANT USAGE ON SEQUENCE evento_cobranca_id_seq TO billing_ingress_runtime",
@@ -442,6 +481,14 @@ def test_check_deploy_rejeita_nomes_e_modo_arbitrarios():
         (
             "GRANT SELECT(id) ON evento_cobranca TO billing_ingress_runtime",
             "REVOKE SELECT(id) ON evento_cobranca FROM billing_ingress_runtime",
+        ),
+        (
+            "REVOKE SELECT(identificador_externo) ON assinatura_gateway FROM billing_ingress_runtime",
+            "GRANT SELECT(identificador_externo) ON assinatura_gateway TO billing_ingress_runtime",
+        ),
+        (
+            "GRANT SELECT(url) ON checkout_cobranca TO billing_ingress_runtime",
+            "REVOKE SELECT(url) ON checkout_cobranca FROM billing_ingress_runtime",
         ),
         (
             "GRANT CREATE ON SCHEMA public TO billing_ingress_runtime",
@@ -527,6 +574,8 @@ def test_check_deploy_detecta_drift_real_de_privilegios(aplicar, restaurar):
     finally:
         with connection.cursor() as cursor:
             cursor.execute(restaurar)
+        with override_settings(BILLING_DATABASE_MODE="migration"):
+            assert role_ingresso_check(None) == []
 
 
 @pytest.mark.django_db(transaction=True)
@@ -556,6 +605,144 @@ def test_roles_reais_separam_web_ingresso_e_migration(papel_ingresso):
                         cursor.execute("SET ROLE billing_functions_owner")
         finally:
             conexao.close()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_processo_http_ingresso_recebe_webhook_assinado_com_login_minimo(papel_http_ingresso, tmp_path):
+    organizacao = Organizacao.objects.create(nome="HTTP ingress", slug="http-ingress")
+    assinatura = _criar_assinatura(organizacao, _criar_versao(codigo="http-ingress"))
+    AssinaturaGateway.objects.create(
+        organizacao=organizacao,
+        assinatura=assinatura,
+        variante="stripe",
+        identificador_externo="sub_http_ingress",
+    )
+    payload = {
+        "id": "evt_http_ingress",
+        "object": "event",
+        "type": "invoice.paid",
+        "created": int(time.time()),
+        "livemode": False,
+        "data": {
+            "object": {
+                "id": "in_http_ingress",
+                "object": "invoice",
+                "status": "paid",
+                "billing_reason": "subscription_cycle",
+                "subscription": "sub_http_ingress",
+                "customer": "cus_http_ingress",
+                "amount_due": 1000,
+                "amount_paid": 1000,
+                "amount_remaining": 0,
+                "currency": "brl",
+                "lines": {"object": "list", "data": [], "has_more": False},
+                "due_date": None,
+                "status_transitions": {"paid_at": int(time.time())},
+                "next_payment_attempt": None,
+                "attempt_count": 1,
+            }
+        },
+    }
+    body = json.dumps(payload, separators=(",", ":")).encode()
+    webhook_secret = "whsec_http_ingress_test"
+    timestamp = int(time.time())
+    signature = hmac.new(webhook_secret.encode(), f"{timestamp}.".encode() + body, hashlib.sha256).hexdigest()
+    database = settings.DATABASES["default"]
+    conexao_http = psycopg2.connect(
+        dbname=database["NAME"],
+        user=PAPEL_HTTP_INGRESSO,
+        password=SENHA_HTTP_INGRESSO,
+        host=database["HOST"],
+        port=database["PORT"],
+    )
+    try:
+        with conexao_http.cursor() as cursor:
+            cursor.execute("SELECT has_table_privilege(current_user, 'evento_cobranca', 'SELECT')")
+            assert cursor.fetchone() == (False,)
+            cursor.execute("SET ROLE billing_ingress_runtime")
+    finally:
+        conexao_http.close()
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    environment = {
+        **os.environ,
+        "DJANGO_ENVIRONMENT": "test",
+        "DJANGO_SECRET_KEY": settings.SECRET_KEY,
+        "DJANGO_ALLOWED_HOSTS": "127.0.0.1,localhost",
+        "DATABASE_NAME": database["NAME"],
+        "DATABASE_USER": PAPEL_HTTP_INGRESSO,
+        "DATABASE_PASSWORD": SENHA_HTTP_INGRESSO,
+        "DATABASE_HOST": database["HOST"],
+        "DATABASE_PORT": str(database["PORT"]),
+        "BILLING_DATABASE_MODE": "ingress",
+        "STRIPE_API_KEY": "sk_test_http_ingress",
+        "STRIPE_WEBHOOK_SECRET": webhook_secret,
+        "STRIPE_SANDBOX": "True",
+        "CELERY_BROKER_URL": "memory://",
+        "CELERY_RESULT_BACKEND": "cache+memory://",
+        "PROMETHEUS_MULTIPROC_DIR": str(tmp_path),
+    }
+    processo = subprocess.Popen(
+        [
+            os.path.join(os.path.dirname(sys.executable), "gunicorn"),
+            "api.wsgi:application",
+            "--bind",
+            f"127.0.0.1:{port}",
+            "--workers",
+            "1",
+            "--error-logfile",
+            "-",
+            "--access-logfile",
+            "-",
+        ],
+        cwd=settings.BASE_DIR,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        base_url = f"http://127.0.0.1:{port}"
+        for _ in range(100):
+            if processo.poll() is not None:
+                pytest.fail(f"processo ingress encerrou antes de iniciar:\n{processo.stdout.read()}")
+            try:
+                with urlopen(f"{base_url}/health/", timeout=0.2) as response:  # noqa: S310 - loopback controlado pelo teste
+                    if response.status == 200:
+                        break
+            except (HTTPError, URLError, TimeoutError):
+                time.sleep(0.05)
+        else:
+            pytest.fail("processo ingress não ficou pronto no prazo")
+
+        request = Request(  # noqa: S310 - loopback controlado pelo teste
+            f"{base_url}/faturamento/webhooks/stripe/",
+            data=body,
+            headers={"Content-Type": "application/json", "Stripe-Signature": f"t={timestamp},v1={signature}"},
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=5) as response:  # noqa: S310 - loopback controlado pelo teste
+                resposta = json.loads(response.read())
+        except HTTPError as exc:
+            processo.terminate()
+            processo.wait(timeout=5)
+            pytest.fail(f"webhook ingress retornou {exc.code}: {exc.read().decode()}\n{processo.stdout.read()}")
+
+        assert response.status == 200
+        assert resposta == {"received": True, "duplicate": False}
+        with organizacao_atual_privilegiada(organizacao.pk):
+            evento = EventoCobranca.objects.get(identificador_evento="evt_http_ingress")
+        assert evento.organizacao_id == organizacao.pk
+        assert evento.status == StatusEventoCobranca.ROTEADO
+    finally:
+        processo.terminate()
+        try:
+            processo.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            processo.kill()
+            processo.wait(timeout=5)
 
 
 def test_admin_oculta_payload_urls_e_e_somente_leitura():
@@ -667,7 +854,15 @@ def test_rls_real_ingresso_roteia_uma_vez_e_tenant_isola(papel_ingresso):
                  AND table_name IN ('evento_cobranca', 'assinatura_gateway')
                ORDER BY table_name, column_name, privilege_type"""
         )
-        assert cursor.fetchall() == []
+        assert cursor.fetchall() == [
+            ("assinatura_gateway", "assinatura_id", "SELECT"),
+            ("assinatura_gateway", "id", "SELECT"),
+            ("assinatura_gateway", "identificador_externo", "SELECT"),
+            ("assinatura_gateway", "is_active", "SELECT"),
+            ("assinatura_gateway", "is_deleted", "SELECT"),
+            ("assinatura_gateway", "organizacao_id", "SELECT"),
+            ("assinatura_gateway", "variante", "SELECT"),
+        ]
         cursor.execute(
             """SELECT privilege_type FROM information_schema.role_usage_grants
                WHERE object_schema='public' AND object_name='evento_cobranca_id_seq'
@@ -1404,6 +1599,8 @@ def test_migrations_0009_0011_revertem_com_auditoria_automatica_e_fatos_nulos(pa
     folhas = MigrationExecutor(connection).loader.graph.leaf_nodes()
     conexao_migration = connections[ALIAS_MIGRATION_NOBYPASS]
     tabelas = (
+        "assinatura_gateway",
+        "checkout_cobranca",
         "evento_cobranca",
         "fatura_assinatura",
         "reabertura_evento_cobranca",

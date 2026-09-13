@@ -434,6 +434,27 @@ def test_repositorio_ingresso_deduplica_evento_roteado_sem_grants_diretos():
 
 
 @pytest.mark.django_db(transaction=True)
+def test_resolve_destino_depois_de_assumir_role_e_contexto_ingresso():
+    evento = checkout_evento(event_id="evt_contexto_resolucao", reference_id="referencia-inexistente")
+
+    def resolver(_evento):
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT current_setting('role', true), current_setting('rls.tenant_id', true), current_setting('rls.billing_ingress', true)"
+            )
+            assert cursor.fetchone() == ("billing_ingress_runtime", "0", "1")
+
+    resultado = EventosCobranca(resolver_destino=resolver, enqueue=Mock()).receber(
+        "stripe",
+        evento,
+        client=SimpleNamespace(),
+    )
+
+    assert resultado.novo is True
+    assert resultado.status == StatusEventoCobranca.RECEBIDO
+
+
+@pytest.mark.django_db(transaction=True)
 def test_corrida_webhook_e_reconciliacao_persiste_e_enfileira_uma_unica_vez():
     organizacao = Organizacao.objects.create(nome="Corrida webhook", slug="corrida-webhook")
     assinatura = _criar_assinatura(organizacao, _criar_versao(codigo="corrida-webhook"))

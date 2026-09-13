@@ -3,6 +3,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from apps.assinaturas.subapps.faturamento.views import (
+    AceitarPropostaView,
     CriarCheckoutAssinaturaView,
     CriarCheckoutFormaPagamentoView,
     ListarCheckoutsView,
@@ -13,6 +14,7 @@ from apps.assinaturas.subapps.faturamento.views import (
 router = DefaultRouter()
 
 urlpatterns = [
+    path("assinatura/propostas/<int:id>/aceitar/", AceitarPropostaView.as_view(), name="aceitar-proposta"),
     path("assinatura/checkouts/", CriarCheckoutAssinaturaView.as_view(), name="criar-checkout-assinatura"),
     path("faturamento/checkouts/", ListarCheckoutsView.as_view(), name="listar-checkouts-faturamento"),
     path("faturamento/faturas/", ListarFaturasView.as_view(), name="listar-faturas-faturamento"),

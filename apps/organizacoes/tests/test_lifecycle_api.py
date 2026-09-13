@@ -1,5 +1,6 @@
 """Contrato HTTP do onboarding e encerramento de organizações."""
 
+import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from threading import Barrier
@@ -15,6 +16,7 @@ import pytest
 from apps.api.autenticacao.mfa import confirm_enrollment, start_enrollment
 from apps.api.autenticacao.models import AuthToken, MFAFactor, MFAFactorType, TokenMetaData, TokenType
 from apps.api.autenticacao.services import issue_token
+from apps.logs.models import LogAlteracao
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
 from apps.organizacoes.organizations import Organizacoes, TermoEncerramentoAgendado, TermoEncerramentoImediato
 from tests.support.usuarios import criar_usuario
@@ -78,7 +80,10 @@ def _client_com_sessao(usuario, *, recente=True):
     return client
 
 
-def _organizacao_do(usuario, *, slug="ciclo-http", papel=Papel.PROPRIETARIO):
+def _organizacao_do(usuario, *, slug="ciclo-http", papel=Papel.PROPRIETARIO, email_verificado=True):
+    if email_verificado and usuario.email_verificado_em is None:
+        usuario.email_verificado_em = timezone.now()
+        usuario.save(update_fields=["email_verificado_em"])
     organizacao = Organizacao.objects.create(nome="Organização", slug=slug)
     Vinculo.objects.create(organizacao=organizacao, usuario=usuario, papel=papel)
     return organizacao
@@ -116,6 +121,138 @@ def test_post_organizacoes_executa_onboarding_e_devolve_organizacao():
     assert AssinaturasHTTP.contratos_criados == [organizacao.pk]
 
 
+@pytest.mark.parametrize("papel", [Papel.PROPRIETARIO, Papel.ADMINISTRADOR])
+def test_proprietario_e_administrador_atualizam_somente_email_de_faturamento(papel):
+    usuario = criar_usuario(email=f"ator-{papel}@example.com", email_verificado_em=timezone.now())
+    organizacao = _organizacao_do(usuario, slug=f"email-faturamento-{papel}", papel=papel)
+    organizacao.email_faturamento = "anterior@example.com"
+    organizacao.save(update_fields=["email_faturamento"])
+
+    response = _client_com_sessao(usuario).patch(
+        f"/organizacoes/{organizacao.pk}/",
+        {
+            "email_faturamento": "novo-financeiro@example.com",
+            "nome": "Nome que não pode ser alterado por esta rota",
+            "slug": "slug-que-nao-pode-ser-alterado",
+        },
+        format="json",
+    )
+
+    organizacao.refresh_from_db()
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": organizacao.pk,
+        "email_faturamento": "novo-financeiro@example.com",
+    }
+    assert organizacao.email_faturamento == "novo-financeiro@example.com"
+    assert organizacao.nome == "Organização"
+    assert organizacao.slug == f"email-faturamento-{papel}"
+
+
+@pytest.mark.parametrize("method", ["put", "patch"])
+def test_atualizacao_de_email_faturamento_exige_sessao_recente(method):
+    proprietario = criar_usuario(email="owner-email-sem-recencia@example.com", email_verificado_em=timezone.now())
+    organizacao = _organizacao_do(proprietario, slug=f"email-faturamento-sem-recencia-{method}")
+    organizacao.email_faturamento = "anterior@example.com"
+    organizacao.save(update_fields=["email_faturamento"])
+
+    response = getattr(_client_com_sessao(proprietario, recente=False), method)(
+        f"/organizacoes/{organizacao.pk}/",
+        {"email_faturamento": "indevido@example.com"},
+        format="json",
+    )
+
+    organizacao.refresh_from_db()
+    assert response.status_code == 401
+    assert response.json()["errors"][0]["code"] == "auth.reauthentication_required"
+    assert organizacao.email_faturamento == "anterior@example.com"
+
+
+def test_gestor_nao_atualiza_email_de_faturamento():
+    gestor = criar_usuario(email="gestor-email-faturamento@example.com", email_verificado_em=timezone.now())
+    organizacao = _organizacao_do(gestor, slug="gestor-email-faturamento", papel=Papel.GESTOR)
+    organizacao.email_faturamento = "anterior@example.com"
+    organizacao.save(update_fields=["email_faturamento"])
+
+    response = _client_com_sessao(gestor).patch(
+        f"/organizacoes/{organizacao.pk}/",
+        {"email_faturamento": "indevido@example.com"},
+        format="json",
+    )
+
+    organizacao.refresh_from_db()
+    assert response.status_code == 403
+    assert response.json()["errors"][0]["code"] == "organizations.role_insufficient"
+    assert organizacao.email_faturamento == "anterior@example.com"
+
+
+def test_patch_de_organizacao_sem_email_de_faturamento_nao_altera_outros_campos():
+    proprietario = criar_usuario(email="owner-patch-sem-email@example.com", email_verificado_em=timezone.now())
+    organizacao = _organizacao_do(proprietario, slug="patch-sem-email-faturamento")
+
+    response = _client_com_sessao(proprietario).patch(
+        f"/organizacoes/{organizacao.pk}/",
+        {"nome": "Nome indevido", "slug": "slug-indevido"},
+        format="json",
+    )
+
+    organizacao.refresh_from_db()
+    assert response.status_code == 422
+    assert response.json()["errors"][0]["field"] == "email_faturamento"
+    assert organizacao.nome == "Organização"
+    assert organizacao.slug == "patch-sem-email-faturamento"
+
+
+def test_email_nao_verificado_nao_atualiza_email_de_faturamento():
+    proprietario = criar_usuario(email="owner-nao-verificado@example.com", email_verificado_em=None)
+    organizacao = _organizacao_do(
+        proprietario,
+        slug="owner-email-nao-verificado",
+        email_verificado=False,
+    )
+    organizacao.email_faturamento = "anterior@example.com"
+    organizacao.save(update_fields=["email_faturamento"])
+
+    response = _client_com_sessao(proprietario).patch(
+        f"/organizacoes/{organizacao.pk}/",
+        {"email_faturamento": "bloqueado@example.com"},
+        format="json",
+    )
+
+    organizacao.refresh_from_db()
+    assert response.status_code == 403
+    assert response.json()["errors"][0]["code"] == "account.email_not_verified"
+    assert organizacao.email_faturamento == "anterior@example.com"
+
+
+def test_atualizacao_do_email_de_faturamento_e_auditada_sem_expor_enderecos():
+    anterior = "financeiro-anterior@example.com"
+    novo = "financeiro-novo@example.com"
+    proprietario = criar_usuario(email="owner-auditoria-financeira@example.com", email_verificado_em=timezone.now())
+    organizacao = Organizacao.objects.create(
+        nome="Auditoria financeira",
+        slug="auditoria-email-faturamento",
+        email_faturamento=anterior,
+    )
+    Vinculo.objects.create(organizacao=organizacao, usuario=proprietario, papel=Papel.PROPRIETARIO)
+
+    response = _client_com_sessao(proprietario).patch(
+        f"/organizacoes/{organizacao.pk}/",
+        {"email_faturamento": novo},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    registros = LogAlteracao.objects.get_for_object(organizacao).filter(action=LogAlteracao.Action.UPDATE)
+    assert registros.count() == 1
+    registro = registros.get()
+    assert registro.actor_id == proprietario.pk
+    assert registro.changes == {"email_faturamento": ["[REDACTED]", "[REDACTED]"]}
+    conteudo = json.dumps(registro.changes)
+    assert anterior not in conteudo
+    assert novo not in conteudo
+
+
 def test_solicitar_encerramento_exige_sessao_recente():
     proprietario = criar_usuario()
     organizacao = _organizacao_do(proprietario, slug="sem-recent")
@@ -124,6 +261,22 @@ def test_solicitar_encerramento_exige_sessao_recente():
 
     assert response.status_code == 401
     assert response.json()["errors"][0]["code"] == "auth.reauthentication_required"
+    organizacao.refresh_from_db()
+    assert organizacao.encerramento_solicitado_em is None
+
+
+def test_mutacao_de_encerramento_exige_email_verificado():
+    proprietario = criar_usuario(email="owner-encerramento-nao-verificado@example.com", email_verificado_em=None)
+    organizacao = _organizacao_do(
+        proprietario,
+        slug="encerramento-nao-verificado",
+        email_verificado=False,
+    )
+
+    response = _client_com_sessao(proprietario).post(f"/organizacoes/{organizacao.pk}/encerramento/")
+
+    assert response.status_code == 403
+    assert response.json()["errors"][0]["code"] == "account.email_not_verified"
     organizacao.refresh_from_db()
     assert organizacao.encerramento_solicitado_em is None
 

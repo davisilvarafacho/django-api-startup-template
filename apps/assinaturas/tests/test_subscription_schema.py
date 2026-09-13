@@ -60,6 +60,7 @@ def test_mutacoes_documentam_body_revisao_recencia_e_conflitos():
     assert alteracao["responses"]["201"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/AlteracaoAssinaturaResponse"}
     assert set(alteracao["responses"]) == {"201", "400", "401", "403", "409", "422", "503"}
     assert "auth.reauthentication_required" in alteracao["responses"]["401"]["description"]
+    assert "account.email_not_verified" in alteracao["responses"]["403"]["description"]
     assert "billing.subscription_conflict" in alteracao["responses"]["409"]["description"]
 
     assert cancelamento["post"]["requestBody"]["content"]["application/json"]["schema"] == {
@@ -74,6 +75,8 @@ def test_mutacoes_documentam_body_revisao_recencia_e_conflitos():
     assert cancelamento["delete"]["responses"]["204"]["description"]
     assert set(cancelamento["post"]["responses"]) == {"200", "202", "400", "401", "403", "409", "422", "503"}
     assert set(cancelamento["delete"]["responses"]) == {"204", "400", "401", "403", "409", "422", "503"}
+    assert "account.email_not_verified" in cancelamento["post"]["responses"]["403"]["description"]
+    assert "account.email_not_verified" in cancelamento["delete"]["responses"]["403"]["description"]
 
 
 @pytest.mark.parametrize(

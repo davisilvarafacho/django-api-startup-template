@@ -33,10 +33,13 @@ from apps.assinaturas.models import (
     TipoAlteracaoAssinatura,
     VersaoPlano,
 )
+from apps.organizacoes.memberships import Vinculos
+from apps.organizacoes.models import Papel
+from apps.usuarios.policies import exigir_email_verificado
 
 if TYPE_CHECKING:
     from apps.organizacoes.memberships import OcupacaoSeats
-    from apps.organizacoes.models import Organizacao, Papel
+    from apps.organizacoes.models import Organizacao
     from apps.organizacoes.organizations import TermoEncerramento
     from apps.usuarios.models import Usuario
 
@@ -636,13 +639,24 @@ class Assinaturas:
         *,
         agora: datetime,
         revisao_esperada: int | None = None,
+        ator: Usuario | None = None,
     ) -> TermoEncerramento:
         """Decide o termo e persiste o cancelamento sob organização -> assinatura."""
         from apps.organizacoes.organizations import TermoEncerramentoAgendado, TermoEncerramentoImediato
 
         using = organizacao._state.db or "default"
         with transaction.atomic(using=using):
+            usuarios_bloqueados = lock_user_accounts((ator,), using=using)
+            if ator is not None:
+                exigir_email_verificado(usuarios_bloqueados[ator.pk])
             organizacao = cls._bloquear_organizacao(organizacao.pk, using=using)
+            if ator is not None:
+                Vinculos.bloquear_e_exigir_papel(
+                    organizacao=organizacao,
+                    usuario=usuarios_bloqueados[ator.pk],
+                    papel_minimo=Papel.PROPRIETARIO,
+                    using=using,
+                )
             assinatura = cls.obter_corrente(organizacao, bloquear=True)
             if assinatura is None:
                 raise APIError(BillingErrorCode.SUBSCRIPTION_REQUIRED, status_code=503)
@@ -678,11 +692,27 @@ class Assinaturas:
             return TermoEncerramentoAgendado(agendado_para=assinatura.cancelamento_agendado_para)
 
     @classmethod
-    def cancelar_encerramento(cls, organizacao: Organizacao, *, revisao_esperada: int | None = None) -> None:
+    def cancelar_encerramento(
+        cls,
+        organizacao: Organizacao,
+        *,
+        revisao_esperada: int | None = None,
+        ator: Usuario | None = None,
+    ) -> None:
         """Limpa o agendamento contratual sob a mesma ordem global de locks."""
         using = organizacao._state.db or "default"
         with transaction.atomic(using=using):
+            usuarios_bloqueados = lock_user_accounts((ator,), using=using)
+            if ator is not None:
+                exigir_email_verificado(usuarios_bloqueados[ator.pk])
             organizacao = cls._bloquear_organizacao(organizacao.pk, using=using)
+            if ator is not None:
+                Vinculos.bloquear_e_exigir_papel(
+                    organizacao=organizacao,
+                    usuario=usuarios_bloqueados[ator.pk],
+                    papel_minimo=Papel.PROPRIETARIO,
+                    using=using,
+                )
             assinatura = cls.obter_corrente(organizacao, bloquear=True)
             if assinatura is None:
                 raise APIError(BillingErrorCode.SUBSCRIPTION_REQUIRED, status_code=503)
@@ -987,8 +1017,17 @@ class Assinaturas:
         with transaction.atomic(using=using):
             usuarios_bloqueados = lock_user_accounts((comando.solicitada_por,), using=using)
             solicitante = usuarios_bloqueados.get(comando.solicitada_por.pk) if comando.solicitada_por is not None else None
+            if solicitante is not None:
+                exigir_email_verificado(solicitante)
             organizacao = cls._bloquear_organizacao(assinatura_informada.organizacao_id, using=using)
             cls._validar_organizacao_contratavel(organizacao)
+            if solicitante is not None:
+                Vinculos.bloquear_e_exigir_papel(
+                    organizacao=organizacao,
+                    usuario=solicitante,
+                    papel_minimo=Papel.PROPRIETARIO,
+                    using=using,
+                )
             assinatura = AssinaturaOrganizacao.all_objects.using(using).select_for_update().get(pk=assinatura_informada.pk, organizacao=organizacao)
             existente = (
                 AlteracaoAssinatura.all_objects.using(using)

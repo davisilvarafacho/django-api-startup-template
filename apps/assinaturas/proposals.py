@@ -12,9 +12,11 @@ from typing import TYPE_CHECKING
 from django.db import transaction
 from django.utils import timezone
 
+from apps.api.autenticacao.errors import AuthErrorCode
 from apps.api.autenticacao.mfa import active_factors, consume_totp
 from apps.api.autenticacao.models import MFAFactorType
 from apps.api.autenticacao.services import lock_user_accounts
+from apps.api.core.errors import APIError
 from apps.assinaturas.features import CATALOGO_RECURSOS, ValoresRecursos
 from apps.assinaturas.models import (
     AssinaturaOrganizacao,
@@ -31,6 +33,7 @@ from apps.assinaturas.subscriptions import (
     TermosAssinatura,
     _criar_assinatura_enterprise_de_proposta,
 )
+from apps.usuarios.policies import exigir_email_verificado
 
 if TYPE_CHECKING:
     from apps.organizacoes.models import Organizacao
@@ -215,7 +218,8 @@ class Propostas:
         agora = agora or timezone.now()
         with cls._estado_bloqueado(proposta, usuarios=(ator,)) as (bloqueada, usuarios):
             ator_bloqueado = usuarios[ator.pk]
-            cls._validar_proprietario(bloqueada, ator_id=ator_bloqueado.pk)
+            exigir_email_verificado(ator_bloqueado)
+            cls._validar_proprietario(bloqueada, ator=ator_bloqueado)
             cls._validar_vigente(bloqueada, agora=agora)
             if bloqueada.status == StatusPropostaComercial.ACEITA:
                 if revisao_esperada not in (bloqueada.revisao, bloqueada.revisao - 1):
@@ -244,7 +248,7 @@ class Propostas:
         agora = agora or timezone.now()
         with cls._estado_bloqueado(proposta, usuarios=(ator,)) as (bloqueada, usuarios):
             ator_bloqueado = usuarios[ator.pk]
-            cls._validar_proprietario(bloqueada, ator_id=ator_bloqueado.pk)
+            cls._validar_proprietario(bloqueada, ator=ator_bloqueado)
             cls._validar_revisao(bloqueada, revisao_esperada)
             cls._validar_vigente(bloqueada, agora=agora)
             if bloqueada.status != StatusPropostaComercial.ENVIADA:
@@ -326,6 +330,7 @@ class Propostas:
         justificativa = justificativa.strip()
         with cls._estado_bloqueado(proposta, usuarios=(operador,)) as (bloqueada, usuarios):
             operador_bloqueado = usuarios[operador.pk]
+            exigir_email_verificado(operador_bloqueado)
             cls._validar_operador(
                 operador_bloqueado,
                 permissao="assinaturas.activate_contractual_propostacomercial",
@@ -440,22 +445,34 @@ class Propostas:
             raise ConflitoPropostaComercial("A validade da proposta expirou.")
 
     @staticmethod
-    def _validar_proprietario(proposta: PropostaComercial, *, ator_id: int) -> None:
+    def _validar_proprietario(proposta: PropostaComercial, *, ator: Usuario) -> None:
         from apps.organizacoes.models import Papel, Vinculo
 
-        autorizado = Vinculo.objects.filter(
-            organizacao_id=proposta.organizacao_id,
-            usuario_id=ator_id,
-            papel=Papel.PROPRIETARIO,
-            is_active=True,
-            is_deleted=False,
-        ).exists()
+        if ator.is_deleted or not ator.is_active or ator.exclusao_agendada_para is not None:
+            raise APIError(AuthErrorCode.USER_INACTIVE, status_code=401)
+        autorizado = (
+            Vinculo.objects.select_for_update()
+            .filter(
+                organizacao_id=proposta.organizacao_id,
+                usuario_id=ator.pk,
+                papel=Papel.PROPRIETARIO,
+                is_active=True,
+                is_deleted=False,
+            )
+            .exists()
+        )
         if not autorizado:
             raise ConflitoPropostaComercial("Somente proprietário pode aceitar a proposta.")
 
     @staticmethod
     def _validar_operador(operador: Usuario, *, permissao: str) -> None:
-        if not operador.is_active or not operador.is_staff or not operador.has_perm(permissao):
+        if (
+            operador.is_deleted
+            or not operador.is_active
+            or operador.exclusao_agendada_para is not None
+            or not operador.is_staff
+            or not operador.has_perm(permissao)
+        ):
             raise ConflitoPropostaComercial("A acao exige operador autorizado.")
 
     @staticmethod

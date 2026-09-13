@@ -8,6 +8,7 @@ from django.utils import timezone
 
 import pytest
 
+from apps.api.core.errors import APIError
 from apps.organizacoes.memberships import OcupacaoSeats, Vinculos
 from apps.organizacoes.models import Convite, Organizacao, Papel, Vinculo
 from tests.support.usuarios import criar_usuario
@@ -93,7 +94,7 @@ def test_criar_proprietario_cria_vinculo_pelo_servico():
 
 def test_aceitar_convite_cria_vinculo_e_consumo_sem_manter_reserva():
     organizacao = Organizacao.objects.create(nome="Acme", slug="acme-aceite")
-    usuario = criar_usuario(email="aceite@example.com")
+    usuario = criar_usuario(email="aceite@example.com", email_verificado_em=timezone.now())
     convite = Convite.objects.create(organizacao=organizacao, email=usuario.email, papel=Papel.GESTOR)
 
     vinculo = Vinculos.aceitar_convite(convite, usuario)
@@ -104,9 +105,49 @@ def test_aceitar_convite_cria_vinculo_e_consumo_sem_manter_reserva():
     assert Vinculos.calcular_ocupacao(organizacao, frozenset()) == OcupacaoSeats(consumidos=1, reservados=0)
 
 
+def test_aceitar_convite_revalida_email_sob_lock():
+    organizacao = Organizacao.objects.create(nome="Acme", slug="acme-aceite-email-lock")
+    usuario = criar_usuario(email="destinatario-original@example.com", email_verificado_em=timezone.now())
+    convite = Convite.objects.create(
+        organizacao=organizacao,
+        email="destinatario-atual@example.com",
+        papel=Papel.MEMBRO,
+    )
+
+    with pytest.raises(APIError) as erro:
+        Vinculos.aceitar_convite(convite, usuario)
+
+    assert erro.value.code == "organizations.invitation_email_mismatch"
+    assert Vinculo.objects.filter(organizacao=organizacao, usuario=usuario).exists() is False
+
+
+@pytest.mark.parametrize(
+    "estado",
+    [
+        {"is_active": False},
+        {"is_deleted": True},
+        {"exclusao_agendada_para": timezone.now() + timedelta(days=1)},
+    ],
+)
+def test_aceitar_convite_revalida_conta_elegivel_sob_lock(estado):
+    organizacao = Organizacao.objects.create(nome="Acme", slug=f"acme-aceite-conta-{next(iter(estado))}")
+    usuario = criar_usuario(
+        email=f"{next(iter(estado))}@example.com",
+        email_verificado_em=timezone.now(),
+        **estado,
+    )
+    convite = Convite.objects.create(organizacao=organizacao, email=usuario.email, papel=Papel.MEMBRO)
+
+    with pytest.raises(APIError) as erro:
+        Vinculos.aceitar_convite(convite, usuario)
+
+    assert erro.value.code == "auth.user_inactive"
+    assert Vinculo.objects.filter(organizacao=organizacao, usuario=usuario).exists() is False
+
+
 def test_aceitar_convite_pelo_model_preserva_fachada_publica():
     organizacao = Organizacao.objects.create(nome="Acme", slug="acme-fachada-aceite")
-    usuario = criar_usuario(email="fachada@example.com")
+    usuario = criar_usuario(email="fachada@example.com", email_verificado_em=timezone.now())
     convite = Convite.objects.create(organizacao=organizacao, email=usuario.email, papel=Papel.GESTOR)
 
     vinculo = convite.aceitar(usuario)
@@ -119,7 +160,7 @@ def test_aceitar_convite_pelo_model_preserva_fachada_publica():
 
 def test_aceitar_convite_eleva_papel_de_vinculo_existente():
     organizacao = Organizacao.objects.create(nome="Acme", slug="acme-eleva-papel")
-    usuario = criar_usuario(email="eleva@example.com")
+    usuario = criar_usuario(email="eleva@example.com", email_verificado_em=timezone.now())
     Vinculo.objects.create(organizacao=organizacao, usuario=usuario, papel=Papel.MEMBRO)
     convite = Convite.objects.create(organizacao=organizacao, email=usuario.email, papel=Papel.GESTOR)
 
@@ -132,7 +173,7 @@ def test_aceitar_convite_eleva_papel_de_vinculo_existente():
 
 def test_aceitar_convite_nao_rebaixa_papel_de_vinculo_existente():
     organizacao = Organizacao.objects.create(nome="Acme", slug="acme-nao-rebaixa-papel")
-    usuario = criar_usuario(email="nao-rebaixa@example.com")
+    usuario = criar_usuario(email="nao-rebaixa@example.com", email_verificado_em=timezone.now())
     Vinculo.objects.create(organizacao=organizacao, usuario=usuario, papel=Papel.ADMINISTRADOR)
     convite = Convite.objects.create(organizacao=organizacao, email=usuario.email, papel=Papel.MEMBRO)
 
@@ -148,4 +189,7 @@ def test_aceitar_convite_expirado_e_recusado_pelo_servico():
     convite = Convite.objects.create(organizacao=organizacao, email="expirado@example.com", expira_em=timezone.now() - timedelta(seconds=1))
 
     with pytest.raises(ValidationError):
-        Vinculos.aceitar_convite(convite, criar_usuario(email="expirado@example.com"))
+        Vinculos.aceitar_convite(
+            convite,
+            criar_usuario(email="expirado@example.com", email_verificado_em=timezone.now()),
+        )

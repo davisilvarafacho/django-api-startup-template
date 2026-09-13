@@ -1,8 +1,12 @@
 """Contrato HTTP fino do aceite de proposta comercial."""
 
+import importlib
 from datetime import timedelta
 from types import SimpleNamespace
 
+from django.conf import settings
+from django.test import override_settings
+from django.urls import clear_url_caches, resolve
 from django.utils import timezone
 
 from rest_framework.test import APIClient
@@ -12,11 +16,18 @@ from drf_spectacular.generators import SchemaGenerator
 
 from apps.api.autenticacao.models import AuthToken, TokenMetaData, TokenType
 from apps.api.core.errors import discover_error_codes
-from apps.assinaturas import urls as assinaturas_urls
 from apps.assinaturas.catalogs import PLANOS_BOOTSTRAP, CatalogoPlanos, sincronizar_planos
 from apps.assinaturas.features import CATALOGO_RECURSOS, ValoresRecursos
-from apps.assinaturas.models import ModoAtivacaoProposta, Periodicidade, StatusPropostaComercial
+from apps.assinaturas.models import (
+    AssinaturaOrganizacao,
+    ModoAtivacaoProposta,
+    Periodicidade,
+    StatusAssinatura,
+    StatusPropostaComercial,
+)
 from apps.assinaturas.proposals import CriacaoPropostaComercial, Propostas
+from apps.assinaturas.subapps.faturamento import urls as faturamento_urls
+from apps.assinaturas.subapps.faturamento.models import FinalidadeCheckout
 from apps.assinaturas.subapps.faturamento.views import AceitarPropostaView
 from apps.assinaturas.subscriptions import Assinaturas, TermosAssinatura
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
@@ -42,12 +53,12 @@ def _termos() -> TermosAssinatura:
     )
 
 
-def _proposta_enviada(organizacao: Organizacao):
+def _proposta_enviada(organizacao: Organizacao, *, modo=ModoAtivacaoProposta.PAGAMENTO):
     proposta = Propostas.criar(
         CriacaoPropostaComercial(
             organizacao=organizacao,
             versao_plano_referencia=None,
-            modo_ativacao=ModoAtivacaoProposta.PAGAMENTO,
+            modo_ativacao=modo,
             termos=_termos(),
             valida_ate=timezone.now() + timedelta(days=30),
         )
@@ -64,7 +75,10 @@ def _client(usuario, organizacao: Organizacao, *, recente: bool = True) -> APICl
     return client
 
 
-def _organizacao_do(usuario, *, nome: str, slug: str, papel=Papel.PROPRIETARIO) -> Organizacao:
+def _organizacao_do(usuario, *, nome: str, slug: str, papel=Papel.PROPRIETARIO, email_verificado: bool = True) -> Organizacao:
+    if email_verificado and usuario.email_verificado_em is None:
+        usuario.email_verificado_em = timezone.now()
+        usuario.save(update_fields=["email_verificado_em"])
     sincronizar_planos(PLANOS_BOOTSTRAP, aplicar=True)
     organizacao = Organizacao.objects.create(nome=nome, slug=slug)
     Vinculo.objects.create(organizacao=organizacao, usuario=usuario, papel=papel)
@@ -112,6 +126,84 @@ def test_proprietario_aceita_proposta_com_revisao_e_recebe_checkout_autoritativo
     }
 
 
+def test_sem_subapp_faturamento_urlconf_core_aceita_proposta_contratual():
+    from apps.assinaturas import urls as core_urls
+    from apps.assinaturas.views import AceitarPropostaContratualView
+
+    proprietario = criar_usuario(email="owner-proposta-core@example.com")
+    organizacao = _organizacao_do(proprietario, nome="Proposta core", slug="proposta-core")
+    proposta = _proposta_enviada(organizacao, modo=ModoAtivacaoProposta.CONTRATUAL)
+    business_apps = [app for app in settings.BUSINESS_APPS if app != "apps.assinaturas.subapps.faturamento"]
+
+    try:
+        with override_settings(BUSINESS_APPS=business_apps, ROOT_URLCONF="apps.assinaturas.urls"):
+            importlib.reload(core_urls)
+            clear_url_caches()
+            assert resolve(f"/assinatura/propostas/{proposta.pk}/aceitar/").func.view_class is AceitarPropostaContratualView
+
+            response = _client(proprietario, organizacao).post(
+                f"/assinatura/propostas/{proposta.pk}/aceitar/",
+                {"revisao_esperada": proposta.revisao},
+                format="json",
+            )
+    finally:
+        importlib.reload(core_urls)
+        clear_url_caches()
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": proposta.pk,
+        "status": StatusPropostaComercial.ACEITA,
+        "revisao": proposta.revisao + 1,
+        "modo_ativacao": ModoAtivacaoProposta.CONTRATUAL,
+        "preparacao_checkout": None,
+    }
+
+
+def test_retry_do_aceite_pago_usa_contrato_corrente_quando_existem_ciclos_historicos(monkeypatch):
+    proprietario = criar_usuario(email="owner-proposta-historico@example.com")
+    organizacao = _organizacao_do(proprietario, nome="Proposta histórico", slug="proposta-historico")
+    proposta = _proposta_enviada(organizacao)
+    with organizacao_atual_privilegiada(organizacao.pk):
+        corrente = Assinaturas.obter_corrente(organizacao)
+        assert corrente is not None
+        AssinaturaOrganizacao.objects.create(
+            organizacao=organizacao,
+            versao_plano=corrente.versao_plano,
+            status=StatusAssinatura.ENCERRADA,
+            status_financeiro=corrente.status_financeiro,
+            periodicidade=corrente.periodicidade,
+            moeda=corrente.moeda,
+            valor_base_centavos=corrente.valor_base_centavos,
+            valor_seat_centavos=corrente.valor_seat_centavos,
+            seats_inclusos=corrente.seats_inclusos,
+            seats_contratados=corrente.seats_contratados,
+            expansao_automatica_seats=corrente.expansao_automatica_seats,
+            recursos=corrente.recursos,
+            carencia_pagamento_dias=corrente.carencia_pagamento_dias,
+            carencia_excesso_seats_dias=corrente.carencia_excesso_seats_dias,
+            encerrada_em=timezone.now(),
+            motivo_encerramento="ciclo anterior",
+            chave_idempotencia="ciclo-historico",
+        )
+    ids_assinatura = []
+    from apps.assinaturas.subapps.faturamento import views as billing_views
+
+    def checkout(criacao):
+        ids_assinatura.append(criacao.assinatura.pk)
+        return SimpleNamespace(checkout=SimpleNamespace(pk=92, url="https://checkout.example/retry"))
+
+    monkeypatch.setattr(billing_views, "criar_checkout", checkout)
+    client = _client(proprietario, organizacao)
+    payload = {"revisao_esperada": proposta.revisao, "chave_idempotencia": "aceite-proposta-retry"}
+
+    primeira = client.post(f"/assinatura/propostas/{proposta.pk}/aceitar/", payload, format="json")
+    repetida = client.post(f"/assinatura/propostas/{proposta.pk}/aceitar/", payload, format="json")
+
+    assert primeira.status_code == repetida.status_code == 200
+    assert ids_assinatura == [corrente.pk, corrente.pk]
+
+
 def test_proposta_pagamento_sem_chave_nao_e_aceita():
     proprietario = criar_usuario(email="owner-proposta-sem-chave@example.com")
     organizacao = _organizacao_do(proprietario, nome="Sem chave", slug="proposta-sem-chave")
@@ -125,6 +217,74 @@ def test_proposta_pagamento_sem_chave_nao_e_aceita():
     with organizacao_atual_privilegiada(organizacao.pk):
         proposta.refresh_from_db()
     assert proposta.status == StatusPropostaComercial.ENVIADA
+
+
+def test_aceite_financeiro_exige_email_verificado(monkeypatch):
+    proprietario = criar_usuario(email="owner-proposta-nao-verificado@example.com", email_verificado_em=None)
+    organizacao = _organizacao_do(
+        proprietario,
+        nome="Proposta sem verificação",
+        slug="proposta-sem-verificacao",
+        email_verificado=False,
+    )
+    proposta = _proposta_enviada(organizacao)
+    from apps.assinaturas.subapps.faturamento import views as billing_views
+
+    monkeypatch.setattr(
+        billing_views,
+        "criar_checkout",
+        lambda criacao: pytest.fail("checkout externo não deve ser iniciado sem e-mail verificado"),
+    )
+
+    response = _client(proprietario, organizacao).post(
+        f"/assinatura/propostas/{proposta.pk}/aceitar/",
+        {"revisao_esperada": proposta.revisao, "chave_idempotencia": "email-nao-verificado"},
+        format="json",
+    )
+
+    assert response.status_code == 403
+    assert response.json()["errors"][0]["code"] == "account.email_not_verified"
+    with organizacao_atual_privilegiada(organizacao.pk):
+        proposta.refresh_from_db()
+    assert proposta.status == StatusPropostaComercial.ENVIADA
+
+
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        (
+            "/assinatura/checkouts/",
+            {
+                "finalidade": FinalidadeCheckout.CONTRATACAO,
+                "chave_idempotencia": "checkout-email-nao-verificado",
+            },
+        ),
+        (
+            "/faturamento/forma-pagamento/checkouts/",
+            {"chave_idempotencia": "forma-pagamento-email-nao-verificado"},
+        ),
+    ],
+)
+def test_checkouts_exigem_email_verificado_antes_de_iniciar_io(monkeypatch, path, payload):
+    proprietario = criar_usuario(email="owner-checkout-nao-verificado@example.com", email_verificado_em=None)
+    organizacao = _organizacao_do(
+        proprietario,
+        nome="Checkout sem verificacao",
+        slug="checkout-sem-verificacao",
+        email_verificado=False,
+    )
+    from apps.assinaturas.subapps.faturamento import views as billing_views
+
+    monkeypatch.setattr(
+        billing_views,
+        "criar_checkout",
+        lambda criacao: pytest.fail("checkout externo não deve ser iniciado sem e-mail verificado"),
+    )
+
+    response = _client(proprietario, organizacao).post(path, payload, format="json")
+
+    assert response.status_code == 403
+    assert response.json()["errors"][0]["code"] == "account.email_not_verified"
 
 
 def test_aceite_exige_sessao_recente_e_papel_proprietario():
@@ -248,7 +408,7 @@ def test_erros_reais_de_auth_e_tenant_estao_documentados_no_status_runtime(monke
 
     monkeypatch.setattr(AceitarPropostaView, "versioning_class", None)
     discover_error_codes(force=True)
-    schema = SchemaGenerator(patterns=assinaturas_urls.urlpatterns).get_schema(request=None, public=True)
+    schema = SchemaGenerator(patterns=faturamento_urls.urlpatterns).get_schema(request=None, public=True)
     documentadas = schema["paths"]["/assinatura/propostas/{id}/aceitar/"]["post"]["responses"]
 
     observados = {(str(response.status_code), response.json()["errors"][0]["code"]) for response in respostas}

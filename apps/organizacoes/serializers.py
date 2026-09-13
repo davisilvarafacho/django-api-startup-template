@@ -4,6 +4,7 @@ from apps.api.core.errors import APIError
 from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.memberships import Vinculos
 from apps.organizacoes.models import Convite, Organizacao, Time, Vinculo
+from apps.organizacoes.organizations import Organizacoes
 
 
 class UsuarioResumoSerializer(serializers.Serializer):
@@ -35,6 +36,30 @@ class OrganizacaoSerializer(serializers.ModelSerializer):
 
         vinculo = Vinculo.objects.filter(organizacao=obj, usuario=request.user, is_active=True).first()
         return vinculo.papel if vinculo else None
+
+
+class OrganizacaoEmailFaturamentoSerializer(serializers.ModelSerializer):
+    email_faturamento = serializers.EmailField(allow_null=True, required=True)
+
+    class Meta:
+        model = Organizacao
+        fields = ["id", "email_faturamento"]
+        read_only_fields = ["id"]
+
+    def validate(self, attrs):
+        if "email_faturamento" not in attrs:
+            raise serializers.ValidationError(
+                {"email_faturamento": "Este campo é obrigatório."},
+                code="required",
+            )
+        return attrs
+
+    def update(self, instance, validated_data):
+        return Organizacoes.atualizar_email_faturamento(
+            instance,
+            email_faturamento=validated_data["email_faturamento"],
+            ator=self.context["request"].user,
+        )
 
 
 class EncerramentoAgendadoResponseSerializer(serializers.Serializer):

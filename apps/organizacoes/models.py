@@ -207,7 +207,11 @@ class Convite(BaseTenantless):
         verbose_name_plural = _("Convites")
 
 
-register(Organizacao, exclude_fields=["email_faturamento"])
+register(
+    Organizacao,
+    mask_fields=["email_faturamento"],
+    mask_callable="utils.logs.redact_audit_value",
+)
 register(Time)
 register(Vinculo)
 register(Convite, exclude_fields=["email", "token"])

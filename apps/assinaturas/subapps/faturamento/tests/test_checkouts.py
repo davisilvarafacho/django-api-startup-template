@@ -39,7 +39,8 @@ from apps.assinaturas.subapps.faturamento.errors import ErrosFaturamento
 from apps.assinaturas.subapps.faturamento.models import CheckoutCobranca, ComponentePreco, FinalidadeCheckout, ReferenciaPrecoGateway, StatusCheckout
 from apps.assinaturas.tests.test_subscription_models import _criar_assinatura, _criar_versao
 from apps.organizacoes.context import organizacao_atual_privilegiada
-from apps.organizacoes.models import Organizacao
+from apps.organizacoes.models import Organizacao, Papel, Vinculo
+from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -193,6 +194,48 @@ def test_falta_de_referencia_e_capability_nao_emite_comando():
         )
 
     assert gateway.commands == []
+
+
+def test_preparacao_revalida_papel_do_ator_sob_lock():
+    organizacao, assinatura, _ = _cenario()
+    ator = criar_usuario(email="ator-rebaixado-checkout@example.com", email_verificado_em=datetime.now(UTC))
+    Vinculo.objects.create(organizacao=organizacao, usuario=ator, papel=Papel.MEMBRO)
+    gateway = FakeCheckoutGateway(results={CreateCheckout: _checkout_result}, capabilities=_capabilities(), variant="stripe")
+
+    with pytest.raises(APIError) as erro:
+        CheckoutsCobranca.preparar(
+            CriacaoCheckout(
+                assinatura=assinatura,
+                finalidade=FinalidadeCheckout.CONTRATACAO,
+                chave_idempotencia="ator-rebaixado",
+                ator=ator,
+            ),
+            client=CheckoutClient(gateway),
+        )
+
+    assert erro.value.code == "organizations.role_insufficient"
+    assert gateway.commands == []
+
+
+def test_preparacao_recusa_organizacao_com_encerramento_pendente():
+    organizacao, assinatura, _ = _cenario()
+    organizacao.encerramento_solicitado_em = datetime.now(UTC)
+    organizacao.encerramento_agendado_para = datetime.now(UTC)
+    organizacao.save(update_fields=["encerramento_solicitado_em", "encerramento_agendado_para"])
+    gateway = FakeCheckoutGateway(results={CreateCheckout: _checkout_result}, capabilities=_capabilities(), variant="stripe")
+
+    with pytest.raises(ConflitoCheckout, match="encerramento"):
+        CheckoutsCobranca.preparar(
+            CriacaoCheckout(
+                assinatura=assinatura,
+                finalidade=FinalidadeCheckout.CONTRATACAO,
+                chave_idempotencia="encerramento-pendente",
+            ),
+            client=CheckoutClient(gateway),
+        )
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        assert CheckoutCobranca.objects.filter(organizacao=organizacao).exists() is False
 
 
 @pytest.mark.parametrize(

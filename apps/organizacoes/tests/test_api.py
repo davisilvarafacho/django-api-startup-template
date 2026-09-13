@@ -343,6 +343,46 @@ def test_patch_nao_pode_tornar_convite_ou_vinculo_cobravel_sem_validar_capacidad
 
 
 @pytest.mark.django_db(transaction=True)
+def test_rebaixamentos_concorrentes_preservam_um_proprietario_ativo():
+    proprietarios = [
+        criar_usuario(email="owner-rebaixamento-1@example.com"),
+        criar_usuario(email="owner-rebaixamento-2@example.com"),
+    ]
+    organizacao = Organizacao.objects.create(nome="Owners concorrentes", slug="owners-rebaixamento-concorrente")
+    vinculos = [vincular(usuario, organizacao, Papel.PROPRIETARIO) for usuario in proprietarios]
+    clients = [client_autenticado(usuario) for usuario in proprietarios]
+    barreira = Barrier(2)
+
+    def rebaixar(indice):
+        close_old_connections()
+        try:
+            barreira.wait(timeout=5)
+            response = clients[indice].patch(
+                f"/vinculos/{vinculos[indice].pk}/",
+                {"papel": Papel.ADMINISTRADOR},
+                format="json",
+                **{META_HEADER_ORGANIZACAO: organizacao.slug},
+            )
+            return response.status_code, response.json().get("errors", [{}])[0].get("code")
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        resultados = list(executor.map(rebaixar, (0, 1)))
+
+    assert sorted(status_code for status_code, _ in resultados) == [status.HTTP_200_OK, status.HTTP_409_CONFLICT]
+    assert {codigo for _, codigo in resultados if codigo} == {"account.owner_transfer_required"}
+    assert (
+        Vinculo.objects.filter(
+            organizacao=organizacao,
+            papel=Papel.PROPRIETARIO,
+            is_active=True,
+        ).count()
+        == 1
+    )
+
+
+@pytest.mark.django_db(transaction=True)
 def test_patchs_concorrentes_de_convites_disputam_o_ultimo_seat_uma_unica_vez():
     administrador = criar_usuario(email="admin-patch-concorrente@example.com")
     organizacao = Organizacao.objects.create(nome="Patch concorrente", slug="patch-concorrente")
@@ -441,8 +481,31 @@ def test_aceitar_convite_de_outro_email_retorna_422():
     assert response.data["errors"][0]["code"] == "organizations.invitation_email_mismatch"
 
 
+def test_usuario_sem_email_verificado_nao_aceita_convite():
+    usuario = criar_usuario(email="nao-verificado@example.com", email_verificado_em=None)
+    organizacao = Organizacao.objects.create(nome="Org A", slug="org-a-nao-verificado")
+    convite = Convite.objects.create(
+        organizacao=organizacao,
+        email=usuario.email,
+        papel=Papel.MEMBRO,
+        expira_em=timezone.now() + timedelta(days=1),
+    )
+
+    response = client_autenticado(usuario).post(
+        "/convites/aceitar/",
+        {"token": convite.token},
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+    assert response.data["errors"][0]["code"] == "account.email_not_verified"
+    assert Vinculo.objects.filter(usuario=usuario, organizacao=organizacao).exists() is False
+    convite.refresh_from_db()
+    assert convite.aceito_em is None
+
+
 def test_usuario_convidado_aceita_convite_sem_header_de_organizacao():
-    usuario = criar_usuario(email="nova@example.com")
+    usuario = criar_usuario(email="nova@example.com", email_verificado_em=timezone.now())
     organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
     convite = Convite.objects.create(
         organizacao=organizacao,
@@ -493,6 +556,26 @@ def test_api_key_sem_scope_teams_read_e_recusada():
     assert response.data["errors"][0]["code"] == "auth.insufficient_scope"
 
 
+def test_api_key_nao_atualiza_email_de_faturamento_mesmo_com_scope():
+    responsavel = criar_usuario(email="api-key-email-faturamento@example.com", email_verificado_em=timezone.now())
+    organizacao = Organizacao.objects.create(
+        nome="Org API key cobrança",
+        slug="org-api-key-cobranca",
+        email_faturamento="anterior@example.com",
+    )
+    vincular(responsavel, organizacao, Papel.ADMINISTRADOR)
+
+    response = client_com_api_key(responsavel, ["organizations:update"], organizacao).patch(
+        f"/organizacoes/{organizacao.pk}/",
+        {"email_faturamento": "indevido@example.com"},
+        format="json",
+    )
+
+    organizacao.refresh_from_db()
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+    assert organizacao.email_faturamento == "anterior@example.com"
+
+
 def test_api_key_precisa_do_scope_invitations_accept_para_aceitar_convite():
     usuario = criar_usuario(email="precisa-scope@example.com")
     organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
@@ -515,7 +598,7 @@ def test_api_key_precisa_do_scope_invitations_accept_para_aceitar_convite():
 
 
 def test_api_key_com_scope_invitations_accept_aceita_convite():
-    usuario = criar_usuario(email="com-scope@example.com")
+    usuario = criar_usuario(email="com-scope@example.com", email_verificado_em=timezone.now())
     organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
     vincular(usuario, organizacao)
     convite = Convite.objects.create(
@@ -545,6 +628,23 @@ def test_delete_de_time_oculta_registro_sem_remover_linha():
     assert response.status_code == status.HTTP_204_NO_CONTENT
     assert not Time.objects.filter(pk=time.pk).exists()
     assert Time.all_objects.get(pk=time.pk).is_deleted is True
+
+
+def test_delete_de_vinculo_recusa_remover_unico_proprietario_ativo():
+    proprietario = criar_usuario(email="owner-delete-protegido@example.com")
+    administrador = criar_usuario(email="admin-delete-protegido@example.com")
+    organizacao = Organizacao.objects.create(nome="Owner protegido", slug="owner-delete-protegido")
+    vinculo_proprietario = vincular(proprietario, organizacao, Papel.PROPRIETARIO)
+    vincular(administrador, organizacao, Papel.ADMINISTRADOR)
+
+    response = client_autenticado(administrador).delete(
+        f"/vinculos/{vinculo_proprietario.pk}/",
+        **{META_HEADER_ORGANIZACAO: organizacao.slug},
+    )
+
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert response.data["errors"][0]["code"] == "account.owner_transfer_required"
+    assert Vinculo.objects.filter(pk=vinculo_proprietario.pk).exists() is True
 
 
 def test_delete_de_vinculo_oculta_registro_sem_remover_linha():

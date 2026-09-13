@@ -5,6 +5,7 @@ from datetime import timedelta
 from threading import Barrier
 
 from django.db import close_old_connections, connections
+from django.utils import timezone
 
 import pyotp
 import pytest
@@ -31,9 +32,14 @@ from apps.assinaturas.subscriptions import (
 from apps.assinaturas.tests.test_proposals import _contrato_atual, _criar_rascunho, _enviar, _operador_com_totp
 from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
-from tests.support.usuarios import criar_usuario
+from tests.support.usuarios import criar_usuario as _criar_usuario
 
 pytestmark = pytest.mark.django_db(transaction=True)
+
+
+def criar_usuario(**campos):
+    campos.setdefault("email_verificado_em", timezone.now())
+    return _criar_usuario(**campos)
 
 
 def _executar_em_thread(funcao):

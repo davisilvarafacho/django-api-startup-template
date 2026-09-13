@@ -4,6 +4,7 @@ import sys
 import warnings
 from datetime import timedelta
 
+from django.core.exceptions import ImproperlyConfigured
 from django.core.management.utils import get_random_secret_key
 from django.utils.translation import gettext_lazy as _
 
@@ -30,6 +31,10 @@ IN_TEST = ENVIROMENT == "test"
 
 EXECUTION = get_env_var("DJANGO_EXECUTION_MODE")
 
+BILLING_DATABASE_MODE = get_env_var("BILLING_DATABASE_MODE", "web")
+if BILLING_DATABASE_MODE not in {"web", "ingress", "migration"}:
+    raise ImproperlyConfigured("BILLING_DATABASE_MODE deve ser 'web', 'ingress' ou 'migration'.")
+
 # ambiente efetivo usado para carregar apps/middlewares/storages específicos.
 # sempre resolve para um valor suportado por `configure_enviroment`.
 TESTING = IN_TEST or "pytest" in sys.modules or "test" in sys.argv
@@ -42,6 +47,11 @@ else:
     CONFIG_ENVIRONMENT = "development"
 
 ENV_MIDDLEWARES, ENV_APPS, ENV_STORAGES = configure_enviroment(CONFIG_ENVIRONMENT)
+if BILLING_DATABASE_MODE == "ingress":
+    # O ingresso público não carrega ferramentas de debug/profiling/log de
+    # request, que poderiam persistir o corpo e a assinatura do webhook.
+    ENV_MIDDLEWARES = []
+    ENV_APPS = []
 
 
 if not SECRET_KEY and not IN_PRODUCTION:
@@ -49,23 +59,28 @@ if not SECRET_KEY and not IN_PRODUCTION:
     SECRET_KEY = get_random_secret_key()
 
 
+def SENTRY_BEFORE_SEND(event, hint):
+    """Descarta eventos de webhook e remove autenticação dos demais eventos."""
+    del hint
+    request = event.get("request") or {}
+    url = str(request.get("url") or request.get("path") or "")
+    if "/faturamento/webhooks/" in url:
+        return None
+    headers = request.get("headers") or {}
+    for header in tuple(headers):
+        if header.casefold() in {"authorization", "stripe-signature"}:
+            headers.pop(header, None)
+    return event
+
+
 if IN_PRODUCTION:
-
-    def before_send(event, hint):
-        # Nunca enviar o token de autenticação para o Sentry.
-        headers = event.get("request", {}).get("headers")
-        if headers:
-            headers.pop("Authorization", None)
-
-        return event
-
     sentry_sdk.init(
         dsn=get_env_var("SENTRY_DSN"),
         environment=ENVIROMENT,
         traces_sample_rate=0.1,
         profiles_sample_rate=0.1,
         send_default_pii=True,
-        before_send=before_send,
+        before_send=SENTRY_BEFORE_SEND,
     )
 
 
@@ -255,7 +270,7 @@ DATABASES = {
 # que web/worker sequer tenham a credencial DDL disponível.
 _billing_migration_user = get_env_var("BILLING_MIGRATION_DATABASE_USER")
 _billing_migration_password = get_env_var("BILLING_MIGRATION_DATABASE_PASSWORD")
-if _billing_migration_user and _billing_migration_password:
+if BILLING_DATABASE_MODE == "migration" and _billing_migration_user and _billing_migration_password:
     DATABASES["billing_migration"] = {
         **DATABASES["default"],
         "USER": _billing_migration_user,
@@ -348,10 +363,14 @@ AUTHENTICATION_BACKENDS = [
 # esconde os excluídos, `get_by_natural_key()` continua enxergando um único
 # registro por e-mail.
 SILENCED_SYSTEM_CHECKS = ["guardian.W001", "auth.W004"]
+if CONFIG_ENVIRONMENT in {"development", "test"}:
+    # O quickstart local pode subir antes de o Stripe ser configurado. A
+    # integração continua indisponível em runtime; produção nunca recebe esta
+    # exceção e permanece fail-closed.
+    SILENCED_SYSTEM_CHECKS.append("django_checkouts.E001")
 if CONFIG_ENVIRONMENT == "test":
-    # Os gates determinísticos não fazem I/O com o gateway. As credenciais
-    # continuam obrigatórias e fail-closed em qualquer processo não-test.
-    SILENCED_SYSTEM_CHECKS.extend(["django_checkouts.E001", "faturamento.E001"])
+    # Os gates determinísticos não fazem I/O com o gateway.
+    SILENCED_SYSTEM_CHECKS.append("faturamento.E001")
 
 # Não criar o usuário anônimo do guardian (o modelo de usuário usa e-mail como
 # username e o isolamento por organização torna esse registro desnecessário).
@@ -413,7 +432,10 @@ BILLING_CHECKOUT_SUCCESS_URL = get_env_var("BILLING_CHECKOUT_SUCCESS_URL", "" if
 BILLING_CHECKOUT_CANCEL_URL = get_env_var("BILLING_CHECKOUT_CANCEL_URL", "" if IN_PRODUCTION else f"{_BILLING_LOCAL_URL}/cancelado")
 BILLING_INGRESS_DATABASE_ROLE = get_env_var("BILLING_INGRESS_DATABASE_ROLE", "billing_ingress_runtime")
 BILLING_DATABASE_OWNER_ROLE = get_env_var("BILLING_DATABASE_OWNER_ROLE", "billing_functions_owner")
-BILLING_DATABASE_MODE = get_env_var("BILLING_DATABASE_MODE", "web")
+if BILLING_DATABASE_MODE == "ingress":
+    # O processo exposto apenas ao endpoint público de webhook não carrega o
+    # restante da superfície HTTP, mesmo se o proxy for contornado na rede.
+    ROOT_URLCONF = "api.billing_ingress_urls"
 
 
 LOGIN_REDIRECT_URL = "/admin/"
@@ -720,6 +742,18 @@ CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 
+CELERY_TASK_DEFAULT_QUEUE = "celery"
+
+CELERY_TASK_ROUTES = {
+    "faturamento.recuperar_eventos_cobranca": {"queue": "billing_ingress"},
+    "faturamento.reconciliar_eventos_stripe": {"queue": "billing_ingress"},
+    "faturamento.reconciliar_evento_cobranca": {"queue": "billing_ingress"},
+    "faturamento.executar_reconciliacao_operacional": {"queue": "billing_ingress"},
+    # O processador usa ORM sob um tenant conhecido e fica no worker web,
+    # deliberadamente sem membership na role operacional de ingresso.
+    "faturamento.processar_evento_cobranca": {"queue": "celery"},
+}
+
 AUTH_TOKEN_SESSION_RETENTION_DAYS = 90
 
 AUTH_TOKEN_CLEANUP_BATCH_SIZE = 500
@@ -748,10 +782,12 @@ CELERY_BEAT_SCHEDULE = {
     "recover-billing-events": {
         "task": "faturamento.recuperar_eventos_cobranca",
         "schedule": crontab(minute="*/5"),
+        "options": {"queue": "billing_ingress"},
     },
     "reconcile-stripe-events": {
         "task": "faturamento.reconciliar_eventos_stripe",
         "schedule": crontab(minute="*/15"),
+        "options": {"queue": "billing_ingress"},
     },
 }
 

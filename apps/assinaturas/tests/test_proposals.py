@@ -37,9 +37,14 @@ from apps.assinaturas.subscriptions import (
 )
 from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
-from tests.support.usuarios import criar_usuario
+from tests.support.usuarios import criar_usuario as _criar_usuario
 
 pytestmark = pytest.mark.django_db
+
+
+def criar_usuario(**campos):
+    campos.setdefault("email_verificado_em", timezone.now())
+    return _criar_usuario(**campos)
 
 
 def _versao_referencia(codigo: str = "enterprise-referencia") -> VersaoPlano:

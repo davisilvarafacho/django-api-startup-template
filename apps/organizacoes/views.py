@@ -3,12 +3,15 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from drf_spectacular.utils import extend_schema_view
+
 from apps.api.autenticacao.models import TokenType
 from apps.api.autenticacao.permissions import TokenScopePermission, require_token_scopes
 from apps.api.autenticacao.recent_auth import RecentAuthenticationPermission, require_recent_auth
 from apps.api.core.errors import APIError
 from apps.api.core.scope_mixins import ScopeResourceMixin
 from apps.organizacoes.errors import OrganizationErrorCode
+from apps.organizacoes.memberships import Vinculos
 from apps.organizacoes.models import Convite, Organizacao, Papel, Time, Vinculo
 from apps.organizacoes.onboarding import OrganizationOnboarding
 from apps.organizacoes.organizations import (
@@ -18,15 +21,24 @@ from apps.organizacoes.organizations import (
     Organizacoes,
 )
 from apps.organizacoes.permissions import PapelMinimoPermission, TenantPermission
-from apps.organizacoes.schema import document_organization_closure_delete, document_organization_closure_post
+from apps.organizacoes.schema import (
+    document_invitation_accept,
+    document_membership_delete,
+    document_membership_update,
+    document_organization_billing_email_update,
+    document_organization_closure_delete,
+    document_organization_closure_post,
+)
 from apps.organizacoes.serializers import (
     AceitarConviteSerializer,
     ConviteCreateSerializer,
     ConviteSerializer,
+    OrganizacaoEmailFaturamentoSerializer,
     OrganizacaoSerializer,
     TimeSerializer,
     VinculoSerializer,
 )
+from apps.usuarios.policies import exigir_email_verificado
 
 
 def _carregar_assinaturas() -> type[AssinaturasCicloOrganizacao]:
@@ -36,11 +48,16 @@ def _carregar_assinaturas() -> type[AssinaturasCicloOrganizacao]:
     return Assinaturas
 
 
+@extend_schema_view(
+    update=document_organization_billing_email_update,
+    partial_update=document_organization_billing_email_update,
+)
 class OrganizacaoViewSet(
     ScopeResourceMixin,
     mixins.ListModelMixin,
     mixins.CreateModelMixin,
     mixins.RetrieveModelMixin,
+    mixins.UpdateModelMixin,
     viewsets.GenericViewSet,
 ):
     serializer_class = OrganizacaoSerializer
@@ -48,7 +65,7 @@ class OrganizacaoViewSet(
     # Sem `queryset` estático (depende do usuário autenticado); a superfície
     # pública corresponde ao model mesmo assim.
     scope_resource = "organizations"
-    session_only_actions = {"create", "encerramento"}
+    session_only_actions = {"create", "encerramento", "update", "partial_update"}
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -68,6 +85,19 @@ class OrganizacaoViewSet(
             organizacao__is_active=True,
         ).values_list("organizacao_id", flat=True)
         return Organizacao.objects.filter(id__in=organizacao_ids, is_active=True).order_by("nome")
+
+    def get_serializer_class(self):
+        if self.action in {"update", "partial_update"}:
+            return OrganizacaoEmailFaturamentoSerializer
+        return super().get_serializer_class()
+
+    @require_recent_auth()
+    def update(self, request, *args, **kwargs):
+        return super().update(request, *args, **kwargs)
+
+    @require_recent_auth()
+    def partial_update(self, request, *args, **kwargs):
+        return super().partial_update(request, *args, **kwargs)
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -101,9 +131,10 @@ class OrganizacaoViewSet(
     @require_recent_auth()
     def encerramento(self, request, *args, **kwargs):
         organizacao = self._organizacao_do_proprietario()
+        exigir_email_verificado(request.user)
         assinaturas = _carregar_assinaturas()
         if request.method == "DELETE":
-            Organizacoes.cancelar_encerramento(organizacao, assinaturas=assinaturas)
+            Organizacoes.cancelar_encerramento(organizacao, assinaturas=assinaturas, ator=request.user)
             return Response(status=status.HTTP_204_NO_CONTENT)
 
         resultado = Organizacoes.solicitar_encerramento(
@@ -145,6 +176,11 @@ class TimeViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
         serializer.save(organizacao_id=self.get_organizacao_id())
 
 
+@extend_schema_view(
+    update=document_membership_update,
+    partial_update=document_membership_update,
+    destroy=document_membership_delete,
+)
 class VinculoViewSet(
     TenantViewSetMixin,
     mixins.ListModelMixin,
@@ -165,6 +201,9 @@ class VinculoViewSet(
 
     def get_queryset(self):
         return super().get_queryset().filter(organizacao_id=self.get_organizacao_id(), is_active=True).order_by("usuario__email")
+
+    def perform_destroy(self, instance):
+        Vinculos.remover_vinculo(instance)
 
 
 class ConviteViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
@@ -197,6 +236,7 @@ class ConviteViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(organizacao_id=self.get_organizacao_id(), convidado_por=self.request.user)
 
+    @document_invitation_accept
     @action(detail=False, methods=["post"], url_path="aceitar")
     @require_token_scopes("invitations:accept")
     def aceitar(self, request):

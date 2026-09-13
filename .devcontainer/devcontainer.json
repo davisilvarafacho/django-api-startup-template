@@ -5,7 +5,7 @@
   "workspaceFolder": "/workspace",
   "shutdownAction": "stopCompose",
   "remoteUser": "vscode",
-  "runServices": ["app", "db", "redis", "worker", "nginx"],
+  "runServices": ["app", "db", "redis", "worker", "billing_ingress", "billing_ingress_worker", "nginx"],
   "forwardPorts": ["nginx:80", 8000],
   "portsAttributes": {
     "nginx:80": {
