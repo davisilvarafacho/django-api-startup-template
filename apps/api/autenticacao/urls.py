@@ -4,6 +4,9 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (
     APIKeyViewSet,
+    GoogleConnectView,
+    GoogleDisconnectView,
+    GoogleLoginView,
     LoginView,
     LogoutAllView,
     LogoutView,
@@ -35,6 +38,9 @@ PUBLIC_ROUTES = [
 
 
 urlpatterns = [
+    path("auth/google/", GoogleLoginView.as_view(), name="google-login"),
+    path("auth/google/connect/", GoogleConnectView.as_view(), name="google-connect"),
+    path("auth/google/disconnect/", GoogleDisconnectView.as_view(), name="google-disconnect"),
     path("auth/login/", LoginView.as_view(), name="login"),
     path("auth/reauthenticate/", ReauthenticateView.as_view(), name="reauthenticate"),
     path("auth/reauthenticate/challenge/start/", ReauthenticateChallengeStartView.as_view(), name="reauthenticate-challenge-start"),

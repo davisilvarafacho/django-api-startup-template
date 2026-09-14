@@ -9,7 +9,14 @@ from django.utils.translation import gettext_lazy as _
 from knox import crypto
 from knox.settings import CONSTANTS, knox_settings
 
-from apps.api.base.models import CreationAuditMixin
+from apps.api.base.models import (
+    ActiveManagerMixin,
+    BaseQuerySet,
+    BaseTenantless,
+    CreationAuditMixin,
+    DeferredFieldsManagerMixin,
+    ExcludeDeletedManagerMixin,
+)
 from internal_frameworks.sensitive_fields.fields import encrypt
 from utils.logs import register
 
@@ -45,6 +52,122 @@ class MFAChallengeDeliveryStatus(models.TextChoices):
     PENDING = "pending", _("Pendente")
     SENT = "sent", _("Enviado")
     FAILED = "failed", _("Falhou")
+
+
+class ProvedorIdentidade(models.IntegerChoices):
+    """Provedores aceitos em ``IdentidadeExterna.provedor``."""
+
+    GOOGLE = 10, _("Google")
+
+
+class IdentidadesExternasQuerySet(BaseQuerySet):
+    """Impede que atualizações em lote troquem o ``sub`` externo."""
+
+    def update(self, **kwargs):
+        if "identificador" in kwargs:
+            raise ValueError("O identificador de IdentidadeExterna é imutável.")
+        return super().update(**kwargs)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        if "identificador" in fields:
+            raise ValueError("O identificador de IdentidadeExterna é imutável.")
+        return super().bulk_update(objs, fields, batch_size=batch_size)
+
+
+IdentidadesExternasQuerySetManager = models.Manager.from_queryset(IdentidadesExternasQuerySet)
+
+
+class TodasIdentidadesExternasManager(DeferredFieldsManagerMixin, IdentidadesExternasQuerySetManager):
+    """Manager de identidades, incluindo registros excluídos."""
+
+
+class IdentidadesExternasManager(ExcludeDeletedManagerMixin, DeferredFieldsManagerMixin, IdentidadesExternasQuerySetManager):
+    """Manager padrão de identidades externas vivas."""
+
+
+class IdentidadesExternasAtivasManager(
+    ActiveManagerMixin, ExcludeDeletedManagerMixin, DeferredFieldsManagerMixin, IdentidadesExternasQuerySetManager
+):
+    """Manager de identidades externas ativas e vivas."""
+
+
+class IdentidadeExterna(BaseTenantless):
+    """Vínculo global entre uma conta e seu identificador externo imutável."""
+
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name=_("usuário"),
+        on_delete=models.CASCADE,
+        related_name="identidades_externas",
+        help_text=_("Usuário dono da identidade externa."),
+        db_comment="Usuário dono da identidade externa.",
+    )
+    provedor = models.PositiveSmallIntegerField(
+        _("provedor"),
+        choices=ProvedorIdentidade.choices,
+        help_text=_("Provedor que emitiu o identificador externo."),
+        db_comment="Provedor que emitiu o identificador externo.",
+    )
+    identificador = models.CharField(
+        _("identificador"),
+        max_length=255,
+        help_text=_("Identificador imutável fornecido pelo provedor externo."),
+        db_comment="Identificador imutável fornecido pelo provedor externo.",
+    )
+
+    objects = IdentidadesExternasManager()
+    all_objects = TodasIdentidadesExternasManager()
+    ativos = IdentidadesExternasAtivasManager()
+
+    def save(self, *args, **kwargs):
+        update_fields = kwargs.get("update_fields")
+        atualiza_identificador = update_fields is None or "identificador" in update_fields
+        if self.pk is not None and atualiza_identificador:
+            database_alias = kwargs.get("using") or self._state.db or "default"
+            identificador_anterior = type(self).all_objects.using(database_alias).filter(pk=self.pk).values_list("identificador", flat=True).first()
+            if identificador_anterior is not None and identificador_anterior != self.identificador:
+                raise ValueError("O identificador de IdentidadeExterna é imutável.")
+
+        return super().save(*args, **kwargs)
+
+    def anonimizar(self, *, using=None) -> bool:
+        """Substitui o identificador imutável somente na exclusão definitiva."""
+        database_alias = using or self._state.db or "default"
+        identificador_anonimo = f"deleted-{self.pk}-{uuid_lib.uuid4()}"
+        queryset = type(self).all_objects.using(database_alias).filter(pk=self.pk)
+        atualizadas = models.QuerySet.update(
+            queryset,
+            identificador=identificador_anonimo,
+            is_active=False,
+            is_deleted=True,
+        )
+        if atualizadas:
+            self.identificador = identificador_anonimo
+            self.is_active = False
+            self.is_deleted = True
+        return bool(atualizadas)
+
+    def __str__(self):
+        return f"{self.get_provedor_display()} para {self.usuario}"
+
+    class Meta:
+        base_manager_name = "all_objects"
+        db_table = "identidade_externa"
+        ordering = ("-id",)
+        verbose_name = _("Identidade externa")
+        verbose_name_plural = _("Identidades externas")
+        constraints = [
+            models.UniqueConstraint(
+                fields=["provedor", "identificador"],
+                condition=models.Q(is_deleted=False),
+                name="identidade_externa_provedor_identificador_unico_nao_excluido",
+            ),
+            models.UniqueConstraint(
+                fields=["usuario", "provedor"],
+                condition=models.Q(is_deleted=False),
+                name="identidade_externa_usuario_provedor_unico_nao_excluido",
+            ),
+        ]
 
 
 class AuthTokenManager(models.Manager):
@@ -740,6 +863,7 @@ class MFAResetAudit(models.Model):
 
 
 register(TokenMetaData)
+register(IdentidadeExterna, exclude_fields=["identificador"])
 register(MFAFactor)
 register(MFAChallenge, exclude_fields=["otp_digest"])
 register(MFARecoveryCode, exclude_fields=["digest"])

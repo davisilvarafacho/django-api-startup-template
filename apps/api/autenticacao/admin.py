@@ -1,6 +1,8 @@
 from django.contrib import admin
 
-from .models import AuthToken
+from apps.api.base.admin import BaseModelAdmin
+
+from .models import AuthToken, IdentidadeExterna
 
 
 @admin.register(AuthToken)
@@ -52,3 +54,20 @@ class AuthTokenAdmin(admin.ModelAdmin):
         if obj.suspended_at:
             return "Suspenso"
         return "Ativo"
+
+
+@admin.register(IdentidadeExterna)
+class IdentidadeExternaAdmin(BaseModelAdmin):
+    """Consulta administrativa sem expor o identificador externo."""
+
+    list_display = ("id", "usuario", "provedor", "is_active", "created_at")
+    list_filter = ("provedor", "is_active", "is_deleted")
+    search_fields = ("usuario__email",)
+    readonly_fields = ("usuario", "provedor", "is_active", "is_deleted", "created_at", "last_modified_at", "created_by")
+    fields = readonly_fields
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

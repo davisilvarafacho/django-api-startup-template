@@ -11,8 +11,7 @@ import secrets
 from datetime import timedelta
 
 from django.conf import settings
-from django.core.exceptions import ValidationError
-from django.db import models, transaction
+from django.db import models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
@@ -47,6 +46,9 @@ class Organizacao(BaseTenantless):
 
     nome = models.CharField(_("nome"), max_length=150)
     slug = models.SlugField(_("slug"), max_length=60)
+    email_faturamento = models.EmailField(_("e-mail de faturamento"), null=True, blank=True)
+    encerramento_solicitado_em = models.DateTimeField(_("encerramento solicitado em"), null=True, blank=True)
+    encerramento_agendado_para = models.DateTimeField(_("encerramento agendado para"), null=True, blank=True)
 
     def __str__(self):
         return self.nome
@@ -59,7 +61,11 @@ class Organizacao(BaseTenantless):
                 fields=["slug"],
                 condition=models.Q(is_deleted=False),
                 name="organizacao_slug_unico_nao_excluido",
-            )
+            ),
+            models.CheckConstraint(
+                condition=models.Q(encerramento_agendado_para__isnull=True) | models.Q(encerramento_solicitado_em__isnull=False),
+                name="organizacao_agendamento_exige_solicitacao",
+            ),
         ]
         verbose_name = _("Organização")
         verbose_name_plural = _("Organizações")
@@ -171,45 +177,18 @@ class Convite(BaseTenantless):
 
     @property
     def pendente(self):
-        return self.aceito_em is None and not self.expirado
+        return self.is_active and not self.is_deleted and self.aceito_em is None and not self.expirado
 
     def aceitar(self, usuario):
-        """Efetiva o convite, transformando-o em um `Vinculo`.
+        """Compatibilidade para consumidores legados do aceite de convite."""
+        from apps.organizacoes.memberships import Vinculos
 
-        É idempotente por (organização, usuário): se o vínculo já existir, o
-        papel só é elevado quando o convite concede um nível maior — aceitar um
-        convite nunca rebaixa alguém.
-
-        Args:
-            usuario: Usuário que está aceitando o convite.
-
-        Returns:
-            O `Vinculo` criado ou atualizado.
-
-        Raises:
-            ValidationError: Se o convite estiver expirado ou já utilizado.
-        """
-        if not self.pendente:
-            raise ValidationError(_("Convite expirado ou já utilizado."))
-
-        with transaction.atomic():
-            vinculo, criado = Vinculo.objects.get_or_create(
-                organizacao=self.organizacao,
-                usuario=usuario,
-                defaults={"papel": self.papel},
-            )
-
-            if not criado and vinculo.papel < self.papel:
-                vinculo.papel = self.papel
-                vinculo.save(update_fields=["papel"])
-
-            self.aceito_em = timezone.now()
-            self.save(update_fields=["aceito_em"])
-
+        vinculo = Vinculos.aceitar_convite(self, usuario)
+        self.refresh_from_db(fields=["aceito_em"])
         return vinculo
 
     def __str__(self):
-        return f"{self.email} @ {self.organizacao}"
+        return f"Convite #{self.pk or 'novo'} @ {self.organizacao}"
 
     class Meta:
         db_table = "convite"
@@ -228,7 +207,11 @@ class Convite(BaseTenantless):
         verbose_name_plural = _("Convites")
 
 
-register(Organizacao)
+register(
+    Organizacao,
+    mask_fields=["email_faturamento"],
+    mask_callable="utils.logs.redact_audit_value",
+)
 register(Time)
 register(Vinculo)
-register(Convite)
+register(Convite, exclude_fields=["email", "token"])

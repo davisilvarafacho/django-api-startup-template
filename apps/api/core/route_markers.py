@@ -17,22 +17,53 @@ decore uma view base a menos que queira liberar todas as filhas.
 
 from django.urls import Resolver404, resolve
 
-__all__ = ["MARCADOR_PUBLICA", "MARCADOR_SEM_TENANCY", "no_tenancy", "public", "tem_marcador", "view_do_path"]
+__all__ = [
+    "MARCADOR_PUBLICA",
+    "MARCADOR_IO_EXTERNO_SEM_TRANSACAO",
+    "MARCADOR_REGULARIZACAO_ASSINATURA",
+    "MARCADOR_SEM_TENANCY",
+    "MARCADORES_ROTA",
+    "no_tenancy",
+    "io_externo_sem_transacao",
+    "public",
+    "regularizacao_assinatura",
+    "rota_tem_marcador",
+    "tem_marcador",
+    "view_do_path",
+]
 
 MARCADOR_PUBLICA = "_rota_publica"
 MARCADOR_SEM_TENANCY = "_rota_sem_tenancy"
+MARCADOR_REGULARIZACAO_ASSINATURA = "_rota_regularizacao_assinatura"
+MARCADOR_IO_EXTERNO_SEM_TRANSACAO = "_rota_io_externo_sem_transacao"
+MARCADORES_ROTA = frozenset({MARCADOR_PUBLICA, MARCADOR_SEM_TENANCY, MARCADOR_REGULARIZACAO_ASSINATURA, MARCADOR_IO_EXTERNO_SEM_TRANSACAO})
+
+
+def _marcar(view, marcador):
+    if marcador not in MARCADORES_ROTA:
+        raise ValueError(f"Marcador de rota não registrado: {marcador}")
+    setattr(view, marcador, True)
+    return view
 
 
 def public(view):
     """Dispensa autenticação: a rota responde sem token."""
-    setattr(view, MARCADOR_PUBLICA, True)
-    return view
+    return _marcar(view, MARCADOR_PUBLICA)
 
 
 def no_tenancy(view):
     """Dispensa organização: exige token, mas não um `X-Organization`."""
-    setattr(view, MARCADOR_SEM_TENANCY, True)
-    return view
+    return _marcar(view, MARCADOR_SEM_TENANCY)
+
+
+def regularizacao_assinatura(view):
+    """Declara uma view/action apta a regularizar acesso comercial restrito."""
+    return _marcar(view, MARCADOR_REGULARIZACAO_ASSINATURA)
+
+
+def io_externo_sem_transacao(view):
+    """Encerra a transação tenant antes de uma view que fará I/O externo."""
+    return _marcar(view, MARCADOR_IO_EXTERNO_SEM_TRANSACAO)
 
 
 def view_do_path(path):
@@ -59,3 +90,20 @@ def view_do_path(path):
 def tem_marcador(view, marcador):
     """Informa se a view (classe, instância ou função) carrega o marcador."""
     return bool(getattr(view, marcador, False))
+
+
+def rota_tem_marcador(path, method, marcador):
+    """Resolve marcador na view, no método HTTP ou na action DRF da rota."""
+    try:
+        match = resolve(path)
+    except Resolver404:
+        return False
+
+    callback = match.func
+    view = getattr(callback, "cls", None) or getattr(callback, "view_class", None)
+    if tem_marcador(callback, marcador) or tem_marcador(view, marcador):
+        return True
+
+    actions = getattr(callback, "actions", {})
+    handler_name = actions.get(method.lower()) if actions else method.lower()
+    return tem_marcador(getattr(view, handler_name, None), marcador)

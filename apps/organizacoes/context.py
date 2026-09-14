@@ -7,13 +7,65 @@ a cada transação: um `SET` de sessão poderia vazar para outro cliente, um
 `SET LOCAL` morre no commit.
 """
 
+from __future__ import annotations
+
 from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Protocol
 
 from django.db import transaction
 
 from django_rls.context import clear_rls_context, set_rls_context
 
 CHAVE_TENANT = "tenant_id"
+
+if TYPE_CHECKING:
+    from apps.assinaturas.access_policies import SituacaoAcesso
+    from apps.assinaturas.models import AssinaturaOrganizacao
+    from apps.assinaturas.subscriptions import UtilizacaoSeats
+    from apps.organizacoes.models import Organizacao, Vinculo
+
+
+@dataclass(frozen=True, slots=True)
+class ContextoOrganizacao:
+    """Fatos de tenant e acesso comercial validados antes da view."""
+
+    organizacao: Organizacao
+    vinculo: Vinculo | None
+    assinatura: AssinaturaOrganizacao
+    utilizacao_seats: UtilizacaoSeats
+    situacao_acesso: SituacaoAcesso
+
+    @property
+    def organization_id(self) -> int:
+        return self.organizacao.pk
+
+    @property
+    def organization_slug(self) -> str:
+        return self.organizacao.slug
+
+    @property
+    def membership_id(self) -> int | None:
+        return self.vinculo.pk if self.vinculo is not None else None
+
+    @property
+    def role(self) -> int | None:
+        return self.vinculo.papel if self.vinculo is not None else None
+
+    def has_minimum_role(self, minimum_role: int) -> bool:
+        return self.vinculo is not None and self.vinculo.papel >= minimum_role
+
+
+class PoliticaComercialTenant(Protocol):
+    """Contrato fechado para construir o contexto comercial final."""
+
+    def __call__(
+        self,
+        organizacao: Organizacao,
+        vinculo: Vinculo | None,
+        *,
+        regularizacao_assinatura: bool,
+    ) -> ContextoOrganizacao: ...
 
 
 def definir_organizacao_atual(organizacao_id):

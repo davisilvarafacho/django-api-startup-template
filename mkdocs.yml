@@ -26,6 +26,7 @@ nav:
       - Fluxo de desenvolvimento: how-to/fluxo-de-desenvolvimento.md
       - Resetar migrations: how-to/resetar-migrations.md
       - Desenvolvimento local: how-to/desenvolvimento-local.md
+      - Operar assinaturas: how-to/operar-assinaturas.md
       - Proxy reverso com nginx: how-to/proxy-nginx.md
       - Servidor MCP: how-to/usar-servidor-mcp.md
       - Proteção contra força bruta: how-to/protecao-forca-bruta.md
@@ -36,6 +37,7 @@ nav:
       - Publicar uma versão: how-to/publicar-versao.md
   - Referência:
       - API: reference/api.md
+      - Catálogo de planos: reference/catalogo-de-planos.md
       - Estrutura de diretórios: reference/estrutura-de-diretorios.md
       - Glossário: reference/glossario.md
       - Deprecação de API: reference/deprecacao-api.md

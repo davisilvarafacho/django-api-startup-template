@@ -15,7 +15,8 @@ Comandos comuns:
 
 ```bash
 make test
-uv run python manage.py migrate
+make billing-bootstrap
+make migrate
 uv lock --upgrade
 ```
 
@@ -141,10 +142,17 @@ subir a infra local:
 
 ```bash
 cp .env.example .env   # e preencha DATABASE_* / REDIS_*
-docker compose up -d db redis
-uv run python manage.py migrate
-uv run python manage.py runserver
+make up
+make billing-bootstrap
+make migrate
+make run
 ```
+
+Antes do bootstrap em um volume PostgreSQL que já contenha dados, faça e teste
+um backup. O alvo é idempotente e reaplica os principals dedicados sem colocar
+senhas na linha de comando; consulte o
+[runbook de assinaturas](docs/how-to/operar-assinaturas.md) para migrar volumes
+antigos e configurar os quatro logins distintos.
 
 Subir a stack completa (web + worker + beat) em containers:
 

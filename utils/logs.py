@@ -11,6 +11,11 @@ def _unique(values):
     return list(dict.fromkeys(values))
 
 
+def redact_audit_value(_value: str) -> str:
+    """Preserva o fato da mudança sem reter o valor sensível."""
+    return "[REDACTED]"
+
+
 def _automatic_excluded_fields(model):
     internal_fields = getattr(model, "internal_fields", [])
     extra_internal_fields = getattr(model, "extra_internal_fields", [])

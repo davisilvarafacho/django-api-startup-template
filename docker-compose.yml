@@ -1,18 +1,40 @@
 name: drf-base-api
 
+x-web-database-environment: &web-database-environment
+  DATABASE_NAME: ${DATABASE_NAME:-base}
+  DATABASE_USER: ${DATABASE_USER:-app_web}
+  DATABASE_PASSWORD: ${DATABASE_PASSWORD:-app-web-dev-only}
+  DATABASE_HOST: db
+  DATABASE_PORT: "5432"
+  BILLING_INGRESS_DATABASE_USER: ""
+  BILLING_INGRESS_DATABASE_PASSWORD: ""
+  BILLING_INGRESS_WORKER_DATABASE_USER: ""
+  BILLING_INGRESS_WORKER_DATABASE_PASSWORD: ""
+  BILLING_MIGRATION_DATABASE_USER: ""
+  BILLING_MIGRATION_DATABASE_PASSWORD: ""
+  POSTGRES_ADMIN_USER: ""
+  POSTGRES_ADMIN_PASSWORD: ""
+
 services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: ${DATABASE_USER:-postgres}
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-postgres}
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-postgres}
       POSTGRES_DB: ${DATABASE_NAME:-base}
+      BILLING_WEB_DATABASE_USER: ${DATABASE_USER:-app_web}
+      BILLING_WEB_DATABASE_PASSWORD: ${DATABASE_PASSWORD:-app-web-dev-only}
+      BILLING_INGRESS_DATABASE_USER: ${BILLING_INGRESS_DATABASE_USER:-billing_ingress_app}
+      BILLING_INGRESS_DATABASE_PASSWORD: ${BILLING_INGRESS_DATABASE_PASSWORD:-billing-ingress-dev-only}
+      BILLING_INGRESS_WORKER_DATABASE_USER: ${BILLING_INGRESS_WORKER_DATABASE_USER:-billing_ingress_worker}
+      BILLING_INGRESS_WORKER_DATABASE_PASSWORD: ${BILLING_INGRESS_WORKER_DATABASE_PASSWORD:-billing-ingress-worker-dev-only}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init-billing-roles.sh:/docker-entrypoint-initdb.d/10-billing-roles.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-postgres}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_ADMIN_USER:-postgres}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -35,7 +57,8 @@ services:
     env_file: .env
     # Dentro da rede do compose, os serviços resolvem por nome.
     environment:
-      DATABASE_HOST: db
+      <<: *web-database-environment
+      BILLING_DATABASE_MODE: web
       REDIS_HOST: redis
     # Sem `ports`: quem publica a API é o nginx. Expor o gunicorn direto
     # contornaria o proxy — e com ele os headers X-Forwarded-*, a ACL do
@@ -46,6 +69,32 @@ services:
       # Compartilhados com o nginx, que serve estáticos e mídia do disco.
       - static_files:/app/staticfiles
       - media_files:/app/mediafiles
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  billing_ingress:
+    image: ${APP_IMAGE:-drf-base-api-app:local}
+    build: .
+    env_file: .env
+    environment:
+      BILLING_DATABASE_MODE: ingress
+      DATABASE_NAME: ${DATABASE_NAME:-base}
+      DATABASE_HOST: db
+      DATABASE_PORT: "5432"
+      DATABASE_USER: ${BILLING_INGRESS_DATABASE_USER:-billing_ingress_app}
+      DATABASE_PASSWORD: ${BILLING_INGRESS_DATABASE_PASSWORD:-billing-ingress-dev-only}
+      BILLING_MIGRATION_DATABASE_USER: ""
+      BILLING_MIGRATION_DATABASE_PASSWORD: ""
+      BILLING_INGRESS_WORKER_DATABASE_USER: ""
+      BILLING_INGRESS_WORKER_DATABASE_PASSWORD: ""
+      POSTGRES_ADMIN_USER: ""
+      POSTGRES_ADMIN_PASSWORD: ""
+      REDIS_HOST: redis
+    expose:
+      - "80"
     depends_on:
       db:
         condition: service_healthy
@@ -68,7 +117,8 @@ services:
       - "1"
     env_file: .env
     environment:
-      DATABASE_HOST: db
+      <<: *web-database-environment
+      BILLING_DATABASE_MODE: web
       REDIS_HOST: redis
     expose:
       - "8001"
@@ -96,6 +146,7 @@ services:
       - media_files:/app/mediafiles:ro
     depends_on:
       - web
+      - billing_ingress
     healthcheck:
       # /nginx-health responde no próprio nginx: o proxy não fica unhealthy
       # quando o problema está na API.
@@ -119,16 +170,46 @@ services:
   celery_worker:
     image: ${APP_IMAGE:-drf-base-api-app:local}
     build: .
-    command: celery -A api worker -l info
+    command: celery -A api worker -l info -Q celery
     env_file: .env
     environment:
-      DATABASE_HOST: db
+      <<: *web-database-environment
+      BILLING_DATABASE_MODE: web
       REDIS_HOST: redis
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      disable: true
+
+  billing_ingress_worker:
+    image: ${APP_IMAGE:-drf-base-api-app:local}
+    build: .
+    command: celery -A api worker -l info -Q billing_ingress
+    env_file: .env
+    environment:
+      BILLING_DATABASE_MODE: ingress
+      DATABASE_NAME: ${DATABASE_NAME:-base}
+      DATABASE_HOST: db
+      DATABASE_PORT: "5432"
+      DATABASE_USER: ${BILLING_INGRESS_WORKER_DATABASE_USER:-billing_ingress_worker}
+      DATABASE_PASSWORD: ${BILLING_INGRESS_WORKER_DATABASE_PASSWORD:-billing-ingress-worker-dev-only}
+      BILLING_INGRESS_DATABASE_USER: ""
+      BILLING_INGRESS_DATABASE_PASSWORD: ""
+      BILLING_MIGRATION_DATABASE_USER: ""
+      BILLING_MIGRATION_DATABASE_PASSWORD: ""
+      POSTGRES_ADMIN_USER: ""
+      POSTGRES_ADMIN_PASSWORD: ""
+      REDIS_HOST: redis
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      disable: true
 
   celery_beat:
     image: ${APP_IMAGE:-drf-base-api-app:local}
@@ -136,13 +217,16 @@ services:
     command: celery -A api beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
     env_file: .env
     environment:
-      DATABASE_HOST: db
+      <<: *web-database-environment
+      BILLING_DATABASE_MODE: web
       REDIS_HOST: redis
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      disable: true
 
 volumes:
   postgres_data:

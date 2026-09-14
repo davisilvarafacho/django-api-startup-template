@@ -8,6 +8,7 @@ from knox.models import get_token_model
 from apps.api.autenticacao.models import TokenMetaData, TokenType
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
 from internal_frameworks.context import ContextVariable
+from tests.support.assinaturas import garantir_assinatura_corrente
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
@@ -36,6 +37,7 @@ def _sessao(usuario, device_name=""):
 def _api_key(usuario):
     organizacao = Organizacao.objects.create(nome="Org", slug="org-sessions-api")
     Vinculo.objects.create(usuario=usuario, organizacao=organizacao, papel=Papel.MEMBRO)
+    garantir_assinatura_corrente(organizacao)
     instance, token = AuthToken.objects.create(
         responsavel=usuario,
         type=TokenType.API_KEY,

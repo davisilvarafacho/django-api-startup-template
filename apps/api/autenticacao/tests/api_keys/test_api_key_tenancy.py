@@ -13,6 +13,7 @@ from apps.api.autenticacao.models import TokenMetaData, TokenType
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
 from apps.organizacoes.models import Convite, Organizacao, Papel, Vinculo
 from internal_frameworks.context import ContextVariable
+from tests.support.assinaturas import garantir_assinatura_corrente
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
@@ -49,7 +50,9 @@ def _vincular(usuario, organizacao, papel=Papel.MEMBRO):
 
 
 def _organizacao(slug="org-tenancy"):
-    return Organizacao.objects.create(nome="Org", slug=slug)
+    organizacao = Organizacao.objects.create(nome="Org", slug=slug)
+    garantir_assinatura_corrente(organizacao)
+    return organizacao
 
 
 def test_api_key_ativa_autentica_sem_precisar_do_header():
@@ -156,6 +159,20 @@ def test_api_key_com_responsavel_sem_vinculo_na_organizacao_e_recusada():
 
     instance = AuthToken.objects.get(responsavel=usuario, organization=organizacao)
     assert instance.suspended_at is not None
+
+
+@pytest.mark.parametrize("estado", [{"is_active": False}, {"is_deleted": True}])
+def test_api_key_de_organizacao_inativa_e_recusada_sem_trocar_tenant(estado):
+    usuario = criar_usuario()
+    organizacao = _organizacao("org-tenancy-inativa")
+    _vincular(usuario, organizacao)
+    client = _client_com_api_key(responsavel=usuario, organizacao=organizacao)
+    Organizacao.all_objects.filter(pk=organizacao.pk).update(**estado)
+
+    response = client.get("/times/")
+
+    assert response.status_code == 403
+    assert response.json()["errors"][0]["code"] == "organizations.organization_inactive"
 
 
 def test_api_key_ignora_permissions_pessoais_do_responsavel():

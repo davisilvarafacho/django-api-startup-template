@@ -6,8 +6,12 @@ Scalar em `/api/docs/`.
 Para validar o schema localmente:
 
 ```bash
-uv run python manage.py spectacular --validate --file schema.yml
+uv run python manage.py spectacular --validate --file schema.yml --skip-checks
 ```
+
+`--skip-checks` limita esse comando ao contrato OpenAPI. A validação operacional
+das credenciais, das roles de banco e do rollout continua sendo feita por
+`python manage.py check --deploy` no ambiente de destino.
 
 ## Erros
 
@@ -55,6 +59,12 @@ filtros — o recorte é o próprio registro da URL. Como a resolução passa pe
 Não existe endpoint global de logs: o app `logs` guarda só o model
 `LogAlteracao` e seu serializer.
 
+Na anonimização definitiva de uma conta, a trilha não é apagada: IDs técnicos,
+ação e timestamp permanecem, enquanto representações e payloads relacionados à
+conta são sanitizados. Eventos em que a conta era apenas a autora preservam o
+conteúdo não pessoal; no bloco `user`, o ID técnico permanece e os campos
+pessoais ficam nulos.
+
 ## Autenticação
 
 Todas as URLs usam `_` (nunca `-`) em palavras compostas. Detalhes de cada
@@ -68,6 +78,23 @@ mecanismo estão em `docs/explanation/autenticacao.md`.
 | `POST /auth/logout_all/` | Revoga logicamente todas as sessões |
 | `/auth/sessions/` | CRUD read-mostly das sessões do usuário autenticado |
 | `/auth/api_keys/` | CRUD e ciclo de vida (`rotate`/`suspend`/`resume`) de API keys da organização do header `X-Organization` |
+
+## Conta
+
+| Rota | Contrato |
+| --- | --- |
+| `POST /account/deactivate/` | Sessão com reautenticação recente e MFA quando habilitado. Revoga acessos, suspende vínculos e responde `204`. |
+| `POST /account/deletion/` | Mesmos requisitos. Desativa imediatamente, agenda a anonimização e responde `202` com `scheduled_for`. |
+| `POST /account/reactivation/` | Pública. Recebe `email` e responde sempre `202` com o mesmo corpo, exista ou não uma conta reativável. |
+| `POST /account/reactivation/confirm/` | Pública. Recebe `token`; reativa dentro da carência e responde `204`. |
+
+O único proprietário ativo de uma organização ativa recebe
+`409 account.owner_transfer_required` ao tentar desativar ou excluir a conta.
+Repetir um pedido de exclusão devolve
+`409 account.deletion_already_scheduled`, com a data original em
+`context.scheduled_for`; o prazo não é reiniciado. Tokens inválidos, expirados,
+de propósito diferente ou usados fora da carência devolvem
+`400 account.reactivation_invalid`.
 
 ## Senha
 
@@ -97,6 +124,79 @@ Erros comuns desses endpoints: `auth.invalid_credentials`,
 `auth.insufficient_scope`, `auth.scope_not_delegable`,
 `organizations.tenant_mismatch`,
 `organizations.membership_required`.
+
+## Organizações
+
+| Rota | Contrato |
+| --- | --- |
+| `PUT/PATCH /organizacoes/{id}/` | Proprietário ou administrador atualiza exclusivamente `email_faturamento`; exige sessão humana, autenticação recente e e-mail verificado. |
+
+O corpo deve informar `email_faturamento` mesmo no `PATCH`. O valor pode ser um
+endereço de e-mail válido ou `null`, que remove o destinatário específico de
+faturamento. Campo ausente, vazio ou com formato inválido responde `422`; outros
+campos da organização não são alterados por essa rota.
+
+## Assinatura
+
+`GET /planos/` exige autenticação, dispensa `X-Organization` e lista somente
+planos visíveis com versão atual publicada e preços ativos contratáveis. As
+demais rotas exigem uma sessão humana e o header `X-Organization`; API keys não
+recebem acesso financeiro por padrão. Alteração e cancelamento exigem
+reautenticação recente e MFA quando o usuário o tiver habilitado. Toda mutação
+contratual ou financeira exige também e-mail verificado.
+
+| Rota | Contrato |
+| --- | --- |
+| `GET /planos/` | Catálogo contratável global; retorna plano, versão atual publicada, recursos/seats/carências e preços ativos. |
+| `GET /assinatura/` | Proprietário ou administrador; devolve o snapshot corrente, revisão e situação de acesso com motivos e menor prazo de regularização. |
+| `GET /assinatura/recursos/` | Qualquer vínculo ativo; devolve todos os recursos efetivos em tipos JSON. |
+| `GET /assinatura/utilizacao-seats/` | Proprietário ou administrador; devolve contratados, consumo, reservas, disponibilidade e excessos. |
+| `POST /assinatura/alteracoes/` | Proprietário; solicita plano, periodicidade ou quantidade absoluta de seats com revisão e chave de idempotência. |
+| `POST /assinatura/cancelamento/` | Proprietário; encerra imediatamente contratos gratuitos, trials ou pendentes (`200`), ou agenda contratos pagos para o fim do período (`202`), sempre com revisão otimista. |
+| `DELETE /assinatura/cancelamento/` | Proprietário; remove o agendamento antes da efetivação, também com revisão. |
+| `POST /assinatura/propostas/{id}/aceitar/` | Proprietário; aceita uma proposta do próprio tenant sem enumerar propostas alheias. |
+
+Conflitos de revisão ou idempotência usam
+`409 billing.subscription_conflict`. Uma organização ativa ainda não
+inicializada usa `503 billing.subscription_required`. Após expirar uma carência,
+rotas comuns usam `403 billing.organization_restricted`; as rotas acima são
+marcadas para permitir somente a consulta ou regularização por proprietário e
+administrador, sem ampliar o papel do usuário.
+
+## Faturamento
+
+As rotas financeiras autenticadas aceitam somente sessões humanas, exigem
+`X-Organization` e respeitam o mesmo isolamento RLS da assinatura. Criação de
+checkout exige autenticação recente; quando MFA estiver habilitado para a
+conta, o step-up também exige o segundo fator. Valores são inteiros em centavos.
+
+| Rota | Contrato |
+| --- | --- |
+| `POST /assinatura/checkouts/` | Proprietário. Cria checkout recorrente para contratação (`finalidade=10`), alteração (`20`) ou proposta aceita (`30`). Recebe `chave_idempotencia` e a referência exigida pela finalidade. |
+| `GET /faturamento/checkouts/` | Proprietário ou administrador. Lista até 50 checkouts por página, do mais recente para o mais antigo. |
+| `GET /faturamento/faturas/` | Proprietário ou administrador. Lista até 50 estados normalizados de fatura por página, sem expor payload do gateway. |
+| `POST /faturamento/forma-pagamento/checkouts/` | Proprietário ou administrador com autenticação recente. Abre um setup hospedado, sem item ou cobrança, usando `chave_idempotencia`. |
+| `POST /faturamento/webhooks/{variante}/` | Pública e sem autenticação de sessão. Autentica os bytes originais pela assinatura do gateway; para Stripe, a variante é `stripe`. |
+
+Uma chave idempotente repetida com o mesmo snapshot devolve a operação vigente;
+se for reutilizada para outro conteúdo, a API responde
+`409 billing.checkout_conflict`. Enquanto já existir checkout da mesma operação
+em criação ou aberto, responde `409 billing.checkout_pending`. Ausência de
+capability ou referência de preço obrigatória usa
+`422 billing.checkout_unavailable`. Uma falha externa inconclusiva usa
+`503 billing.checkout_uncertain`: o cliente não deve criar outra chave nem
+assumir falha; a reconciliação decide o estado remoto.
+
+O webhook responde `200` tanto para um evento novo quanto para uma duplicata
+idempotente (`received=true`, `duplicate=false|true`). Assinatura, variante ou
+protocolo inválido respondem `400`; reutilizar o mesmo identificador remoto com
+conteúdo autenticado diferente responde `409 billing.webhook_collision`. O
+schema deliberadamente não descreve nem persiste o corpo bruto do provedor.
+
+As duas listagens financeiras aceitam `size` inteiro positivo para reduzir a
+página, mas sempre limitam a resposta a 50 registros. `size=all` não é
+suportado e nunca desativa a paginação; valores inválidos usam a página padrão
+de 50 registros.
 
 ## MFA
 

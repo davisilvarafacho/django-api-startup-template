@@ -1,3 +1,5 @@
+import json
+
 from django.conf import settings
 from django.core.exceptions import FieldDoesNotExist
 from django.db import models
@@ -7,11 +9,14 @@ from auditlog import get_logentry_model
 from auditlog.registry import auditlog
 
 import apps.api.base.models as base_models
-from apps.api.autenticacao.models import MFAChallenge, MFAFactor, MFARecoveryCode, MFAResetAudit, TokenMetaData, TrustedDevice
+from apps.api.autenticacao.models import IdentidadeExterna, MFAChallenge, MFAFactor, MFARecoveryCode, MFAResetAudit, TokenMetaData, TrustedDevice
 from apps.api.base.models import Base, BaseTenantless
 from apps.api.core.context import usuario_atual
+from apps.assinaturas.models import AlteracaoAssinatura, AssinaturaOrganizacao, Plano, PrecoPlano, PropostaComercial, VersaoPlano
 from apps.logs.models import LogAlteracao
 from apps.organizacoes.models import Convite, Organizacao, Time, Vinculo
+from apps.usuarios.accounts import Contas
+from apps.usuarios.emails import emitir_token_troca_email
 from apps.usuarios.models import Usuario
 from internal_frameworks.context import ContextVariable
 from tests.support.usuarios import criar_usuario
@@ -30,6 +35,13 @@ def test_registra_todos_os_modelos_concretos_dos_apps():
         MFARecoveryCode,
         MFAResetAudit,
         TrustedDevice,
+        IdentidadeExterna,
+        Plano,
+        VersaoPlano,
+        PrecoPlano,
+        PropostaComercial,
+        AssinaturaOrganizacao,
+        AlteracaoAssinatura,
     }
     modelos_internos_registrados = {model for model in auditlog.get_models() if model.__module__.startswith("apps.")}
 
@@ -45,12 +57,44 @@ def test_exclui_campos_tecnicos_e_credenciais_sem_mutar_a_configuracao_global():
         "is_deleted",
         "password",
         "last_login",
+        "email",
         # Cifrado em repouso: `sensitive_fields` exclui do auditlog automaticamente.
         "phone_number",
     }
-    for model in (Organizacao, Time, Vinculo, Convite):
+    for model in (Time, Vinculo):
         assert auditlog.get_model_fields(model)["exclude_fields"] == [*campos_base, "is_deleted"]
+    campos_organizacao = auditlog.get_model_fields(Organizacao)
+    assert campos_organizacao["exclude_fields"] == [*campos_base, "is_deleted"]
+    assert campos_organizacao["mask_fields"] == ["email_faturamento"]
+    assert campos_organizacao["mask_callable"] == "utils.logs.redact_audit_value"
+    assert auditlog.get_model_fields(Convite)["exclude_fields"] == [*campos_base, "is_deleted", "email", "token"]
+    assert auditlog.get_model_fields(IdentidadeExterna)["exclude_fields"] == [*campos_base, "is_deleted", "identificador"]
     assert auditlog.get_model_fields(TokenMetaData)["exclude_fields"] == campos_base
+
+
+@pytest.mark.django_db
+def test_novo_log_de_convite_nao_grava_email_ou_token():
+    organizacao = Organizacao.objects.create(nome="Org", slug="convite-sem-pii")
+    convite = Convite.objects.create(
+        organizacao=organizacao,
+        email="convidado-confidencial@example.com",
+        token="token-confidencial-do-convite",
+    )
+
+    registro = LogAlteracao.objects.get_for_object(convite).get()
+    conteudo = json.dumps(
+        {
+            "object_repr": registro.object_repr,
+            "serialized_data": registro.serialized_data,
+            "changes_text": registro.changes_text,
+            "changes": registro.changes,
+            "additional_data": registro.additional_data,
+        },
+        default=str,
+    )
+
+    assert convite.email not in conteudo
+    assert convite.token not in conteudo
 
 
 def test_base_tenantless_define_campos_comuns_sem_organizacao():
@@ -137,3 +181,17 @@ def test_criacao_e_alteracao_de_registro_geram_linhas_em_log_alteracao():
         LogAlteracao.Action.UPDATE,
     ]
     assert registros[1].changes["first_name"] == ["Antes", "Depois"]
+
+
+@pytest.mark.django_db
+def test_confirmacao_de_troca_nao_grava_enderecos_de_email_no_auditlog():
+    antigo = "antes-auditoria@example.com"
+    novo = "depois-auditoria@example.com"
+    usuario = criar_usuario(email=antigo)
+
+    Contas.confirmar_troca_email(emitir_token_troca_email(usuario, novo))
+
+    registro = LogAlteracao.objects.get_for_object(usuario).get(action=LogAlteracao.Action.UPDATE)
+    assert "email" not in registro.changes
+    assert antigo not in str(registro.changes)
+    assert novo not in str(registro.changes)

@@ -106,6 +106,51 @@ def notify_password_changed(user_pk: int):
         logger.exception("Falha ao avisar sobre troca de senha", extra={"user_id": user_pk})
 
 
+@shared_task(name="autenticacao.send_email_verification", ignore_result=True)
+def send_email_verification(token: str):
+    """Entrega o link assinado de confirmação do endereço atual."""
+    from apps.usuarios.emails import EMAIL_VERIFICATION_PURPOSE, carregar_token_email
+
+    signed_token = carregar_token_email(token, purpose=EMAIL_VERIFICATION_PURPOSE)
+    if signed_token is None:
+        return
+    try:
+        link = f"{settings.EMAIL_VERIFICATION_FRONTEND_URL}?token={token}"
+        send_mail("Verifique seu e-mail", f"Para verificar seu e-mail, acesse: {link}", settings.DEFAULT_FROM_EMAIL, [signed_token.email])
+    except Exception:
+        logger.exception("Falha ao enviar verificação de e-mail", extra={"user_id": signed_token.usuario_id})
+
+
+@shared_task(name="autenticacao.send_email_change_confirmation", ignore_result=True)
+def send_email_change_confirmation(token: str):
+    """Entrega a confirmação assinada para o novo endereço, sem persistir pendência."""
+    from apps.usuarios.emails import EMAIL_CHANGE_PURPOSE, carregar_token_email
+
+    signed_token = carregar_token_email(token, purpose=EMAIL_CHANGE_PURPOSE)
+    if signed_token is None:
+        return
+    try:
+        link = f"{settings.EMAIL_CHANGE_FRONTEND_URL}?token={token}"
+        send_mail("Confirme seu novo e-mail", f"Para confirmar seu novo e-mail, acesse: {link}", settings.DEFAULT_FROM_EMAIL, [signed_token.email])
+    except Exception:
+        logger.exception("Falha ao enviar confirmação de troca de e-mail", extra={"user_id": signed_token.usuario_id})
+
+
+@shared_task(name="autenticacao.notify_email_changed", ignore_result=True)
+def notify_email_changed(new_email: str, previous_email: str):
+    """Notifica os dois endereços depois do commit da troca confirmada."""
+    for destination in (previous_email, new_email):
+        try:
+            send_mail(
+                "E-mail da conta alterado",
+                "O e-mail da sua conta foi alterado e todas as credenciais foram revogadas. Se não foi você, contate o suporte.",
+                settings.DEFAULT_FROM_EMAIL,
+                [destination],
+            )
+        except Exception:
+            logger.exception("Falha ao avisar troca de e-mail")
+
+
 @shared_task(name="autenticacao.deliver_mfa_otp", ignore_result=True)
 def deliver_mfa_otp(challenge_pk: int):
     """Gera e entrega OTP a partir do ID, sem código no payload Celery."""

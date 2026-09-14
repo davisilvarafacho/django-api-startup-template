@@ -7,6 +7,7 @@ from apps.organizacoes.models import Convite, Organizacao, Time, Vinculo
 class OrganizacaoAdmin(admin.ModelAdmin):
     list_display = ("nome", "slug", "is_active")
     search_fields = ("nome", "slug")
+    readonly_fields = ("email_faturamento",)
 
 
 @admin.register(Time)
@@ -20,7 +21,13 @@ class TimeAdmin(admin.ModelAdmin):
 class VinculoAdmin(admin.ModelAdmin):
     list_display = ("usuario", "organizacao", "papel", "is_active")
     list_filter = ("organizacao", "papel")
-    filter_horizontal = ("times",)
+    readonly_fields = ("usuario", "organizacao", "papel", "times", "is_active", "is_deleted")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(Convite)

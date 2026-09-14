@@ -36,6 +36,20 @@ class LoginSerializer(serializers.Serializer):
         return attrs
 
 
+class GoogleIdentitySerializer(serializers.Serializer):
+    """Recebe somente o ID token emitido pelo Google Identity Services."""
+
+    id_token = serializers.CharField(write_only=True, trim_whitespace=False)
+
+
+class GoogleLoginSerializer(GoogleIdentitySerializer):
+    """ID token e metadados opcionais da sessão local a emitir."""
+
+    device_name = serializers.CharField(required=False, allow_blank=True, default="")
+    app_version = serializers.CharField(required=False, allow_blank=True, default="")
+    fcm_token = serializers.CharField(required=False, allow_blank=True, default="")
+
+
 class SessionDeviceSerializer(serializers.Serializer):
     type = serializers.CharField()
     name = serializers.CharField()

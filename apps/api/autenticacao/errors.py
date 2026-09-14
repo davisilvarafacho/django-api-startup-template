@@ -17,6 +17,7 @@ class AuthErrorCode(models.TextChoices):
     API_KEY_SUSPENDED = "auth.api_key_suspended", _("Esta API key está suspensa.")
     RESPONSIBLE_INACTIVE = "auth.responsible_inactive", _("O responsável por esta credencial está inativo.")
     TOKEN_LIMIT_EXCEEDED = "auth.token_limit_exceeded", _("Limite de sessões ativas excedido.")
+    GOOGLE_TOKEN_INVALID = "auth.google_token_invalid", _("Não foi possível validar a identidade do Google.")
 
     # MFA / 2FA
     INVALID_CHALLENGE = "auth.invalid_challenge", _("Desafio de verificação inválido ou expirado.")

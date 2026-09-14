@@ -1,10 +1,17 @@
-from django.db import transaction
-
 from rest_framework import serializers
 
+from apps.api.autenticacao.models import TokenType
 from apps.api.core.errors import APIError
 from apps.organizacoes.errors import OrganizationErrorCode
-from apps.organizacoes.models import Convite, Organizacao, Papel, Time, Vinculo
+from apps.organizacoes.memberships import Vinculos
+from apps.organizacoes.models import Convite, Organizacao, Time, Vinculo
+from apps.organizacoes.organizations import Organizacoes
+from apps.organizacoes.teams import Times
+
+
+def _validar_papel_ator(request) -> bool:
+    """API keys usam scopes; sessões humanas também revalidam papel pessoal."""
+    return getattr(getattr(request, "auth", None), "type", None) != TokenType.API_KEY
 
 
 class UsuarioResumoSerializer(serializers.Serializer):
@@ -37,16 +44,33 @@ class OrganizacaoSerializer(serializers.ModelSerializer):
         vinculo = Vinculo.objects.filter(organizacao=obj, usuario=request.user, is_active=True).first()
         return vinculo.papel if vinculo else None
 
-    def create(self, validated_data):
-        usuario = self.context["request"].user
-        with transaction.atomic():
-            organizacao = Organizacao.objects.create(**validated_data)
-            Vinculo.objects.create(
-                organizacao=organizacao,
-                usuario=usuario,
-                papel=Papel.PROPRIETARIO,
+
+class OrganizacaoEmailFaturamentoSerializer(serializers.ModelSerializer):
+    email_faturamento = serializers.EmailField(allow_null=True, required=True)
+
+    class Meta:
+        model = Organizacao
+        fields = ["id", "email_faturamento"]
+        read_only_fields = ["id"]
+
+    def validate(self, attrs):
+        if "email_faturamento" not in attrs:
+            raise serializers.ValidationError(
+                {"email_faturamento": "Este campo é obrigatório."},
+                code="required",
             )
-        return organizacao
+        return attrs
+
+    def update(self, instance, validated_data):
+        return Organizacoes.atualizar_email_faturamento(
+            instance,
+            email_faturamento=validated_data["email_faturamento"],
+            ator=self.context["request"].user,
+        )
+
+
+class EncerramentoAgendadoResponseSerializer(serializers.Serializer):
+    scheduled_for = serializers.DateTimeField()
 
 
 class TimeSerializer(serializers.ModelSerializer):
@@ -54,6 +78,26 @@ class TimeSerializer(serializers.ModelSerializer):
         model = Time
         fields = ["id", "nome"]
         read_only_fields = ["id"]
+
+    def create(self, validated_data):
+        organizacao_id = validated_data.pop("organizacao_id")
+        organizacao = Organizacao.objects.get(pk=organizacao_id)
+        request = self.context["request"]
+        return Times.criar(
+            organizacao=organizacao,
+            dados=validated_data,
+            ator=request.user,
+            validar_papel_ator=_validar_papel_ator(request),
+        )
+
+    def update(self, instance, validated_data):
+        request = self.context["request"]
+        return Times.atualizar(
+            instance,
+            dados=validated_data,
+            ator=request.user,
+            validar_papel_ator=_validar_papel_ator(request),
+        )
 
 
 class VinculoSerializer(serializers.ModelSerializer):
@@ -75,6 +119,8 @@ class VinculoSerializer(serializers.ModelSerializer):
 
     def validate_papel(self, papel):
         request = self.context["request"]
+        if not _validar_papel_ator(request):
+            return papel
         if papel > request.tenant.role:
             raise APIError(
                 OrganizationErrorCode.ROLE_INSUFFICIENT,
@@ -83,6 +129,15 @@ class VinculoSerializer(serializers.ModelSerializer):
                 message="Você não pode conceder um papel acima do seu.",
             )
         return papel
+
+    def update(self, instance, validated_data):
+        request = self.context["request"]
+        return Vinculos.atualizar_vinculo(
+            instance,
+            dados=validated_data,
+            ator=request.user,
+            validar_papel_ator=_validar_papel_ator(request),
+        )
 
 
 class ConviteSerializer(serializers.ModelSerializer):
@@ -104,6 +159,15 @@ class ConviteSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "convidado_por", "aceito_em", "pendente", "expirado"]
 
+    def update(self, instance, validated_data):
+        request = self.context["request"]
+        return Vinculos.atualizar_convite(
+            instance,
+            dados=validated_data,
+            ator=request.user,
+            validar_papel_ator=_validar_papel_ator(request),
+        )
+
 
 class ConviteCreateSerializer(ConviteSerializer):
     token = serializers.CharField(read_only=True)
@@ -113,6 +177,8 @@ class ConviteCreateSerializer(ConviteSerializer):
 
     def validate_papel(self, papel):
         request = self.context["request"]
+        if not _validar_papel_ator(request):
+            return papel
         if papel > request.tenant.role:
             raise APIError(
                 OrganizationErrorCode.ROLE_INSUFFICIENT,
@@ -121,6 +187,17 @@ class ConviteCreateSerializer(ConviteSerializer):
                 message="Você não pode convidar alguém para um papel acima do seu.",
             )
         return papel
+
+    def create(self, validated_data):
+        organizacao_id = validated_data.pop("organizacao_id")
+        organizacao = Organizacao.objects.get(pk=organizacao_id)
+        request = self.context["request"]
+        return Vinculos.criar_convite(
+            organizacao=organizacao,
+            ator=request.user,
+            validar_papel_ator=_validar_papel_ator(request),
+            **validated_data,
+        )
 
 
 class AceitarConviteSerializer(serializers.Serializer):
@@ -152,4 +229,9 @@ class AceitarConviteSerializer(serializers.Serializer):
     def save(self, **kwargs):
         convite = self.validated_data["token"]
         usuario = self.context["request"].user
-        return convite.aceitar(usuario)
+        return Vinculos.aceitar_convite(convite, usuario)
+
+
+class AceitarConviteResponseSerializer(serializers.Serializer):
+    organizacao = OrganizacaoSerializer()
+    vinculo = VinculoSerializer()

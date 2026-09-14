@@ -5,10 +5,11 @@ diretamente: `issue_token()` é o único ponto de entrada, garantindo que token 
 metadata nascem juntos ou não nascem.
 
 Toda escrita de credencial passa antes pelo lock da conta (`lock_user_account`).
-A ordem global de locks é **`Usuario` → `AuthToken` → `TrustedDevice`**: é ela
-que impede uma credencial de nascer válida no intervalo entre a checagem e o
-commit de `Usuario.delete()`, e é ela que mantém exclusão, emissão e rotação
-livres de inversão.
+A ordem global é **`Usuario` → `Organizacao` → `AuthToken`** para API keys e
+**`Usuario` → `AuthToken` → `TrustedDevice`** nos fluxos pessoais que também
+tocam dispositivos. O encerramento começa em `Organizacao`, toca `AuthToken` e
+nunca espera por `Usuario`. Essas ordens impedem uma credencial de nascer viva
+durante a exclusão da conta ou o encerramento do tenant sem introduzir inversão.
 """
 
 from dataclasses import dataclass
@@ -84,6 +85,49 @@ def lock_user_accounts(user_ids, *, using):
     return {conta.pk: conta for conta in contas}
 
 
+def lock_eligible_api_key_organization(organization, *, using):
+    """Bloqueia a organização antes de uma mutação que possa ampliar acesso."""
+    from apps.organizacoes.errors import OrganizationErrorCode
+    from apps.organizacoes.models import Organizacao
+
+    organization_id = getattr(organization, "pk", organization)
+    locked = Organizacao.all_objects.using(using).select_for_update().get(pk=organization_id)
+    if locked.is_deleted or not locked.is_active:
+        raise APIError(OrganizationErrorCode.INACTIVE, status_code=409)
+    if locked.encerramento_solicitado_em is not None:
+        raise APIError(OrganizationErrorCode.CLOSURE_PENDING, status_code=409)
+    return locked
+
+
+def _create_token_record(
+    *,
+    responsavel,
+    token_type,
+    created_by,
+    expiry,
+    metadata_input,
+    organization,
+    name,
+    scopes,
+    using,
+) -> IssuedToken:
+    """Persiste token/metadata quando os locks prévios já foram adquiridos."""
+    auth_token_model = get_token_model()
+    token_manager = auth_token_model.objects if using == DEFAULT_DB_ALIAS else auth_token_model.objects.db_manager(using)
+    instance, plain_token = token_manager.create(
+        responsavel=responsavel,
+        type=token_type,
+        created_by=created_by,
+        expiry=expiry,
+        organization=organization,
+        name=name,
+        scopes=list(scopes),
+    )
+    metadata_manager = TokenMetaData.objects if using == DEFAULT_DB_ALIAS else TokenMetaData.objects.db_manager(using)
+    metadata_manager.create(token=instance, **metadata_input)
+    return IssuedToken(instance=instance, plain_token=plain_token)
+
+
 def revoke_all_user_credentials(user, *, actor=None, using=None) -> int:
     """Revoga todas as credenciais ainda utilizáveis de `user`, sem apagar nada.
 
@@ -138,33 +182,31 @@ def issue_token(
     Se a criação do metadata falhar, o token também não persiste.
 
     Raises:
-        APIError: Se a conta do responsável já tiver sido excluída.
+        APIError: Se a conta do responsável estiver indisponível.
     """
-    auth_token_model = get_token_model()
-
     database_alias = resolve_database_alias(responsavel, using)
     with transaction.atomic(using=database_alias):
         # Segura a conta antes de escrever a credencial: se uma exclusão estiver
         # em curso, esperamos por ela e desistimos em vez de emitir um token que
         # já nasceria órfão.
         conta = lock_user_account(responsavel, using=database_alias)
-        if conta.is_deleted or not conta.is_active:
+        if conta.is_deleted or not conta.is_active or conta.exclusao_agendada_para is not None:
             raise APIError(AuthErrorCode.RESPONSIBLE_INACTIVE, status_code=409)
+        locked_organization = organization
+        if token_type == TokenType.API_KEY and organization is not None:
+            locked_organization = lock_eligible_api_key_organization(organization, using=database_alias)
 
-        token_manager = auth_token_model.objects if database_alias == DEFAULT_DB_ALIAS else auth_token_model.objects.db_manager(database_alias)
-        instance, plain_token = token_manager.create(
+        return _create_token_record(
             responsavel=conta,
-            type=token_type,
+            token_type=token_type,
             created_by=created_by,
             expiry=expiry,
-            organization=organization,
+            metadata_input=metadata_input,
+            organization=locked_organization,
             name=name,
-            scopes=list(scopes),
+            scopes=scopes,
+            using=database_alias,
         )
-        metadata_manager = TokenMetaData.objects if database_alias == DEFAULT_DB_ALIAS else TokenMetaData.objects.db_manager(database_alias)
-        metadata_manager.create(token=instance, **metadata_input)
-
-    return IssuedToken(instance=instance, plain_token=plain_token)
 
 
 def revoke_session(token, *, actor):
@@ -192,23 +234,25 @@ def revoke_all_sessions(user, *, actor, exclude_uuid=None, using=None):
 
 def create_api_key(*, responsavel, created_by, name, scopes, organization, expiry=None, using=None):
     """Emite uma API key e audita a criação. Único ponto de entrada para o serializer."""
-    issued = issue_token(
-        responsavel=responsavel,
-        token_type=TokenType.API_KEY,
-        created_by=created_by,
-        # `issue_token`/o manager tratam `expiry` como relativo (`now() + delta`);
-        # aqui o cliente manda uma data absoluta opcional, então a aplicamos
-        # depois de criado em vez de repassar direto.
-        expiry=None,
-        metadata_input={},
-        organization=organization,
-        name=name,
-        scopes=list(scopes),
-        using=using,
-    )
-    if expiry is not None:
-        issued.instance.expiry = expiry
-        issued.instance.save(using=resolve_database_alias(issued.instance, using), update_fields=["expiry"])
+    database_alias = resolve_database_alias(responsavel, using)
+    with transaction.atomic(using=database_alias):
+        issued = issue_token(
+            responsavel=responsavel,
+            token_type=TokenType.API_KEY,
+            created_by=created_by,
+            # `issue_token`/o manager tratam `expiry` como relativo (`now() + delta`);
+            # aqui o cliente manda uma data absoluta opcional, então a aplicamos
+            # depois de criado em vez de repassar direto.
+            expiry=None,
+            metadata_input={},
+            organization=organization,
+            name=name,
+            scopes=list(scopes),
+            using=database_alias,
+        )
+        if expiry is not None:
+            issued.instance.expiry = expiry
+            issued.instance.save(using=database_alias, update_fields=["expiry"])
 
     emit_api_key_event("create", instance=issued.instance, actor=created_by)
     return issued
@@ -219,16 +263,23 @@ def update_api_key(instance, *, actor, name=None, responsavel=None, scopes=None,
     database_alias = resolve_database_alias(instance, using)
     auth_token_model = get_token_model()
     known_user_ids = {instance.responsavel_id}
+    organization_id = instance.organization_id
+    if organization_id is None:
+        raise APIError(AuthErrorCode.INVALID_TOKEN, status_code=409)
     if responsavel is not None:
         known_user_ids.add(responsavel.pk)
 
     while True:
         retry_user_id = None
+        retry_organization_id = None
         with transaction.atomic(using=database_alias):
             locked_users = lock_user_accounts(known_user_ids, using=database_alias)
+            locked_organization = lock_eligible_api_key_organization(organization_id, using=database_alias)
             current = auth_token_model.objects.using(database_alias).select_for_update().select_related("responsavel").get(pk=instance.pk)
             if current.responsavel_id not in locked_users:
                 retry_user_id = current.responsavel_id
+            elif current.organization_id != locked_organization.pk:
+                retry_organization_id = current.organization_id
             else:
                 next_name = current.name if name is None else name.strip()
                 next_responsavel = locked_users[current.responsavel_id] if responsavel is None else locked_users[responsavel.pk]
@@ -274,10 +325,12 @@ def update_api_key(instance, *, actor, name=None, responsavel=None, scopes=None,
                         emit_api_key_event(event, instance=instance, actor=actor, **properties)
                 return instance
 
-        # O responsável mudou entre a leitura obsoleta e o lock do token.
-        # Solte tudo e tente de novo incluindo a conta recém-observada, para
-        # nunca adquirir Usuario depois de AuthToken.
-        known_user_ids.add(retry_user_id)
+        # Conta/organização mudaram desde a instância recebida: solte todos os
+        # locks e reinicie na ordem canônica, nunca depois de AuthToken.
+        if retry_user_id is not None:
+            known_user_ids.add(retry_user_id)
+        if retry_organization_id is not None:
+            organization_id = retry_organization_id
 
 
 def rotate_api_key(current, *, actor, using=None):
@@ -286,18 +339,26 @@ def rotate_api_key(current, *, actor, using=None):
     O segredo antigo perde validade imediatamente; a linha revogada permanece
     para auditoria, apontando `replaced_by` para a nova.
     """
+    if current.type != TokenType.API_KEY or current.organization_id is None:
+        raise APIError(AuthErrorCode.INVALID_TOKEN, status_code=409)
+
     auth_token_model = get_token_model()
 
     database_alias = resolve_database_alias(current, using)
     known_user_ids = {current.responsavel_id}
+    organization_id = current.organization_id
 
     while True:
         retry_user_id = None
+        retry_organization_id = None
         with transaction.atomic(using=database_alias):
             contas = lock_user_accounts(known_user_ids, using=database_alias)
+            organizacao = lock_eligible_api_key_organization(organization_id, using=database_alias)
             locked_current = auth_token_model.objects.using(database_alias).select_for_update().select_related("responsavel").get(pk=current.pk)
             if locked_current.responsavel_id not in contas:
                 retry_user_id = locked_current.responsavel_id
+            elif locked_current.organization_id != organizacao.pk:
+                retry_organization_id = locked_current.organization_id
             else:
                 current = locked_current
                 conta = contas[current.responsavel_id]
@@ -335,13 +396,13 @@ def rotate_api_key(current, *, actor, using=None):
                     using=database_alias,
                 )
 
-                issued = issue_token(
+                issued = _create_token_record(
                     responsavel=conta,
                     token_type=TokenType.API_KEY,
                     created_by=actor,
                     expiry=None,
                     metadata_input={},
-                    organization=current.organization,
+                    organization=organizacao,
                     name=current.name,
                     scopes=current.scopes,
                     using=database_alias,
@@ -356,7 +417,10 @@ def rotate_api_key(current, *, actor, using=None):
                 current.save(using=database_alias, update_fields=["revoked_at", "revoked_by", "replaced_by"])
                 break
 
-        known_user_ids.add(retry_user_id)
+        if retry_user_id is not None:
+            known_user_ids.add(retry_user_id)
+        if retry_organization_id is not None:
+            organization_id = retry_organization_id
 
     emit_api_key_event("rotate", instance=issued.instance, actor=actor, replaces_uuid=str(current.uuid))
     return issued
@@ -374,20 +438,48 @@ def suspend_api_key(instance, *, actor, reason=""):
 
 def resume_api_key(instance, *, actor):
     """Retoma uma API key suspensa; exige responsável ativo e vinculado. Nunca retoma revogada."""
-    if instance.revoked_at is not None:
-        raise APIError(AuthErrorCode.REVOKED_TOKEN, status_code=409)
-
     from apps.organizacoes.models import Vinculo
 
-    vinculo_ativo = Vinculo.objects.filter(organizacao=instance.organization, usuario=instance.responsavel, is_active=True).exists()
+    if instance.type != TokenType.API_KEY or instance.organization_id is None:
+        raise APIError(AuthErrorCode.INVALID_TOKEN, status_code=409)
+    database_alias = resolve_database_alias(instance)
+    auth_token_model = get_token_model()
+    known_user_ids = {instance.responsavel_id}
+    organization_id = instance.organization_id
 
-    if not instance.responsavel.is_active or instance.responsavel.is_deleted or not vinculo_ativo:
-        raise APIError(AuthErrorCode.RESPONSIBLE_INACTIVE, status_code=409)
+    while True:
+        retry_user_id = None
+        retry_organization_id = None
+        with transaction.atomic(using=database_alias):
+            contas = lock_user_accounts(known_user_ids, using=database_alias)
+            organizacao = lock_eligible_api_key_organization(organization_id, using=database_alias)
+            current = auth_token_model.objects.using(database_alias).select_for_update().select_related("responsavel").get(pk=instance.pk)
+            if current.responsavel_id not in contas:
+                retry_user_id = current.responsavel_id
+            elif current.organization_id != organizacao.pk:
+                retry_organization_id = current.organization_id
+            else:
+                if current.revoked_at is not None:
+                    raise APIError(AuthErrorCode.REVOKED_TOKEN, status_code=409)
+                conta = contas[current.responsavel_id]
+                vinculo_ativo = Vinculo.objects.using(database_alias).filter(organizacao=organizacao, usuario=conta, is_active=True).exists()
+                if conta.is_deleted or not conta.is_active or not vinculo_ativo:
+                    raise APIError(AuthErrorCode.RESPONSIBLE_INACTIVE, status_code=409)
 
-    instance.suspended_at = None
-    instance.suspended_by = None
-    instance.suspension_reason = ""
-    instance.save(update_fields=["suspended_at", "suspended_by", "suspension_reason"])
+                current.suspended_at = None
+                current.suspended_by = None
+                current.suspension_reason = ""
+                current.save(using=database_alias, update_fields=["suspended_at", "suspended_by", "suspension_reason"])
+                instance.suspended_at = None
+                instance.suspended_by = None
+                instance.suspension_reason = ""
+                break
+
+        if retry_user_id is not None:
+            known_user_ids.add(retry_user_id)
+        if retry_organization_id is not None:
+            organization_id = retry_organization_id
+
     emit_api_key_event("resume", instance=instance, actor=actor)
     return instance
 
@@ -401,11 +493,44 @@ def revoke_api_key(instance, *, actor):
     return instance
 
 
+def revoke_organization_api_keys(organization, *, actor=None, revoked_at=None, using=None) -> int:
+    """Revoga sob lock somente as API keys ainda vivas de uma organização."""
+    database_alias = resolve_database_alias(organization, using)
+    auth_token_model = get_token_model()
+    revoked_at = revoked_at or timezone.now()
+
+    with transaction.atomic(using=database_alias):
+        api_keys = list(
+            auth_token_model.objects.using(database_alias)
+            .select_for_update()
+            .filter(
+                organization=organization,
+                type=TokenType.API_KEY,
+                revoked_at__isnull=True,
+            )
+            .order_by("pk")
+        )
+        for api_key in api_keys:
+            api_key.revoked_at = revoked_at
+            api_key.revoked_by = actor
+            api_key.save(using=database_alias, update_fields=["revoked_at", "revoked_by"])
+            transaction.on_commit(
+                lambda api_key=api_key: emit_api_key_event(
+                    "revoke",
+                    instance=api_key,
+                    actor=actor,
+                    reason="organization_closed",
+                ),
+                using=database_alias,
+            )
+        return len(api_keys)
+
+
 def ensure_api_key_still_valid(token):
     """Suspende automática e idempotentemente uma API key sem responsável ativo/vinculado.
 
-    Chamado a cada request tenant-scoped (`TenantPermission`, onde o vínculo já
-    é resolvido): fail-closed materializado, não só recusado na hora.
+    Chamado pelo `OrganizacaoMiddleware` em cada request de API key: fail-closed
+    materializado, não só recusado na hora.
     """
     if token.type != TokenType.API_KEY or token.suspended_at is not None or token.revoked_at is not None:
         return token

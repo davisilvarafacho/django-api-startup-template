@@ -119,6 +119,10 @@ def _verificar_constraints(model):
         if not isinstance(constraint, models.UniqueConstraint):
             continue
 
+        globais_declaradas = frozenset(getattr(model, "global_unique_constraint_names", ()))
+        if constraint.name in globais_declaradas:
+            continue
+
         campos = list(constraint.fields or ())
         if _tenant_e_o_primeiro(campos):
             continue

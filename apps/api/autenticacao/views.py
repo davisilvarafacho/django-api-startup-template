@@ -21,6 +21,7 @@ from apps.organizacoes.permissions import TenantPermission
 from apps.usuarios.passwords import set_validated_password
 
 from .errors import AuthErrorCode
+from .identities import AutenticacaoGoogle
 from .mfa import (
     PRE_AUTH_LIFETIME,
     active_factors,
@@ -46,6 +47,10 @@ from .schema import (
     document_api_key_resume,
     document_api_key_rotate,
     document_api_key_suspend,
+    document_api_key_update,
+    document_google_connect,
+    document_google_disconnect,
+    document_google_login,
     document_login,
     document_password_change,
     document_password_reset_confirm,
@@ -55,6 +60,8 @@ from .schema import (
 from .serializers import (
     APIKeySerializer,
     APIKeyWriteSerializer,
+    GoogleIdentitySerializer,
+    GoogleLoginSerializer,
     LoginResponseSerializer,
     LoginSerializer,
     PasswordChangeSerializer,
@@ -78,6 +85,71 @@ from .utils import build_token_metadata
 # Nunca importar `knox.models.AuthToken` diretamente: o modelo ativo é o
 # swappable definido em `settings.KNOX_TOKEN_MODEL`.
 AuthToken = get_token_model()
+
+
+@public
+class GoogleLoginView(APIView):
+    """Cria ou resolve a conta Google e emite uma sessão local normal."""
+
+    permission_classes = (AllowAny,)
+    throttle_classes = [AnonRateThrottle, ScopedRateThrottle]
+    throttle_scope = "auth_login"
+
+    @document_google_login
+    def post(self, request):
+        serializer = GoogleLoginSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        usuario = AutenticacaoGoogle.autenticar(serializer.validated_data["id_token"])
+        metadata_input = build_token_metadata(request, serializer.validated_data)
+        issued = issue_token(
+            responsavel=usuario,
+            token_type=TokenType.TOKEN,
+            created_by=usuario,
+            expiry=knox_settings.TOKEN_TTL,
+            metadata_input=metadata_input,
+        )
+        metadata = issued.instance.metadata
+        response_data = {
+            "token": issued.plain_token,
+            "expiry": issued.instance.expiry,
+            "session": {
+                "uuid": issued.instance.uuid,
+                "device": {
+                    "type": metadata.device_type,
+                    "name": (metadata.device_name or f"{metadata.device_brand} {metadata.device_model}".strip() or "Dispositivo desconhecido"),
+                    "location": metadata.get_location_string(),
+                },
+            },
+        }
+        return Response(LoginResponseSerializer(response_data).data, status=status.HTTP_200_OK)
+
+
+@no_tenancy
+class GoogleConnectView(APIView):
+    """Conecta uma identidade Google à sessão local confirmada recentemente."""
+
+    permission_classes = (IsAuthenticated, RecentAuthenticationPermission)
+
+    @document_google_connect
+    @require_recent_auth()
+    def post(self, request):
+        serializer = GoogleIdentitySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        AutenticacaoGoogle.vincular(request.user, serializer.validated_data["id_token"])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@no_tenancy
+class GoogleDisconnectView(APIView):
+    """Desconecta o Google sem remover o último meio de login."""
+
+    permission_classes = (IsAuthenticated, RecentAuthenticationPermission)
+
+    @document_google_disconnect
+    @require_recent_auth()
+    def delete(self, request):
+        AutenticacaoGoogle.desvincular(request.user)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class LoginView(APIView):
@@ -197,6 +269,7 @@ class LoginView(APIView):
                 )
 
 
+@no_tenancy
 class ReauthenticateView(APIView):
     """Confirma a identidade da sessão atual (step-up auth).
 
@@ -234,6 +307,7 @@ class SessionScopedViewMixin:
     session_only = True
 
 
+@no_tenancy
 class SessionViewSet(
     SessionScopedViewMixin,
     mixins.ListModelMixin,
@@ -284,6 +358,7 @@ class SessionViewSet(
         return Response({"revoked_count": revoked_count})
 
 
+@no_tenancy
 class LogoutView(APIView):
     """Revoga logicamente só a sessão atual; nunca API keys/reset."""
 
@@ -304,6 +379,7 @@ class LogoutView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+@no_tenancy
 class LogoutAllView(APIView):
     """Revoga logicamente todas as sessões do usuário, incluindo a atual."""
 
@@ -361,6 +437,7 @@ class APIKeyViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         return super().create(request, *args, **kwargs)
 
+    @document_api_key_update
     @require_recent_auth()
     def partial_update(self, request, *args, **kwargs):
         return super().partial_update(request, *args, **kwargs)

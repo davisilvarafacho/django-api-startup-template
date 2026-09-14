@@ -6,9 +6,18 @@ dados genéricos:
 
 ```bash
 make up
+make billing-bootstrap
 make migrate
 uv run python manage.py seed_demo
 ```
+
+O bootstrap de billing é idempotente e precisa ser executado mesmo quando o
+volume PostgreSQL já existia antes dos logins dedicados. Nesse caso, faça e
+teste um backup antes. Em `.env`, `POSTGRES_ADMIN_USER` deve identificar o
+administrador que criou o volume; `DATABASE_USER`,
+`BILLING_INGRESS_DATABASE_USER` e
+`BILLING_INGRESS_WORKER_DATABASE_USER` devem continuar distintos entre si e do
+administrador.
 
 O comando cria:
 
@@ -56,10 +65,14 @@ credenciais locais versionadas e não lê o `.env` do host.
 Depois da criação:
 
 ```bash
+make billing-bootstrap BILLING_COMPOSE_FILE=.devcontainer/docker-compose.yml  # no host
 make migrate
 uv run python manage.py seed_demo
 make run
 ```
+
+O primeiro comando usa o Docker do host e pode ser executado antes de abrir o
+Dev Container. Os demais rodam no terminal do serviço `app`.
 
 A API responde em `http://localhost:8000` **pelo nginx** — o `RUN_HOST=0.0.0.0`
 do compose faz o `runserver` escutar em todas as interfaces para o proxy

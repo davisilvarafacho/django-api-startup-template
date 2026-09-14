@@ -10,9 +10,10 @@ from drf_spectacular.utils import extend_schema
 
 from apps.api.core.schema import document_error_codes
 from apps.organizacoes.errors import OrganizationErrorCode
+from apps.usuarios.errors import AccountErrorCode
 
 from .errors import AuthErrorCode
-from .serializers import APIKeySerializer, LoginResponseSerializer
+from .serializers import APIKeySerializer, GoogleIdentitySerializer, GoogleLoginSerializer, LoginResponseSerializer
 
 TOKEN_ONCE_DESCRIPTION = (
     "`token` é o segredo em texto plano: só aparece nesta resposta, não é "
@@ -26,6 +27,39 @@ document_login = extend_schema(
         401: document_error_codes(AuthErrorCode.INVALID_CREDENTIALS, AuthErrorCode.USER_INACTIVE),
     },
     description=TOKEN_ONCE_DESCRIPTION,
+)
+
+document_google_login = extend_schema(
+    request=GoogleLoginSerializer,
+    responses={
+        200: LoginResponseSerializer,
+        401: document_error_codes(AuthErrorCode.GOOGLE_TOKEN_INVALID, AuthErrorCode.USER_INACTIVE),
+        409: document_error_codes(AccountErrorCode.EXTERNAL_IDENTITY_CONFLICT),
+    },
+    description=TOKEN_ONCE_DESCRIPTION,
+)
+
+document_google_connect = extend_schema(
+    request=GoogleIdentitySerializer,
+    responses={
+        204: None,
+        401: document_error_codes(
+            AuthErrorCode.NOT_AUTHENTICATED,
+            AuthErrorCode.REAUTHENTICATION_REQUIRED,
+            AuthErrorCode.GOOGLE_TOKEN_INVALID,
+        ),
+        403: document_error_codes(AccountErrorCode.EMAIL_NOT_VERIFIED),
+        409: document_error_codes(AccountErrorCode.EXTERNAL_IDENTITY_CONFLICT),
+    },
+)
+
+document_google_disconnect = extend_schema(
+    request=None,
+    responses={
+        204: None,
+        401: document_error_codes(AuthErrorCode.NOT_AUTHENTICATED, AuthErrorCode.REAUTHENTICATION_REQUIRED),
+        409: document_error_codes(AccountErrorCode.EXTERNAL_IDENTITY_LAST_LOGIN),
+    },
 )
 
 document_reauthenticate = extend_schema(
@@ -44,6 +78,7 @@ document_api_key_create = extend_schema(
         201: APIKeySerializer,
         401: document_error_codes(AuthErrorCode.REAUTHENTICATION_REQUIRED),
         403: document_error_codes(AuthErrorCode.SCOPE_NOT_DELEGABLE),
+        409: document_error_codes(OrganizationErrorCode.CLOSURE_PENDING, OrganizationErrorCode.INACTIVE),
         422: document_error_codes(OrganizationErrorCode.MEMBERSHIP_REQUIRED),
     },
     description=TOKEN_ONCE_DESCRIPTION,
@@ -53,9 +88,23 @@ document_api_key_rotate = extend_schema(
     responses={
         201: APIKeySerializer,
         401: document_error_codes(AuthErrorCode.REAUTHENTICATION_REQUIRED),
-        409: document_error_codes(AuthErrorCode.REVOKED_TOKEN),
+        409: document_error_codes(
+            AuthErrorCode.REVOKED_TOKEN,
+            OrganizationErrorCode.CLOSURE_PENDING,
+            OrganizationErrorCode.INACTIVE,
+        ),
     },
     description=TOKEN_ONCE_DESCRIPTION,
+)
+
+document_api_key_update = extend_schema(
+    responses={
+        200: APIKeySerializer,
+        401: document_error_codes(AuthErrorCode.REAUTHENTICATION_REQUIRED),
+        403: document_error_codes(AuthErrorCode.SCOPE_NOT_DELEGABLE),
+        409: document_error_codes(OrganizationErrorCode.CLOSURE_PENDING, OrganizationErrorCode.INACTIVE),
+        422: document_error_codes(OrganizationErrorCode.MEMBERSHIP_REQUIRED),
+    }
 )
 
 document_api_key_suspend = extend_schema(responses={200: APIKeySerializer})
@@ -63,7 +112,12 @@ document_api_key_suspend = extend_schema(responses={200: APIKeySerializer})
 document_api_key_resume = extend_schema(
     responses={
         200: APIKeySerializer,
-        409: document_error_codes(AuthErrorCode.REVOKED_TOKEN, AuthErrorCode.RESPONSIBLE_INACTIVE),
+        409: document_error_codes(
+            AuthErrorCode.REVOKED_TOKEN,
+            AuthErrorCode.RESPONSIBLE_INACTIVE,
+            OrganizationErrorCode.CLOSURE_PENDING,
+            OrganizationErrorCode.INACTIVE,
+        ),
     },
 )
 

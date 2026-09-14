@@ -73,6 +73,15 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --frozen
+      - name: Provisionar roles de faturamento
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U postgres -d base <<'SQL'
+          CREATE ROLE billing_functions_owner NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB NOINHERIT NOREPLICATION;
+          CREATE ROLE billing_ingress_runtime NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB NOINHERIT NOREPLICATION;
+          GRANT billing_functions_owner TO postgres WITH SET TRUE;
+          SQL
       - name: Migrations sincronizadas
         run: uv run python manage.py makemigrations --check --dry-run
       - name: Testes + cobertura
