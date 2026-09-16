@@ -1,6 +1,6 @@
 [project]
 name = "drf-base-api-project"
-version = "0.1.0"
+version = "1.0.0"
 description = "Projeto base para APIs Django REST Framework."
 requires-python = ">=3.11"
 dependencies = [

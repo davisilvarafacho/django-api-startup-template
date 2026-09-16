@@ -607,7 +607,7 @@ REST_FRAMEWORK = {
 SPECTACULAR_SETTINGS = {
     "TITLE": "DRF Base API",
     "DESCRIPTION": "Documentação da API.",
-    "VERSION": "0.1.0",  # x-release-please-version
+    "VERSION": "1.0.0",  # x-release-please-version
     "SERVE_INCLUDE_SCHEMA": False,
 }
 
