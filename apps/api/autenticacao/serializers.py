@@ -2,6 +2,8 @@ from django.contrib.auth import authenticate, get_user_model
 
 from rest_framework import serializers
 
+from drf_spectacular.utils import extend_schema_field
+
 from apps.api.core.errors import APIError
 from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.models import Organizacao, Vinculo
@@ -188,12 +190,17 @@ class APIKeySerializer(serializers.Serializer):
         return data
 
 
+@extend_schema_field({"type": "array", "items": {"type": "string"}})
+class ScopeInputField(serializers.ListField):
+    """Preserve raw values for indexed domain errors; document valid string input."""
+
+
 class APIKeyWriteSerializer(APIKeySerializer):
     """Create/PATCH: valida vínculo do responsável e delega scopes com autoridade do ator."""
 
     name = serializers.CharField()
     responsavel = serializers.PrimaryKeyRelatedField(queryset=get_user_model().objects.none())
-    scopes = serializers.ListField(child=serializers.JSONField(allow_null=True), required=False, default=list)
+    scopes = ScopeInputField(child=serializers.JSONField(allow_null=True), required=False, default=list)
     expiry = serializers.DateTimeField(required=False, allow_null=True)
 
     def __init__(self, *args, **kwargs):

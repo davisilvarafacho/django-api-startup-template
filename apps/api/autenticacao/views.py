@@ -56,6 +56,7 @@ from .schema import (
     document_password_reset_confirm,
     document_password_reset_request,
     document_reauthenticate,
+    document_scope_catalog,
 )
 from .serializers import (
     APIKeySerializer,
@@ -429,6 +430,7 @@ class APIKeyViewSet(viewsets.ModelViewSet):
             return APIKeyWriteSerializer
         return APIKeySerializer
 
+    @document_scope_catalog
     @action(detail=False, methods=["get"])
     def scopes(self, request):
         from .scope_delegation import scope_catalog

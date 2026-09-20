@@ -5,6 +5,8 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 
+from rest_framework.permissions import AllowAny, IsAuthenticated
+
 from django_scalar.views import scalar_viewer
 from drf_spectacular.views import SpectacularAPIView
 
@@ -32,7 +34,7 @@ handler500 = custom_500_handler
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-    path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
+    path("api/schema/", SpectacularAPIView.as_view(permission_classes=[AllowAny] if settings.DEBUG else [IsAuthenticated]), name="schema"),
     path("api/docs/", scalar_viewer, name="scalar-docs"),
     # Health checks e métricas ficam FORA do bloco de desenvolvimento: o
     # `HEALTHCHECK` do Dockerfile aponta para `/health/` e, registrado só em dev,

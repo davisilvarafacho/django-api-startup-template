@@ -219,8 +219,7 @@ default sobre a tabela unificada de tokens.
   - Histórico de auditoria (`history`, via `django-auditlog`).
   - Timestamps `created_at`/`last_modified_at`.
   - Utilitários: `clonar()`, `as_dict()`, `get_fields()` e afins.
-  - `api_scope_resource = None` por padrão — ver §2.7 para expor o model como
-    recurso público de scopes/permissions.
+  - A exposição de scopes pertence à `ResourcePolicy` do ViewSet (§2.7).
 
 **Exceções arquiteturais explícitas:**
 
@@ -252,28 +251,15 @@ default sobre a tabela unificada de tokens.
 
 ### 2.7. Scopes e Permissions Públicas (`resource:action`)
 
-- A interface pública e estável de scopes de API key e permissions humanas é
-  `resource:action` (ex.: `teams:read`, `invitations:accept`); codenames Django
-  (`app_label.codename`) são um detalhe interno, nunca expostos a clientes.
-- Um model expõe seu recurso com `api_scope_resource = "recurso"`; `None`
-  (o default) significa que o model não é exposto.
-- Um ViewSet pode sobrescrever com `scope_resource = "recurso"` quando a
-  superfície pública diverge do model consultado (ex.: sem `queryset` estático).
-  Regra: **default no model, override na view** — só sobrescreva quando
-  necessário.
-- Actions CRUD (`read`/`create`/`update`/`delete`) são derivadas automaticamente
-  da action do ViewSet; actions customizadas declaram o scope com
-  `@require_token_scopes("recurso:action")`.
-- Cada action customizada também deve declarar no model a tradução interna para
-  uma permission Django, via
-  `api_scope_custom_actions = {"action": "can_action_model"}`. O registry nunca
-  considera delegável uma action sem codename correspondente.
-- Wildcards: `resource:*` (qualquer action do recurso) e `*` (qualquer recurso).
-  Delegar `*` a uma API key exige superuser ou a permission
-  `autenticacao.grant_unrestricted_apikey` — ver
-  `apps.api.autenticacao.scope_delegation.validate_scope_delegation`.
-- Fonte da verdade: `apps.api.core.scope_registry` (`ScopeRegistry`,
-  `parse_scope`, `matches_scope`, `required_django_permissions`).
+`authorization_policy = ResourcePolicy(...)` no ViewSet é a única declaração
+do recurso público. O `ScopeRegistry` deriva scopes das actions efetivamente
+roteadas e traduz suas permissions Django. Não declare `api_scope_resource`,
+`scope_resource` ou listas paralelas de scopes no model/documentação.
+
+CRUD roteado gera `read/create/update/delete`, salvo bloqueio da policy.
+Actions customizadas declaram `ActionPolicy`; disponibilidade para key exige
+opt-in explícito. Wildcards `resource:*` e `*` incluem apenas ações disponíveis.
+A delegação é descrita em [Autenticação](../explanation/autenticacao.md).
 
 ### 2.8. `help_text` e `db_comment`
 
@@ -332,6 +318,43 @@ campos explicitamente e nunca expor digest, prefixo ou segredo de token.
 plane pré-RLS podem usar as bases do DRF quando as actions genéricas herdadas
 de `BaseModelViewSet` ampliariam indevidamente a superfície pública. Nesses
 casos, queryset, permissions, scopes e métodos HTTP devem ser explícitos.
+
+### 4.1.1. Policy obrigatória e permissions aditivas
+
+`BaseModelViewSet` inclui `ModelPermissionMixin`. Declare `authorization_policy`
+em todo ViewSet concreto, incluindo permission/papel para cada action herdada
+que ele expõe. Views DRF de negócio que usam outra base incluem o mixin
+explicitamente. Self-service e views públicas usam uma base sem o mixin.
+
+```python
+from apps.api.base.permissions import ModelPermissionMixin
+from apps.api.base.resource_policies import ResourcePolicy
+from apps.organizacoes.models import Papel, Time
+from rest_framework import mixins, viewsets
+
+class TimesLeituraViewSet(ModelPermissionMixin, mixins.ListModelMixin, viewsets.GenericViewSet):
+    queryset = Time.objects.all()
+    authorization_policy = ResourcePolicy(
+        resource="teams",
+        minimum_roles={"read": Papel.VISUALIZADOR},
+    )
+    # Defina também serializer e filtros do recurso.
+```
+
+O model é derivado de `queryset.model`; informe `model=...` na policy somente
+sem queryset estático. Declare papel `None` explicitamente para operações
+sem tenant. Em `custom_actions`, `ActionPolicy` informa action lógica,
+permission Django e `api_key_allowed`; o papel vem de `minimum_roles`.
+
+Permissions da classe e de `@action` são **aditivas** às proteções obrigatórias
+`IsAuthenticated`, `TenantPermission` e `ResourceAccessPermission`; duplicatas
+são executadas uma vez. `IsAuthenticated` não desliga a policy.
+`api_key_forbidden_actions` e `api_key_enabled=False` limitam integrações antes
+de verificar scopes. `@public` configura `AllowAny` em uma view separada;
+actions públicas não podem pertencer ao mixin.
+
+Checks carregam as rotas e rejeitam policies ausentes, handlers não chamáveis,
+permissions/papéis inválidos, recursos duplicados e disponibilidade incoerente.
 
 ### 4.2. Recursos e endpoints de comando
 

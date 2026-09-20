@@ -227,7 +227,7 @@ convenção rígida e não preferência de estilo.
 | `tenant_free_routes.py` → `TENANT_FREE_ROUTES` | `RouteRegistry` | Rota com token, sem organização. |
 | `errors.py` | `apps.api.core.errors.error_codes` | Códigos de erro da API. |
 | `@lookup(...)` no model | Registry de lookup | Expõe o model em `GET /lookup/<chave>/`. |
-| `api_scope_resource` no model | `ScopeRegistry` | Expõe o recurso como `resource:action`. |
+| `authorization_policy` no ViewSet roteado | `ScopeRegistry` | Deriva recursos e actions disponíveis como `resource:action`. |
 
 ## Infraestrutura e operação
 

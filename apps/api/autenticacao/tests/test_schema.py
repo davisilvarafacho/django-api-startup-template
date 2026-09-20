@@ -144,3 +144,15 @@ def test_google_documenta_payload_sucesso_e_erros_de_estado():
     assert {"200", "401"} <= login["responses"].keys()
     assert {"204", "401", "403", "409"} <= connect["responses"].keys()
     assert {"204", "401", "409"} <= disconnect["responses"].keys()
+
+
+def test_scope_schema_exposes_string_input_catalog_and_indexed_errors():
+    schema = _gerar_schema()
+    components = schema["components"]["schemas"]
+    assert components["APIKeyWrite"]["properties"]["scopes"] == {"type": "array", "items": {"type": "string"}}
+    operation = schema["paths"]["/auth/api_keys/scopes/"]["get"]
+    assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/ScopeCatalog"}
+    for path, method in [("/auth/api_keys/", "post"), ("/auth/api_keys/{uuid}/", "patch")]:
+        description = schema["paths"][path][method]["responses"]["422"]["description"]
+        assert "auth.invalid_scope" in description
+        assert "auth.scope_not_available" in description

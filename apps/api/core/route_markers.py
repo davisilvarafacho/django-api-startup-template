@@ -15,7 +15,13 @@ Atenção: o marcador é um atributo de classe, então **subclasses herdam**. N�
 decore uma view base a menos que queira liberar todas as filhas.
 """
 
-from django.urls import Resolver404, resolve
+from typing import Any
+
+from django.core.checks import Error, Tags, register
+from django.urls import Resolver404, URLResolver, get_resolver, resolve
+
+from rest_framework.permissions import AllowAny
+from rest_framework.views import APIView
 
 __all__ = [
     "MARCADOR_PUBLICA",
@@ -48,6 +54,9 @@ def _marcar(view, marcador):
 
 def public(view):
     """Dispensa autenticação: a rota responde sem token."""
+    target = getattr(view, "cls", None) or view
+    target.permission_classes = [AllowAny]
+    _marcar(target, MARCADOR_PUBLICA)
     return _marcar(view, MARCADOR_PUBLICA)
 
 
@@ -106,4 +115,44 @@ def rota_tem_marcador(path, method, marcador):
 
     actions = getattr(callback, "actions", {})
     handler_name = actions.get(method.lower()) if actions else method.lower()
-    return tem_marcador(getattr(view, handler_name, None), marcador)
+    return bool(handler_name) and tem_marcador(getattr(view, handler_name or "", None), marcador)
+
+
+@register(Tags.security)
+def check_public_routes(app_configs, **kwargs):
+    """Keep public middleware declarations consistent with DRF permissions."""
+    from django.conf import settings
+
+    from apps.api.autenticacao.middleware import DEBUG_PREFIXES
+    from apps.api.base.permissions import ModelPermissionMixin
+    from apps.api.core.routes_registry import routes_registry
+
+    errors: list[Error] = []
+
+    def visit(patterns, prefix=""):
+        for pattern in patterns:
+            route = prefix + str(pattern.pattern).removeprefix("^").removesuffix("$")
+            if isinstance(pattern, URLResolver):
+                visit(pattern.url_patterns, route)
+                continue
+            callback = pattern.callback
+            view: Any = getattr(callback, "cls", None) or getattr(callback, "view_class", None)
+            if not isinstance(view, type) or not issubclass(view, APIView):
+                continue
+            initkwargs = getattr(callback, "initkwargs", {})
+            permissions = initkwargs.get("permission_classes", getattr(view, "permission_classes", ())) or ()
+            declared = tem_marcador(callback, MARCADOR_PUBLICA) or tem_marcador(view, MARCADOR_PUBLICA)
+            route_path = "/" + route
+            declared = declared or routes_registry.matches(route_path)
+            declared = declared or (settings.DEBUG and route_path.startswith(DEBUG_PREFIXES))
+            actions = getattr(callback, "actions", {})
+            handlers = [getattr(view, name, None) for name in actions.values()]
+            if issubclass(view, ModelPermissionMixin) and (declared or any(tem_marcador(h, MARCADOR_PUBLICA) for h in handlers)):
+                errors.append(Error("Rota/action pública não pode usar ModelPermissionMixin.", obj=view, id="core.E012"))
+            if AllowAny in permissions and not declared:
+                errors.append(Error("AllowAny exige @public ou prefixo PUBLIC_ROUTES.", obj=view, id="core.E010"))
+            if declared and any(permission is not AllowAny for permission in permissions):
+                errors.append(Error("Rota pública preserva permissions restritivas.", obj=view, id="core.E011"))
+
+    visit(get_resolver().url_patterns)
+    return errors

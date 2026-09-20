@@ -82,3 +82,27 @@ def test_document_error_codes_rejeita_codigo_nao_registrado():
 
     with pytest.raises(ImproperlyConfigured):
         document_error_responses({422: [CodigoForaDoRegistry.FORA]})
+
+
+def test_resource_policy_schema_describes_session_only_and_key_actions():
+    from apps.api.core.schema import ResourceAwareAutoSchema
+    from apps.organizacoes.views import VinculoViewSet
+
+    schema = ResourceAwareAutoSchema()
+    schema.view = VinculoViewSet()
+    schema.view.action = "destroy"
+    schema.method = "DELETE"
+    extensions = schema.get_extensions()
+    assert extensions["x-resource-authorization"] == {
+        "resource": "memberships",
+        "action": "delete",
+        "available_for_api_key": False,
+        "scope": None,
+        "session_requires_permission": True,
+        "minimum_role": int(VinculoViewSet.authorization_policy.minimum_roles["delete"]),
+    }
+    schema.view.action = "list"
+    schema.method = "GET"
+    authorization = schema.get_extensions()["x-resource-authorization"]
+    assert authorization["available_for_api_key"] is True
+    assert authorization["scope"] == "memberships:read"

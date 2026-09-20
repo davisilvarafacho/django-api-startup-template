@@ -45,6 +45,59 @@ startup se houver formato inválido ou duplicidade. Ver a implementação em
 `apps/api/core/errors.py` e a spec normativa em
 `.ai/brainstorming/spec/2026-07-28-api-errors-design.md`.
 
+Operações de recursos publicam `x-resource-authorization`, derivado da policy:
+recurso, action, disponibilidade para key, scope (ou `null` se exclusiva de
+sessão), exigência de permission humana e papel mínimo. Views que declaram
+`session_only` publicam `x-session-only: true`. Esses metadados descrevem a
+capacidade da plataforma; a autoridade individual de delegação vem do catálogo.
+
+## API keys e catálogo de scopes
+
+`POST /auth/api_keys/` e `PATCH /auth/api_keys/{uuid}/` recebem `scopes` como
+`array<string>`, por exemplo `{"scopes": ["teams:read"]}`. Esses endpoints,
+assim como rotação, suspensão, retomada e revogação, exigem sessão humana,
+tenant e a permission administrativa correspondente. Criar/alterar/rotacionar
+exigem autenticação recente. O segredo só aparece na criação/rotação.
+
+`GET /auth/api_keys/scopes/` exige sessão, tenant e `view_apikey` e retorna um
+objeto não paginado. Exemplo de trecho da resposta (a lista completa é derivada
+das policies roteadas):
+
+```json
+{
+  "actions": [{
+    "resource": "memberships",
+    "action": "delete",
+    "scope": "memberships:delete",
+    "available_for_api_key": false,
+    "delegable_by_current_user": false,
+    "reason": "session_only"
+  }],
+  "wildcards": {"teams:*": ["teams:create", "teams:delete", "teams:read", "teams:update"]}
+}
+```
+
+`reason` é `null` quando delegável, `missing_permission` quando a action está
+disponível mas o usuário não pode delegá-la, ou `session_only` quando indisponível.
+`wildcards` associa cada `resource:*` somente aos scopes disponíveis; recursos
+exclusivos de sessão têm expansão vazia. Nunca existe action indisponível e
+delegável. Consumidores devem carregar o catálogo, sem copiar este exemplo como
+lista de opções.
+
+| Código | Status | Situação |
+| --- | --- | --- |
+| `auth.invalid_scope` | 422 | Formato inválido ou recurso/action desconhecido na escrita |
+| `auth.scope_not_available` | 422 | Action conhecida, indisponível para API key |
+| `auth.scope_not_delegable` | 403 | Usuário não pode conceder o scope disponível |
+| `auth.insufficient_scope` | 403 | A key não tem o scope exigido na execução |
+
+Erros de escrita apontam `field: "scopes"` e `path: ["scopes", indice]`, por
+exemplo `["scopes", 0]`. `resource:*` e `*` não liberam operações proibidas;
+`*:delete` é inválido. Uma request de key a operação exclusiva de sessão é
+recusada antes de avaliar seu scope. Sessões seguem permission Django e papel
+mínimo; keys seguem disponibilidade e scope. Ambos continuam sujeitos a
+queryset/RLS; [detalhes da matriz](../explanation/autenticacao.md#autorizacao-de-recursos-e-api-keys).
+
 ## Histórico de auditoria
 
 Todo recurso servido por um `BaseModelViewSet` publica o próprio histórico.

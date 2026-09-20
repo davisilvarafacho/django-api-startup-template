@@ -11,6 +11,7 @@ from rest_framework.permissions import AllowAny
 
 from apps.api.base.permissions import ModelPermissionMixin
 from apps.api.base.resource_policies import ResourcePolicy
+from apps.api.core.route_markers import MARCADOR_PUBLICA, tem_marcador
 
 _SCOPE_COMPONENT = re.compile(r"[a-z][a-z0-9_]*\Z")
 
@@ -50,6 +51,8 @@ def declared_permissions():
 
 
 def validate_resource_policy(view, actions, permissions):
+    if tem_marcador(view, MARCADOR_PUBLICA):
+        raise ImproperlyConfigured("View pública não pode usar ModelPermissionMixin.")
     policy = view.authorization_policy
     if not isinstance(policy.resource, str) or not _SCOPE_COMPONENT.fullmatch(policy.resource):
         raise ImproperlyConfigured("Nome de recurso inválido.")
@@ -59,6 +62,11 @@ def validate_resource_policy(view, actions, permissions):
         raise ImproperlyConfigured(f"Actions configuradas mas não expostas: {sorted(unknown)}.")
     rules = {}
     for action_name in sorted(actions):
+        handler = getattr(view, action_name, None)
+        if not callable(handler):
+            raise ImproperlyConfigured(f"Action {action_name} precisa ter handler callable.")
+        if tem_marcador(handler, MARCADOR_PUBLICA):
+            raise ImproperlyConfigured("Action pública não pode usar ModelPermissionMixin.")
         rule = policy.resolve(view, action_name)
         if not isinstance(rule.action, str) or not _SCOPE_COMPONENT.fullmatch(rule.action):
             raise ImproperlyConfigured(f"Scope inválido: {rule.scope}.")

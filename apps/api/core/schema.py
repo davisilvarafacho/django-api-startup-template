@@ -10,6 +10,7 @@ from rest_framework import serializers
 
 from drf_spectacular.utils import OpenApiResponse, extend_schema
 
+from .deprecation import DeprecationAwareAutoSchema
 from .errors import error_codes
 
 
@@ -48,3 +49,27 @@ def document_error_responses(mapping, **extend_schema_kwargs):
     """
     responses = {status_code: document_error_codes(*codes) for status_code, codes in mapping.items()}
     return extend_schema(responses=responses, **extend_schema_kwargs)
+
+
+class ResourceAwareAutoSchema(DeprecationAwareAutoSchema):
+    """Derive each operation's integration availability from its runtime policy."""
+
+    def get_extensions(self):
+        from apps.api.base.permissions import ModelPermissionMixin
+        from apps.api.base.resource_policies import ResourcePolicy
+
+        extensions = super().get_extensions()
+        policy = getattr(self.view, "authorization_policy", None)
+        if isinstance(self.view, ModelPermissionMixin) and isinstance(policy, ResourcePolicy):
+            rule = policy.resolve(self.view, getattr(self.view, "action", None))
+            extensions["x-resource-authorization"] = {
+                "resource": policy.resource,
+                "action": rule.action,
+                "available_for_api_key": rule.api_key_allowed,
+                "scope": rule.scope if rule.api_key_allowed else None,
+                "session_requires_permission": True,
+                "minimum_role": rule.minimum_role,
+            }
+        elif getattr(self.view, "session_only", False):
+            extensions["x-session-only"] = True
+        return extensions

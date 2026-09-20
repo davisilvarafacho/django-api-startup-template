@@ -442,3 +442,38 @@ def test_api_key_malformed_scope_container_does_not_grant_global_authority():
     with pytest.raises(APIError) as error:
         ResourceAccessPermission().has_permission(request, view)
     assert error.value.code == "auth.insufficient_scope"
+
+
+@pytest.mark.parametrize("handler", [None, "not callable"])
+def test_startup_check_rejects_missing_or_non_callable_routed_action(handler):
+    from apps.api.base.permissions import ModelPermissionMixin
+    from apps.api.base.policy_checks import declared_permissions, validate_resource_policy
+
+    _, ResourcePolicy = policy_types()
+
+    class View(ModelPermissionMixin, viewsets.GenericViewSet):
+        queryset = Time.objects.none()
+        authorization_policy = ResourcePolicy(resource="teams", minimum_roles={"read": Papel.GESTOR})
+        list = handler
+
+    with pytest.raises(ImproperlyConfigured, match="callable"):
+        validate_resource_policy(View, {"list"}, declared_permissions())
+
+
+def test_startup_check_rejects_public_action_in_model_mixin():
+    from apps.api.base.permissions import ModelPermissionMixin
+    from apps.api.base.policy_checks import declared_permissions, validate_resource_policy
+    from apps.api.core.route_markers import public
+
+    _, ResourcePolicy = policy_types()
+
+    class View(ModelPermissionMixin, viewsets.GenericViewSet):
+        queryset = Time.objects.none()
+        authorization_policy = ResourcePolicy(resource="teams", minimum_roles={"read": Papel.GESTOR})
+
+        @public
+        def list(self, request):
+            return Response()
+
+    with pytest.raises(ImproperlyConfigured, match="pública"):
+        validate_resource_policy(View, {"list"}, declared_permissions())

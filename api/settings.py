@@ -596,7 +596,7 @@ REST_FRAMEWORK = {
     "DEFAULT_VERSION": "v1",
     # Subclasse do AutoSchema do drf-spectacular que publica a depreciação
     # declarada por `@api_deprecated` (ver `apps.api.core.deprecation`).
-    "DEFAULT_SCHEMA_CLASS": "apps.api.core.deprecation.DeprecationAwareAutoSchema",
+    "DEFAULT_SCHEMA_CLASS": "apps.api.core.schema.ResourceAwareAutoSchema",
     "EXCEPTION_HANDLER": "apps.api.core.errors.api_exception_handler",
     "TEST_REQUEST_DEFAULT_FORMAT": "json",
     "DATE_INPUT_FORMATS": ["%d/%m/%Y"],

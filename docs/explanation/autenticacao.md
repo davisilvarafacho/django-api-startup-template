@@ -30,7 +30,7 @@ duas.
    Defaults, sem descoberta: `/admin/`, `/health/` e `/metrics`.
 2. O `AuthenticationMiddleware` decide, para cada request:
    - rota de debug (`/silk/`, `/api/docs/`, …) **e** `DEBUG=True` → segue sem token;
-   - `routes_registry.matches(path)` → segue sem token;
+   - `@public` na view ou `routes_registry.matches(path)` → segue sem token;
    - caso contrário, tenta os autenticadores em ordem (`TypedTokenAuthentication`,
      depois `QueryParamTokenAuthentication`). Token inválido, ausente ou de tipo
      não aceito para API encerra a request com **401** — ela nunca chega ao DRF.
@@ -70,90 +70,61 @@ Um token inválido, expirado, revogado ou suspenso nunca é apagado do banco:
 (`auth.expired_token`, `auth.revoked_token`, `auth.api_key_suspended`,
 `auth.responsible_inactive`), preservando o registro para auditoria.
 
-## Scoped API Tokens
+## Autorização de recursos e API keys
 
-Escopos vivem em `AuthToken.scopes` como lista de strings. Eles só limitam
-tokens do tipo `999` (`API_KEY`); tokens de sessão continuam dependendo das
-permissions normais do Django/guardian/rules.
+A `ResourcePolicy` imutável de cada ViewSet declara o recurso público, o papel
+mínimo de cada operação, as actions customizadas e a disponibilidade para keys.
+O model vem de `queryset.model`; views com queryset dinâmico informam `model`
+na policy. `ScopeRegistry` descobre as policies nas rotas e deriva o catálogo;
+metadados `api_scope_resource` do model não são usados como fonte de scopes.
 
-`TokenScopePermission` roda globalmente antes das permissões de modelo. Se a view
-não exigir nenhum scope, uma API key é recusada por padrão
-(`auth.insufficient_scope`); sessões pessoais não são limitadas por scopes.
+| Camada | Sessão humana | API key |
+| --- | --- | --- |
+| Identidade | Sessão válida | Credencial válida, responsável e vínculo ativos |
+| Tenant | Organização e vínculo válidos | Organização presa à credencial |
+| Operação | Permission Django **e** papel mínimo da policy | Action disponível **e** scope suficiente |
+| Dados | Queryset e RLS | Queryset e RLS |
+| Autenticação recente | Exigida quando declarada | Não satisfaz step-up |
 
-### A linguagem pública: `resource:action`
+Os papéis e permissions pessoais do responsável não ampliam nem restringem o
+uso de uma key válida. Scopes não limitam sessões humanas. Perfil, senha, MFA,
+logs de auditoria e administração de credenciais são exclusivos de sessão.
+Uma sessão pode excluir vínculo com permission e papel suficientes; API keys
+não podem fazê-lo, nem com `*`.
 
-Scopes e permissions humanas falam a mesma língua estável: `resource:action`
-(ex.: `teams:read`, `invitations:accept`). Por baixo, isso é traduzido para os
-codenames internos do Django (`app_label.codename`) pelo registry em
-`apps.api.core.scope_registry`; clientes e documentação nunca veem o codename.
+`BaseModelViewSet` inclui `ModelPermissionMixin`, que sempre combina
+`IsAuthenticated`, `TenantPermission`, `ResourceAccessPermission` e as permissions
+adicionais da classe/action. `permission_classes` é **aditivo**; repetições são
+executadas uma vez. Self-service e views públicas usam uma base sem esse mixin.
 
-- **Actions CRUD**: `read`, `create`, `update`, `delete` — mapeadas para
-  `view_/add_/change_/delete_<model>`. Actions customizadas também são
-  permitidas (ex.: `invitations:accept`).
-- **Wildcards**: `resource:*` (qualquer action daquele recurso) e `*` (qualquer
-  recurso e action).
+### Scopes e disponibilidade
 
-### Declarando o recurso de um model
+Scopes em `AuthToken.scopes` são `array<string>`. A forma concreta é
+`resource:action`. As actions DRF `list`/`retrieve`, `create`,
+`update`/`partial_update` e `destroy` resolvem, respectivamente,
+`read`, `create`, `update`, `delete`, sem inspecionar a URL.
+Somente actions roteadas geram scopes. Custom actions exigem `ActionPolicy`
+com codename Django e opt-in `api_key_allowed=True` para integrações.
 
-```python
-class Time(BaseGlobal):
-    api_scope_resource = "teams"
-```
+`api_key_forbidden_actions` bloqueia operações específicas e
+`api_key_enabled=False` desabilita o recurso inteiro. `resource:*` e `*`
+expandem apenas ações disponíveis; não contornam essas restrições.
+`*:delete`, segmentos extras e wildcards parciais são inválidos.
+Views fora do mixin conservam seu contrato explícito de scopes/session-only.
 
-`None` (o default de `BaseGlobal`) significa que o model não é exposto pelo
-registry. Um ViewSet pode sobrescrever o recurso público quando ele diverge do
-model consultado (ex.: sem `queryset` estático):
+### Delegação e catálogo
 
-```python
-class OrganizacaoViewSet(ScopeResourceMixin, ...):
-    scope_resource = "organizations"
-```
+Criar uma key exige `autenticacao.add_apikey`. Normalmente, delegar um scope
+exige a permission Django correspondente; `autenticacao.grant_api_scopes`
+autoriza delegar qualquer scope disponível, sem as permissions operacionais.
+O wildcard global `*` exige `autenticacao.grant_unrestricted_apikey`.
+Nenhuma permission torna delegável uma action proibida pela policy.
 
-`UtilsViewSetMixin`/`BaseModelViewSet` já incluem esse mixin; ViewSets que não
-herdam dele (como os de `apps.organizacoes`) usam `ScopeResourceMixin`
-diretamente.
-
-### Actions customizadas
-
-`get_required_token_scopes()` deriva o scope CRUD automaticamente a partir da
-action padrão (`list`/`retrieve`/`create`/`update`/`partial_update`/`destroy`).
-Para uma `@action` customizada, declare o scope explicitamente:
-
-```python
-@action(detail=False, methods=["post"], url_path="aceitar")
-@require_token_scopes("invitations:accept")
-def aceitar(self, request):
-    ...
-```
-
-O model registra a tradução da action para a permission Django usada na
-delegação:
-
-```python
-api_scope_custom_actions = {"accept": "can_accept_convite"}
-```
-
-Declarar apenas o decorator não torna a action delegável.
-
-### Compatibilidade
-
-O atributo estático legado ainda funciona quando a view não define
-`get_required_token_scopes()` (nem herda o mixin):
-
-```python
-required_token_scopes = ["org:read"]
-# ou
-required_token_scopes = {"GET": ["org:read"], "POST": ["org:write"]}
-```
-
-### Delegação: um usuário só concede o que ele mesmo pode fazer
-
-`apps.api.autenticacao.scope_delegation.validate_scope_delegation(user, scopes)`
-impede que uma API key receba mais poder do que o ator que a cria ou altera:
-cada scope concreto exige a permission Django equivalente do concedente
-(`user.has_perm(...)`); o wildcard global `*` exige superuser ou a permission
-especial `autenticacao.grant_unrestricted_apikey`. Falhas geram
-`APIError(auth.scope_not_delegable)`.
+`GET /auth/api_keys/scopes/` exige sessão, tenant e
+`autenticacao.view_apikey`. Retorna `actions` com disponibilidade e autoridade
+do usuário separadas, e `wildcards` com as expansões por recurso. Consulte o
+[contrato do catálogo e dos erros](../reference/api.md#api-keys-e-catalogo-de-scopes).
+A UI deve consumir esse catálogo, sem manter listas manuais de scopes.
 
 ## Cache de fatos de autorização
 
@@ -238,15 +209,27 @@ O comando incrementa o epoch global e não usa `FLUSHDB`, varredura de chaves ne
 
 ## Declarando uma rota pública
 
+Para views próprias, `@public` é a fonte de verdade e configura
+`permission_classes = [AllowAny]` além de dispensar o middleware:
+
 ```python
-# apps/meu_app/urls.py
-PUBLIC_ROUTES = [
-    "/v1/meu-endpoint/publico/",
-]
+from rest_framework.views import APIView
+from apps.api.core.route_markers import public
+
+@public
+class MinhaViewPublica(APIView):
+    ...
 ```
 
-A comparação é `startswith`. **Declare prefixos granulares**: `/auth/` tornaria
-pública inclusive `/auth/logout/`, que exige token.
+O marcador é herdado por subclasses. Para views de bibliotecas e subárvores
+que não podem ser decoradas, declare `PUBLIC_ROUTES` em `<app>/urls.py`.
+A comparação é `startswith`; use prefixos granulares. Essas views DRF também
+precisam de permissions compatíveis com acesso público.
+
+System checks rejeitam `AllowAny` sem declaração pública, rotas públicas com
+permissions restritivas e rotas/actions públicas em `ModelPermissionMixin`.
+Extraia uma action pública para uma view separada. As rotas de debug continuam
+públicas somente com `DEBUG=True`; o schema exige autenticação em produção.
 
 ## Cuidados
 
@@ -255,8 +238,7 @@ pública inclusive `/auth/logout/`, que exige token.
   silenciosamente.
 - O `AuthenticationMiddleware` precisa vir **depois** do `ThreadLocalMiddleware`
   e **antes** de auditlog, PostHog e `OrganizacaoMiddleware`.
-- Uma view com `permission_classes = [AllowAny]` cujo caminho **não** esteja em
-  `PUBLIC_ROUTES` ainda recebe 401 do middleware. O `AllowAny` não salva.
+- `AllowAny` isolado não dispensa o middleware e falha no system check.
 - O marcador vive como atributo da `HttpRequest`, e não no contexto compatível
   de `threadlocals`: ele faz parte do estado da própria requisição e não deve
   ser desacoplado do objeto HTTP.

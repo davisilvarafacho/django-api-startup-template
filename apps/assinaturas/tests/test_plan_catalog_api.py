@@ -128,7 +128,7 @@ def test_get_planos_recusa_api_key_sem_resolver_assinatura():
         type=TokenType.API_KEY,
         organization=organizacao,
         name="Catálogo",
-        scopes=["*:*"],
+        scopes=["*"],
         created_by=usuario,
     )
     TokenMetaData.objects.create(token=token)

@@ -6,6 +6,8 @@ resposta (login, criação/rotação de API key) precisam do detalhe manual
 abaixo.
 """
 
+from rest_framework import serializers
+
 from drf_spectacular.utils import extend_schema
 
 from apps.api.core.schema import document_error_codes
@@ -79,7 +81,7 @@ document_api_key_create = extend_schema(
         401: document_error_codes(AuthErrorCode.REAUTHENTICATION_REQUIRED),
         403: document_error_codes(AuthErrorCode.SCOPE_NOT_DELEGABLE),
         409: document_error_codes(OrganizationErrorCode.CLOSURE_PENDING, OrganizationErrorCode.INACTIVE),
-        422: document_error_codes(OrganizationErrorCode.MEMBERSHIP_REQUIRED),
+        422: document_error_codes(OrganizationErrorCode.MEMBERSHIP_REQUIRED, AuthErrorCode.INVALID_SCOPE, AuthErrorCode.SCOPE_NOT_AVAILABLE),
     },
     description=TOKEN_ONCE_DESCRIPTION,
 )
@@ -103,7 +105,7 @@ document_api_key_update = extend_schema(
         401: document_error_codes(AuthErrorCode.REAUTHENTICATION_REQUIRED),
         403: document_error_codes(AuthErrorCode.SCOPE_NOT_DELEGABLE),
         409: document_error_codes(OrganizationErrorCode.CLOSURE_PENDING, OrganizationErrorCode.INACTIVE),
-        422: document_error_codes(OrganizationErrorCode.MEMBERSHIP_REQUIRED),
+        422: document_error_codes(OrganizationErrorCode.MEMBERSHIP_REQUIRED, AuthErrorCode.INVALID_SCOPE, AuthErrorCode.SCOPE_NOT_AVAILABLE),
     }
 )
 
@@ -154,5 +156,30 @@ document_password_change = extend_schema(
         "Exige reautenticação recente. Encerra **todas** as sessões, inclusive "
         "a que fez a troca; API keys são preservadas, porque pertencem à "
         "integração e não à sessão humana."
+    ),
+)
+
+
+class ScopeCatalogActionSerializer(serializers.Serializer):
+    resource = serializers.CharField()
+    action = serializers.CharField()
+    scope = serializers.CharField()
+    available_for_api_key = serializers.BooleanField()
+    delegable_by_current_user = serializers.BooleanField()
+    reason = serializers.ChoiceField(choices=["session_only", "missing_permission"], allow_null=True)
+
+
+class ScopeCatalogSerializer(serializers.Serializer):
+    actions = ScopeCatalogActionSerializer(many=True)
+    wildcards = serializers.DictField(child=serializers.ListField(child=serializers.CharField()))
+
+
+document_scope_catalog = extend_schema(
+    responses={200: ScopeCatalogSerializer, 403: document_error_codes(AuthErrorCode.PERMISSION_DENIED)},
+    description=(
+        "Somente sessão humana, tenant e permission view_apikey. "
+        "actions distingue disponibilidade para API key de autoridade de delegação; "
+        "wildcards contém a expansão de resource:* sem operações exclusivas de sessão. "
+        "O catálogo é derivado das ResourcePolicy roteadas."
     ),
 )
