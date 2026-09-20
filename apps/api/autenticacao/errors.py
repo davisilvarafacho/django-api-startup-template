@@ -11,6 +11,7 @@ class AuthErrorCode(models.TextChoices):
     USER_INACTIVE = "auth.user_inactive", _("Usuário inativo.")
     PERMISSION_DENIED = "auth.permission_denied", _("Você não tem permissão para executar essa ação.")
     INSUFFICIENT_SCOPE = "auth.insufficient_scope", _("Escopo insuficiente para essa operação.")
+    INVALID_SCOPE = "auth.invalid_scope", _("Scope inválido.")
     REAUTHENTICATION_REQUIRED = "auth.reauthentication_required", _("Reautenticação necessária.")
     SCOPE_NOT_DELEGABLE = "auth.scope_not_delegable", _("Você não pode conceder esse scope.")
     REVOKED_TOKEN = "auth.revoked_token", _("Token revogado.")

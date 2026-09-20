@@ -30,8 +30,17 @@ def validate_scope_delegation(user, scopes):
 
     validated = []
 
-    for scope in scopes:
-        resource, _action = parse_scope(scope)
+    for index, scope in enumerate(scopes):
+        try:
+            resource, _action = parse_scope(scope)
+        except ValueError as exc:
+            raise APIError(
+                AuthErrorCode.INVALID_SCOPE,
+                status_code=422,
+                field="scopes",
+                path=("scopes", index),
+                message=str(exc),
+            ) from exc
 
         if resource == "*":
             if not (user.is_superuser or user.has_perm(GLOBAL_WILDCARD_PERMISSION)):

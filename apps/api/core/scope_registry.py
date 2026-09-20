@@ -61,6 +61,8 @@ def parse_scope(value):
         raise ValueError(f"Recurso de scope inválido: '{resource}'.")
     if action != "*" and not SCOPE_TOKEN_PATTERN.match(action):
         raise ValueError(f"Action de scope inválida: '{action}'.")
+    if resource == "*" and action != "*":
+        raise ValueError("O wildcard global deve ser usado sozinho como '*'.")
 
     return (resource, action)
 
