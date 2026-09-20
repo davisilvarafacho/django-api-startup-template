@@ -20,7 +20,7 @@ from apps.organizacoes.organizations import (
     EncerramentoSemAlteracao,
     Organizacoes,
 )
-from apps.organizacoes.permissions import CanAcceptConvitePermission, PapelMinimoPermission, TenantPermission
+from apps.organizacoes.permissions import CanAcceptConvitePermission, ChangeOrganizacaoPermission, PapelMinimoPermission, TenantPermission
 from apps.organizacoes.schema import (
     document_invitation_accept,
     document_membership_delete,
@@ -63,11 +63,23 @@ class OrganizacaoViewSet(
     viewsets.GenericViewSet,
 ):
     serializer_class = OrganizacaoSerializer
+    authorization_model = Organizacao
     permission_classes = [IsAuthenticated, TenantPermission, TokenScopePermission, CustomDjangoModelPermissions, RecentAuthenticationPermission]
     # Sem `queryset` estático (depende do usuário autenticado); a superfície
     # pública corresponde ao model mesmo assim.
     scope_resource = "organizations"
     session_only_actions = {"create", "encerramento", "update", "partial_update"}
+
+    def get_permissions(self):
+        if self.action == "encerramento":
+            return [
+                IsAuthenticated(),
+                TenantPermission(),
+                TokenScopePermission(),
+                ChangeOrganizacaoPermission(),
+                RecentAuthenticationPermission(),
+            ]
+        return super().get_permissions()
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)

@@ -5,6 +5,7 @@ from drf_spectacular.generators import SchemaGenerator
 
 from apps.api.core.errors import discover_error_codes
 from apps.organizacoes import urls as organizacoes_urls
+from apps.organizacoes.models import Organizacao
 from apps.organizacoes.views import ConviteViewSet, OrganizacaoViewSet, VinculoViewSet
 
 
@@ -21,6 +22,10 @@ def _operacoes_encerramento():
     schema = SchemaGenerator(patterns=organizacoes_urls.urlpatterns).get_schema(request=None, public=True)
     path = schema["paths"]["/organizacoes/{id}/encerramento/"]
     return schema, path["post"], path["delete"]
+
+
+def test_organizacao_viewset_declara_model_para_a_policy_de_autorizacao():
+    assert OrganizacaoViewSet.authorization_model is Organizacao
 
 
 def test_post_encerramento_documenta_sem_body_e_somente_202_204_e_erros_reais():

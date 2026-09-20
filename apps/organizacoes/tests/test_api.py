@@ -29,25 +29,6 @@ from tests.support.usuarios import criar_usuario
 pytestmark = pytest.mark.django_db
 
 AuthToken = get_token_model()
-ORGANIZACOES_CODENAMES = (
-    "add_organizacao",
-    "change_organizacao",
-    "delete_organizacao",
-    "view_organizacao",
-    "add_time",
-    "change_time",
-    "delete_time",
-    "view_time",
-    "add_vinculo",
-    "change_vinculo",
-    "delete_vinculo",
-    "view_vinculo",
-    "add_convite",
-    "change_convite",
-    "delete_convite",
-    "view_convite",
-    "can_accept_convite",
-)
 
 
 @pytest.fixture(autouse=True)
@@ -78,10 +59,8 @@ def _garantir_assinaturas_correntes():
                 )
 
 
-def client_autenticado(usuario, *, codenames=None):
+def client_autenticado(usuario, *, codenames=()):
     _garantir_assinaturas_correntes()
-    if codenames is None:
-        codenames = ORGANIZACOES_CODENAMES
     usuario.user_permissions.add(*Permission.objects.filter(content_type__app_label="organizacoes", codename__in=codenames))
     _, token = AuthToken.objects.create(user=usuario)
     client = APIClient()
@@ -91,8 +70,6 @@ def client_autenticado(usuario, *, codenames=None):
 
 def client_autenticado_com_permissoes(usuario, *codenames):
     """Autentica uma sessão humana com as permissions de organizações pedidas."""
-    if not codenames:
-        codenames = ORGANIZACOES_CODENAMES
     return client_autenticado(usuario, codenames=codenames)
 
 
@@ -217,7 +194,7 @@ def test_times_sao_filtrados_pela_organizacao_do_header():
     Time.objects.create(organizacao=org_a, nome="Produto", created_by=usuario)
     Time.objects.create(organizacao=org_b, nome="Financeiro", created_by=usuario)
 
-    response = client_autenticado(usuario).get(
+    response = client_autenticado(usuario, codenames=("view_time",)).get(
         "/times/",
         **{META_HEADER_ORGANIZACAO: "org-a"},
     )
@@ -237,7 +214,7 @@ def test_vinculos_sao_filtrados_pela_organizacao_do_header():
     vincular(usuario, org_b, Papel.MEMBRO)
     vincular(pessoa_de_fora, org_b, Papel.MEMBRO)
 
-    response = client_autenticado(usuario).get(
+    response = client_autenticado(usuario, codenames=("view_vinculo",)).get(
         "/vinculos/",
         **{META_HEADER_ORGANIZACAO: "org-a"},
     )
@@ -359,7 +336,7 @@ def test_header_de_organizacao_ausente_retorna_422():
     org_a = Organizacao.objects.create(nome="Org A", slug="org-a")
     vincular(usuario, org_a, Papel.MEMBRO)
 
-    response = client_autenticado(usuario).get("/times/")
+    response = client_autenticado(usuario, codenames=("view_time",)).get("/times/")
 
     assert response.status_code == 422
     assert response.json()["errors"][0]["code"] == "organizations.header_required"
@@ -370,7 +347,7 @@ def test_usuario_sem_vinculo_ativo_na_organizacao_retorna_403():
     usuario = criar_usuario()
     Organizacao.objects.create(nome="Org A", slug="org-a")
 
-    response = client_autenticado(usuario).get(
+    response = client_autenticado(usuario, codenames=("view_time",)).get(
         "/times/",
         **{META_HEADER_ORGANIZACAO: "org-a"},
     )
@@ -384,7 +361,7 @@ def test_papel_insuficiente_para_criar_time_retorna_403():
     organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
     vincular(usuario, organizacao, Papel.MEMBRO)
 
-    response = client_autenticado(usuario).post(
+    response = client_autenticado(usuario, codenames=("add_time",)).post(
         "/times/",
         {"nome": "Produto"},
         format="json",
@@ -400,7 +377,7 @@ def test_convite_com_papel_acima_do_proprio_e_recusado():
     organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
     vincular(usuario, organizacao, Papel.GESTOR)
 
-    response = client_autenticado(usuario).post(
+    response = client_autenticado(usuario, codenames=("add_convite",)).post(
         "/convites/",
         {"email": "nova@example.com", "papel": Papel.PROPRIETARIO},
         format="json",
@@ -425,7 +402,7 @@ def test_patch_nao_pode_reativar_reserva_de_convite_sem_validar_capacidade():
         expira_em=expirou_em,
     )
 
-    response = client_autenticado(administrador).patch(
+    response = client_autenticado(administrador, codenames=("change_convite",)).patch(
         f"/convites/{convite.pk}/",
         {"expira_em": (timezone.now() + timedelta(days=1)).isoformat()},
         format="json",
@@ -451,7 +428,7 @@ def test_patch_nao_pode_tornar_convite_ou_vinculo_cobravel_sem_validar_capacidad
         papel=Papel.MEMBRO,
         expira_em=timezone.now() + timedelta(days=1),
     )
-    client = client_autenticado(administrador)
+    client = client_autenticado(administrador, codenames=("change_convite", "change_vinculo"))
 
     resposta_convite = client.patch(
         f"/convites/{convite.pk}/",
@@ -482,7 +459,7 @@ def test_rebaixamentos_concorrentes_preservam_um_proprietario_ativo():
     ]
     organizacao = Organizacao.objects.create(nome="Owners concorrentes", slug="owners-rebaixamento-concorrente")
     vinculos = [vincular(usuario, organizacao, Papel.PROPRIETARIO) for usuario in proprietarios]
-    clients = [client_autenticado(usuario) for usuario in proprietarios]
+    clients = [client_autenticado(usuario, codenames=("change_vinculo",)) for usuario in proprietarios]
     barreira = Barrier(2)
 
     def rebaixar(indice):
@@ -530,7 +507,10 @@ def test_patchs_concorrentes_de_convites_disputam_o_ultimo_seat_uma_unica_vez():
         )
         for numero in (1, 2)
     ]
-    clients = [client_autenticado(administrador), client_autenticado(administrador)]
+    clients = [
+        client_autenticado(administrador, codenames=("change_convite",)),
+        client_autenticado(administrador, codenames=("change_convite",)),
+    ]
     barreira = Barrier(2)
     nova_expiracao = (timezone.now() + timedelta(days=1)).isoformat()
 
@@ -561,7 +541,7 @@ def test_patchs_concorrentes_de_convites_disputam_o_ultimo_seat_uma_unica_vez():
 def test_aceitar_convite_com_token_invalido_retorna_422():
     usuario = criar_usuario()
 
-    response = client_autenticado(usuario).post(
+    response = client_autenticado(usuario, codenames=("can_accept_convite",)).post(
         "/convites/aceitar/",
         {"token": "token-que-nao-existe"},
         format="json",
@@ -583,7 +563,7 @@ def test_aceitar_convite_ja_utilizado_retorna_422():
         aceito_em=timezone.now(),
     )
 
-    response = client_autenticado(usuario).post(
+    response = client_autenticado(usuario, codenames=("can_accept_convite",)).post(
         "/convites/aceitar/",
         {"token": convite.token},
         format="json",
@@ -603,7 +583,7 @@ def test_aceitar_convite_de_outro_email_retorna_422():
         expira_em=timezone.now() + timedelta(days=1),
     )
 
-    response = client_autenticado(usuario).post(
+    response = client_autenticado(usuario, codenames=("can_accept_convite",)).post(
         "/convites/aceitar/",
         {"token": convite.token},
         format="json",
@@ -623,7 +603,7 @@ def test_usuario_sem_email_verificado_nao_aceita_convite():
         expira_em=timezone.now() + timedelta(days=1),
     )
 
-    response = client_autenticado(usuario).post(
+    response = client_autenticado(usuario, codenames=("can_accept_convite",)).post(
         "/convites/aceitar/",
         {"token": convite.token},
         format="json",
@@ -646,7 +626,7 @@ def test_usuario_convidado_aceita_convite_sem_header_de_organizacao():
         expira_em=timezone.now() + timedelta(days=1),
     )
 
-    response = client_autenticado(usuario).post(
+    response = client_autenticado(usuario, codenames=("can_accept_convite",)).post(
         "/convites/aceitar/",
         {"token": convite.token},
         format="json",
@@ -868,7 +848,7 @@ def test_delete_de_time_oculta_registro_sem_remover_linha():
     vincular(usuario, organizacao, Papel.GESTOR)
     time = Time.objects.create(organizacao=organizacao, nome="Produto")
 
-    response = client_autenticado(usuario).delete(f"/times/{time.pk}/", **{META_HEADER_ORGANIZACAO: "org-a"})
+    response = client_autenticado(usuario, codenames=("delete_time",)).delete(f"/times/{time.pk}/", **{META_HEADER_ORGANIZACAO: "org-a"})
 
     assert response.status_code == status.HTTP_204_NO_CONTENT
     assert not Time.objects.filter(pk=time.pk).exists()
@@ -882,7 +862,7 @@ def test_delete_de_vinculo_recusa_remover_unico_proprietario_ativo():
     vinculo_proprietario = vincular(proprietario, organizacao, Papel.PROPRIETARIO)
     vincular(administrador, organizacao, Papel.ADMINISTRADOR)
 
-    response = client_autenticado(administrador).delete(
+    response = client_autenticado(administrador, codenames=("delete_vinculo",)).delete(
         f"/vinculos/{vinculo_proprietario.pk}/",
         **{META_HEADER_ORGANIZACAO: organizacao.slug},
     )
@@ -898,7 +878,7 @@ def test_delete_de_vinculo_oculta_registro_sem_remover_linha():
     vincular(usuario, organizacao, Papel.ADMINISTRADOR)
     alvo = vincular(criar_usuario(), organizacao)
 
-    response = client_autenticado(usuario).delete(f"/vinculos/{alvo.pk}/", **{META_HEADER_ORGANIZACAO: "org-a"})
+    response = client_autenticado(usuario, codenames=("delete_vinculo",)).delete(f"/vinculos/{alvo.pk}/", **{META_HEADER_ORGANIZACAO: "org-a"})
 
     assert response.status_code == status.HTTP_204_NO_CONTENT
     assert Vinculo.all_objects.get(pk=alvo.pk).is_deleted is True
@@ -910,7 +890,7 @@ def test_delete_de_convite_oculta_registro_sem_remover_linha():
     vincular(usuario, organizacao, Papel.GESTOR)
     convite = Convite.objects.create(organizacao=organizacao, email="nova@example.com", convidado_por=usuario)
 
-    response = client_autenticado(usuario).delete(f"/convites/{convite.pk}/", **{META_HEADER_ORGANIZACAO: "org-a"})
+    response = client_autenticado(usuario, codenames=("delete_convite",)).delete(f"/convites/{convite.pk}/", **{META_HEADER_ORGANIZACAO: "org-a"})
 
     assert response.status_code == status.HTTP_204_NO_CONTENT
     assert Convite.all_objects.get(pk=convite.pk).is_deleted is True

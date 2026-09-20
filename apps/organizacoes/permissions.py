@@ -62,3 +62,13 @@ class CanAcceptConvitePermission(BasePermission):
             return True
 
         return bool(request.user and request.user.has_perm("organizacoes.can_accept_convite"))
+
+
+class ChangeOrganizacaoPermission(BasePermission):
+    """Exige a permission de alteração nas ações de ciclo da organização."""
+
+    def has_permission(self, request, view):
+        if _is_api_key(request):
+            return True
+
+        return bool(request.user and request.user.has_perm("organizacoes.change_organizacao"))
