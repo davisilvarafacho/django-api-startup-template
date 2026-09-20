@@ -6,7 +6,7 @@ from rest_framework.response import Response
 from drf_spectacular.utils import extend_schema_view
 
 from apps.api.autenticacao.models import TokenType
-from apps.api.autenticacao.permissions import TokenScopePermission, require_token_scopes
+from apps.api.autenticacao.permissions import CustomDjangoModelPermissions, TokenScopePermission, require_token_scopes
 from apps.api.autenticacao.recent_auth import RecentAuthenticationPermission, require_recent_auth
 from apps.api.core.errors import APIError
 from apps.api.core.scope_mixins import ScopeResourceMixin
@@ -20,7 +20,7 @@ from apps.organizacoes.organizations import (
     EncerramentoSemAlteracao,
     Organizacoes,
 )
-from apps.organizacoes.permissions import PapelMinimoPermission, TenantPermission
+from apps.organizacoes.permissions import CanAcceptConvitePermission, PapelMinimoPermission, TenantPermission
 from apps.organizacoes.schema import (
     document_invitation_accept,
     document_membership_delete,
@@ -63,7 +63,7 @@ class OrganizacaoViewSet(
     viewsets.GenericViewSet,
 ):
     serializer_class = OrganizacaoSerializer
-    permission_classes = [IsAuthenticated, TenantPermission, TokenScopePermission, RecentAuthenticationPermission]
+    permission_classes = [IsAuthenticated, TenantPermission, TokenScopePermission, CustomDjangoModelPermissions, RecentAuthenticationPermission]
     # Sem `queryset` estático (depende do usuário autenticado); a superfície
     # pública corresponde ao model mesmo assim.
     scope_resource = "organizations"
@@ -152,7 +152,7 @@ class OrganizacaoViewSet(
 
 
 class TenantViewSetMixin(ScopeResourceMixin):
-    permission_classes = [IsAuthenticated, TenantPermission, TokenScopePermission, PapelMinimoPermission]
+    permission_classes = [IsAuthenticated, TenantPermission, TokenScopePermission, CustomDjangoModelPermissions, PapelMinimoPermission]
     papel_minimo = Papel.VISUALIZADOR
 
     def get_organizacao_id(self):
@@ -234,7 +234,7 @@ class ConviteViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action == "aceitar":
-            return [IsAuthenticated(), TenantPermission(), TokenScopePermission()]
+            return [IsAuthenticated(), TenantPermission(), TokenScopePermission(), CanAcceptConvitePermission()]
         return super().get_permissions()
 
     def get_queryset(self):

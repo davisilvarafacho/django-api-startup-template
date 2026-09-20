@@ -52,3 +52,13 @@ class PapelMinimoPermission(BasePermission):
         papeis_por_action = getattr(view, "papeis_por_action", {})
         action = getattr(view, "action", None)
         return papeis_por_action.get(action, getattr(view, "papel_minimo", Papel.VISUALIZADOR))
+
+
+class CanAcceptConvitePermission(BasePermission):
+    """Exige a permission customizada de aceite somente em sessões humanas."""
+
+    def has_permission(self, request, view):
+        if _is_api_key(request):
+            return True
+
+        return bool(request.user and request.user.has_perm("organizacoes.can_accept_convite"))

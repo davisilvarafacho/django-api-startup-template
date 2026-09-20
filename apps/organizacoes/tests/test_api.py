@@ -5,6 +5,7 @@ from dataclasses import replace
 from datetime import timedelta
 from threading import Barrier
 
+from django.contrib.auth.models import Permission
 from django.db import close_old_connections, connections
 from django.utils import timezone
 
@@ -28,6 +29,25 @@ from tests.support.usuarios import criar_usuario
 pytestmark = pytest.mark.django_db
 
 AuthToken = get_token_model()
+ORGANIZACOES_CODENAMES = (
+    "add_organizacao",
+    "change_organizacao",
+    "delete_organizacao",
+    "view_organizacao",
+    "add_time",
+    "change_time",
+    "delete_time",
+    "view_time",
+    "add_vinculo",
+    "change_vinculo",
+    "delete_vinculo",
+    "view_vinculo",
+    "add_convite",
+    "change_convite",
+    "delete_convite",
+    "view_convite",
+    "can_accept_convite",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -58,12 +78,22 @@ def _garantir_assinaturas_correntes():
                 )
 
 
-def client_autenticado(usuario):
+def client_autenticado(usuario, *, codenames=None):
     _garantir_assinaturas_correntes()
+    if codenames is None:
+        codenames = ORGANIZACOES_CODENAMES
+    usuario.user_permissions.add(*Permission.objects.filter(content_type__app_label="organizacoes", codename__in=codenames))
     _, token = AuthToken.objects.create(user=usuario)
     client = APIClient()
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
     return client
+
+
+def client_autenticado_com_permissoes(usuario, *codenames):
+    """Autentica uma sessão humana com as permissions de organizações pedidas."""
+    if not codenames:
+        codenames = ORGANIZACOES_CODENAMES
+    return client_autenticado(usuario, codenames=codenames)
 
 
 def client_com_api_key(usuario, scopes, organizacao):
@@ -122,7 +152,7 @@ def test_lista_apenas_organizacoes_do_usuario_sem_exigir_header():
     vincular(usuario, org_b, Papel.MEMBRO)
     vincular(outra_pessoa, org_de_outra_pessoa, Papel.PROPRIETARIO)
 
-    response = client_autenticado(usuario).get("/organizacoes/")
+    response = client_autenticado_com_permissoes(usuario, "view_organizacao").get("/organizacoes/")
 
     assert response.status_code == status.HTTP_200_OK, response.content
     resultados = response.data["resultados"]
@@ -149,7 +179,7 @@ def test_cria_organizacao_e_vincula_usuario_como_proprietario(monkeypatch):
     monkeypatch.setattr(onboarding, "_carregar_colaboradores_comerciais", lambda: (Catalogo, Assinaturas))
     usuario = criar_usuario(email_verificado_em=timezone.now())
 
-    response = client_autenticado(usuario).post(
+    response = client_autenticado_com_permissoes(usuario, "add_organizacao").post(
         "/organizacoes/",
         {"nome": "Minha Empresa", "slug": "minha-empresa"},
         format="json",
@@ -160,6 +190,22 @@ def test_cria_organizacao_e_vincula_usuario_como_proprietario(monkeypatch):
     vinculo = Vinculo.objects.get(organizacao=organizacao, usuario=usuario)
     assert response.data["slug"] == "minha-empresa"
     assert vinculo.papel == Papel.PROPRIETARIO
+
+
+def test_onboarding_exige_add_organizacao_sem_exigir_tenant(monkeypatch):
+    from apps.organizacoes import onboarding
+
+    monkeypatch.setattr(onboarding, "_carregar_colaboradores_comerciais", lambda: (object(), object()))
+    usuario = criar_usuario(email="sem-add-organizacao@example.com", email_verificado_em=timezone.now())
+
+    response = client_autenticado(usuario, codenames=()).post(
+        "/organizacoes/",
+        {"nome": "Sem permission", "slug": "sem-permission"},
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+    assert Organizacao.objects.filter(slug="sem-permission").exists() is False
 
 
 def test_times_sao_filtrados_pela_organizacao_do_header():
@@ -208,7 +254,7 @@ def test_gestor_cria_convite_na_organizacao_do_header():
     organizacao = Organizacao.objects.create(nome="Org A", slug="org-a")
     vincular(usuario, organizacao, Papel.GESTOR)
 
-    response = client_autenticado(usuario).post(
+    response = client_autenticado_com_permissoes(usuario, "add_convite").post(
         "/convites/",
         {"email": "nova@example.com", "papel": Papel.MEMBRO},
         format="json",
@@ -220,6 +266,92 @@ def test_gestor_cria_convite_na_organizacao_do_header():
     assert convite.organizacao == organizacao
     assert convite.convidado_por == usuario
     assert response.data["token"] == convite.token
+
+
+@pytest.mark.parametrize(
+    ("recurso", "action", "codename", "status_esperado"),
+    [
+        ("time", "create", "add_time", status.HTTP_201_CREATED),
+        ("time", "update", "change_time", status.HTTP_200_OK),
+        ("time", "destroy", "delete_time", status.HTTP_204_NO_CONTENT),
+        ("vinculo", "update", "change_vinculo", status.HTTP_200_OK),
+        ("vinculo", "destroy", "delete_vinculo", status.HTTP_204_NO_CONTENT),
+        ("convite", "create", "add_convite", status.HTTP_201_CREATED),
+        ("convite", "update", "change_convite", status.HTTP_200_OK),
+        ("convite", "destroy", "delete_convite", status.HTTP_204_NO_CONTENT),
+    ],
+)
+def test_papel_suficiente_sem_permission_django_crud_retorna_403(recurso, action, codename, status_esperado):
+    usuario = criar_usuario()
+    organizacao = Organizacao.objects.create(nome="Org permission", slug="org-permission")
+    papel = Papel.ADMINISTRADOR if recurso == "vinculo" else Papel.GESTOR
+    vincular(usuario, organizacao, papel)
+
+    if recurso == "time":
+        instancia = Time.objects.create(organizacao=organizacao, nome="Produto") if action != "create" else None
+        url = "/times/" if instancia is None else f"/times/{instancia.pk}/"
+        payload = {"nome": "Novo" if action == "create" else "Renomeado"}
+    elif recurso == "vinculo":
+        instancia = vincular(criar_usuario(), organizacao)
+        url = f"/vinculos/{instancia.pk}/"
+        payload = {"papel": Papel.GESTOR}
+    else:
+        instancia = Convite.objects.create(organizacao=organizacao, email="existente@example.com") if action != "create" else None
+        url = "/convites/" if instancia is None else f"/convites/{instancia.pk}/"
+        payload = {"email": "novo@example.com", "papel": Papel.MEMBRO} if action == "create" else {"papel": Papel.MEMBRO}
+
+    client = client_autenticado(usuario, codenames=())
+    if action == "create":
+        response = client.post(url, payload, format="json", **{META_HEADER_ORGANIZACAO: organizacao.slug})
+    elif action == "update":
+        response = client.patch(url, payload, format="json", **{META_HEADER_ORGANIZACAO: organizacao.slug})
+    else:
+        response = client.delete(url, **{META_HEADER_ORGANIZACAO: organizacao.slug})
+
+    assert response.status_code == status.HTTP_403_FORBIDDEN, (recurso, action, codename, status_esperado, response.content)
+
+
+@pytest.mark.parametrize(
+    ("recurso", "action", "codename", "status_esperado"),
+    [
+        ("time", "create", "add_time", status.HTTP_201_CREATED),
+        ("time", "update", "change_time", status.HTTP_200_OK),
+        ("time", "destroy", "delete_time", status.HTTP_204_NO_CONTENT),
+        ("vinculo", "update", "change_vinculo", status.HTTP_200_OK),
+        ("vinculo", "destroy", "delete_vinculo", status.HTTP_204_NO_CONTENT),
+        ("convite", "create", "add_convite", status.HTTP_201_CREATED),
+        ("convite", "update", "change_convite", status.HTTP_200_OK),
+        ("convite", "destroy", "delete_convite", status.HTTP_204_NO_CONTENT),
+    ],
+)
+def test_papel_e_permission_django_crud_suficientes_autorizam(recurso, action, codename, status_esperado):
+    usuario = criar_usuario()
+    organizacao = Organizacao.objects.create(nome="Org permission", slug="org-permission")
+    papel = Papel.ADMINISTRADOR if recurso == "vinculo" else Papel.GESTOR
+    vincular(usuario, organizacao, papel)
+
+    if recurso == "time":
+        instancia = Time.objects.create(organizacao=organizacao, nome="Produto") if action != "create" else None
+        url = "/times/" if instancia is None else f"/times/{instancia.pk}/"
+        payload = {"nome": "Novo" if action == "create" else "Renomeado"}
+    elif recurso == "vinculo":
+        instancia = vincular(criar_usuario(), organizacao)
+        url = f"/vinculos/{instancia.pk}/"
+        payload = {"papel": Papel.GESTOR}
+    else:
+        instancia = Convite.objects.create(organizacao=organizacao, email="existente@example.com") if action != "create" else None
+        url = "/convites/" if instancia is None else f"/convites/{instancia.pk}/"
+        payload = {"email": "novo@example.com", "papel": Papel.MEMBRO} if action == "create" else {"papel": Papel.MEMBRO}
+
+    client = client_autenticado_com_permissoes(usuario, codename)
+    if action == "create":
+        response = client.post(url, payload, format="json", **{META_HEADER_ORGANIZACAO: organizacao.slug})
+    elif action == "update":
+        response = client.patch(url, payload, format="json", **{META_HEADER_ORGANIZACAO: organizacao.slug})
+    else:
+        response = client.delete(url, **{META_HEADER_ORGANIZACAO: organizacao.slug})
+
+    assert response.status_code == status_esperado, response.content
 
 
 def test_header_de_organizacao_ausente_retorna_422():
@@ -526,6 +658,27 @@ def test_usuario_convidado_aceita_convite_sem_header_de_organizacao():
     assert convite.aceito_em is not None
 
 
+def test_sessao_sem_permission_customizada_nao_aceita_convite():
+    usuario = criar_usuario(email="sem-permission-aceite@example.com", email_verificado_em=timezone.now())
+    organizacao = Organizacao.objects.create(nome="Org aceite", slug="org-aceite")
+    convite = Convite.objects.create(
+        organizacao=organizacao,
+        email=usuario.email,
+        papel=Papel.MEMBRO,
+        expira_em=timezone.now() + timedelta(days=1),
+    )
+
+    response = client_autenticado(usuario, codenames=()).post(
+        "/convites/aceitar/",
+        {"token": convite.token},
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+    convite.refresh_from_db()
+    assert convite.aceito_em is None
+
+
 # ---- scopes públicos (resource:action) derivados dos models ----
 
 
@@ -540,6 +693,17 @@ def test_api_key_com_scope_teams_read_pode_listar_times():
     )
 
     assert response.status_code == status.HTTP_200_OK
+
+
+def test_api_key_le_a_propria_organizacao_sem_permission_do_responsavel():
+    responsavel = criar_usuario(email="api-key-own-organization@example.com")
+    organizacao = Organizacao.objects.create(nome="Org API key própria", slug="org-api-key-propria")
+    vincular(responsavel, organizacao, Papel.MEMBRO)
+
+    response = client_com_api_key(responsavel, ["organizations:read"], organizacao).get(f"/organizacoes/{organizacao.pk}/")
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    assert response.data["id"] == organizacao.pk
 
 
 def test_api_key_sem_scope_teams_read_e_recusada():
