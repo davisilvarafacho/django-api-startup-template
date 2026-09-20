@@ -18,7 +18,7 @@ from rest_framework.exceptions import AuthenticationFailed
 
 from apps.api.core.context import token_atual, usuario_atual
 from apps.api.core.errors import APIError, error_response, error_response_for_api_error
-from apps.api.core.route_markers import MARCADOR_PUBLICA, tem_marcador, view_do_path
+from apps.api.core.route_markers import MARCADOR_PUBLICA, rota_tem_marcador
 from apps.api.core.routes_registry import routes_registry
 
 from .authentications import PreAuthTokenAuthentication, QueryParamTokenAuthentication, TypedTokenAuthentication
@@ -127,7 +127,7 @@ class AuthenticationMiddleware:
         if routes_registry.matches(path):
             return True
 
-        return tem_marcador(view_do_path(path), MARCADOR_PUBLICA)
+        return rota_tem_marcador(path, "", MARCADOR_PUBLICA)
 
 
 class UpdateTokenLastUsedMiddleware:

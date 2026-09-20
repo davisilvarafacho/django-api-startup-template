@@ -5,6 +5,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.test import APIRequestFactory
 from rest_framework.views import APIView
+from rest_framework.viewsets import ViewSet
 
 import pytest
 
@@ -88,3 +89,31 @@ def test_public_prefix_rejects_restrictive_route_override(monkeypatch):
     patterns = [path("_external/", include([path("resource/", View.as_view(permission_classes=[IsAuthenticated]))]))]
     with override_settings(ROOT_URLCONF=type("URLConf", (), {"urlpatterns": patterns})):
         assert [error.id for error in check_public_routes(None)] == ["core.E011"]
+
+
+@pytest.mark.parametrize("base", [APIView, ViewSet])
+def test_public_callback_does_not_open_sibling_callback_on_same_class(base):
+    from apps.api.autenticacao.middleware import AuthenticationMiddleware
+    from apps.api.core.route_markers import MARCADOR_PUBLICA, check_public_routes, tem_marcador
+
+    class SharedView(base):
+        permission_classes = [IsAuthenticated]
+        authentication_classes = []
+
+        def get(self, request):
+            return Response({"ok": True})
+
+    mapping = ({"get": "get"},) if base is ViewSet else ()
+    private_endpoint = SharedView.as_view(*mapping)
+    public_endpoint = public(SharedView.as_view(*mapping))
+    patterns = [path("_private/", private_endpoint), path("_public/", public_endpoint)]
+    factory = APIRequestFactory()
+    with override_settings(ROOT_URLCONF=type("URLConf", (), {"urlpatterns": patterns})):
+        assert check_public_routes(None) == []
+        assert AuthenticationMiddleware.is_public_route("/_private/") is False
+        assert AuthenticationMiddleware.is_public_route("/_public/") is True
+        assert AuthenticationMiddleware(private_endpoint)(factory.get("/_private/")).status_code == 401
+        assert AuthenticationMiddleware(public_endpoint)(factory.get("/_public/")).status_code == 200
+        assert private_endpoint(factory.get("/_private/")).status_code == 403
+    assert SharedView.permission_classes == [IsAuthenticated]
+    assert tem_marcador(SharedView, MARCADOR_PUBLICA) is False

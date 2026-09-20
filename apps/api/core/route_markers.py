@@ -54,9 +54,15 @@ def _marcar(view, marcador):
 
 def public(view):
     """Dispensa autenticação: a rota responde sem token."""
-    target = getattr(view, "cls", None) or view
-    target.permission_classes = [AllowAny]
-    _marcar(target, MARCADOR_PUBLICA)
+    if getattr(view, "cls", None) is not None:
+        # as_view() captures per-callback kwargs. Never mutate the shared class:
+        # other URLs may already use it with private permissions.
+        for attribute in ("initkwargs", "view_initkwargs"):
+            initkwargs = getattr(view, attribute, None)
+            if initkwargs is not None:
+                initkwargs["permission_classes"] = [AllowAny]
+    else:
+        view.permission_classes = [AllowAny]
     return _marcar(view, MARCADOR_PUBLICA)
 
 
