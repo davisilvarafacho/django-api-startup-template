@@ -591,10 +591,25 @@ def test_api_key_com_scopes_crud_ignora_papel_pessoal_em_convites_e_vinculos():
     assert criacao.status_code == status.HTTP_201_CREATED
     assert atualizacao_convite.status_code == status.HTTP_200_OK
     assert atualizacao_vinculo.status_code == status.HTTP_200_OK
-    assert remocao_vinculo.status_code == status.HTTP_204_NO_CONTENT
+    assert remocao_vinculo.status_code == status.HTTP_403_FORBIDDEN
     convite.refresh_from_db()
     assert convite.papel == Papel.PROPRIETARIO
-    assert Vinculo.objects.filter(pk=vinculo_alvo.pk).exists() is False
+    assert Vinculo.objects.filter(pk=vinculo_alvo.pk).exists() is True
+
+
+@pytest.mark.parametrize("scope", ["memberships:delete", "memberships:*", "*"])
+def test_api_key_nao_pode_excluir_vinculo_mesmo_com_scope_de_exclusao(scope):
+    identificador_scope = scope.replace(":", "-").replace("*", "all")
+    responsavel = criar_usuario(email=f"api-key-membership-delete-{identificador_scope}@example.com")
+    alvo = criar_usuario(email=f"api-key-membership-target-{identificador_scope}@example.com")
+    organizacao = Organizacao.objects.create(nome="Org API key membership delete", slug=f"org-api-key-membership-delete-{identificador_scope}")
+    vincular(responsavel, organizacao, Papel.MEMBRO)
+    vinculo_alvo = vincular(alvo, organizacao, Papel.MEMBRO)
+
+    response = client_com_api_key(responsavel, [scope], organizacao).delete(f"/vinculos/{vinculo_alvo.pk}/")
+
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+    assert Vinculo.objects.filter(pk=vinculo_alvo.pk).exists() is True
 
 
 def test_api_key_com_scopes_crud_ignora_papel_pessoal_em_times_e_remocao_de_convite():

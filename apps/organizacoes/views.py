@@ -200,6 +200,7 @@ class VinculoViewSet(
 ):
     serializer_class = VinculoSerializer
     queryset = Vinculo.objects.select_related("usuario", "organizacao").prefetch_related("times")
+    session_only_actions = {"destroy"}
     papeis_por_action = {
         "list": Papel.VISUALIZADOR,
         "retrieve": Papel.VISUALIZADOR,
