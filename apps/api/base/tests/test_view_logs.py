@@ -9,7 +9,7 @@ from drf_spectacular.generators import SchemaGenerator
 
 from apps.api.base.serializers import BaseModelSerializer
 from apps.api.base.tests.support import TenantFreeAuthenticatedRequestFactory, usuario_policy
-from apps.api.base.views import BaseModelViewSet, PermissionsViewSetMixin
+from apps.api.base.views import BaseModelViewSet
 from apps.logs.models import LogAlteracao
 from apps.usuarios.models import Usuario
 from tests.support.usuarios import criar_usuario
@@ -100,7 +100,7 @@ def test_openapi_documenta_o_corpo_da_resposta_de_logs():
 
 
 def test_logs_exige_a_permission_de_leitura_do_recurso():
-    assert PermissionsViewSetMixin.base_permissions["logs"] == ["%(app_label)s.view_%(model_name)s"]
+    assert _UsuarioViewSet.authorization_policy.resolve(_UsuarioViewSet, "logs").permission == "usuarios.view_usuario"
 
 
 @pytest.mark.django_db

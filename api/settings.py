@@ -564,7 +564,7 @@ REST_FRAMEWORK = {
         # `public_routes.py` (sem token) e `tenant_free_routes.py` (sem organização).
         "apps.organizacoes.permissions.TenantPermission",
         "apps.api.autenticacao.permissions.TokenScopePermission",
-        "apps.api.autenticacao.permissions.CustomDjangoModelPermissions",
+        "apps.api.base.permissions.ResourceAccessPermission",
         # No-op sem `@require_recent_auth` declarado na view/action/método.
         "apps.api.autenticacao.recent_auth.RecentAuthenticationPermission",
     ],

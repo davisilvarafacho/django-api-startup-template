@@ -142,7 +142,6 @@ class ContasAtivasManager(ActiveManagerMixin, ExcludeDeletedManagerMixin, Deferr
 
 class Usuario(BaseTenantless, AbstractUser):
     username = None
-    api_scope_resource = "users"
 
     extra_write_only_fields = ["password"]
 

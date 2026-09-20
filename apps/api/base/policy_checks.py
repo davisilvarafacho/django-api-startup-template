@@ -32,6 +32,11 @@ def routed_model_viewsets():
             callback = pattern.callback
             view = getattr(callback, "cls", None)
             if view is not None and issubclass(view, ModelPermissionMixin):
+                overrides = {"authorization_policy", "queryset"}.intersection(getattr(callback, "initkwargs", {}))
+                if overrides:
+                    raise ImproperlyConfigured(
+                        f"{view.__name__}: as_view() não pode sobrescrever {sorted(overrides)}; declare outra classe de ViewSet."
+                    )
                 actions = result.setdefault(view, set())
                 allowed_methods = getattr(callback, "initkwargs", {}).get("http_method_names", view.http_method_names)
                 actions.update(name for method, name in getattr(callback, "actions", {}).items() if method in allowed_methods)
@@ -93,7 +98,11 @@ def check_resource_policies(app_configs, **kwargs):
     errors = []
     resources = {}
     permissions = declared_permissions()
-    for view, actions in routed_model_viewsets().items():
+    try:
+        routed_views = routed_model_viewsets()
+    except ImproperlyConfigured as exc:
+        return [Error(str(exc), id="base.E004")]
+    for view, actions in routed_views.items():
         policy = getattr(view, "authorization_policy", None)
         if not isinstance(policy, ResourcePolicy):
             errors.append(Error("ViewSet concreto sem ResourcePolicy.", obj=view, id="base.E001"))

@@ -76,7 +76,14 @@ A `ResourcePolicy` imutável de cada ViewSet declara o recurso público, o papel
 mínimo de cada operação, as actions customizadas e a disponibilidade para keys.
 O model vem de `queryset.model`; views com queryset dinâmico informam `model`
 na policy. `ScopeRegistry` descobre as policies nas rotas e deriva o catálogo;
-metadados `api_scope_resource` do model não são usados como fonte de scopes.
+os antigos metadados de scope no model foram removidos.
+
+O fallback global usa `ResourceAccessPermission` e nega views sem
+`ModelPermissionMixin` ou sem policy. Declarar somente a policy numa view
+fora do mixin não autoriza requests.
+Self-service e infraestrutura declaram suas permissões explicitamente fora do
+mixin. As raízes dos routers usam `apps.api.core.routers.DefaultRouter`, que
+exige sessão humana e tenant, sem exigir uma permission de model.
 
 | Camada | Sessão humana | API key |
 | --- | --- | --- |

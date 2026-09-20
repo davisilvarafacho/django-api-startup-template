@@ -42,8 +42,6 @@ class Papel(models.IntegerChoices):
 
 
 class Organizacao(BaseTenantless):
-    api_scope_resource = "organizations"
-
     nome = models.CharField(_("nome"), max_length=150)
     slug = models.SlugField(_("slug"), max_length=60)
     email_faturamento = models.EmailField(_("e-mail de faturamento"), null=True, blank=True)
@@ -72,8 +70,6 @@ class Organizacao(BaseTenantless):
 
 
 class Time(BaseTenantless):
-    api_scope_resource = "teams"
-
     organizacao = models.ForeignKey(
         Organizacao,
         verbose_name=_("organização"),
@@ -106,8 +102,6 @@ class Vinculo(BaseTenantless):
     pode ser protegido por RLS (seria um impasse: precisaria do contexto que
     ele próprio define).
     """
-
-    api_scope_resource = "memberships"
 
     organizacao = models.ForeignKey(
         Organizacao,
@@ -147,9 +141,6 @@ class Vinculo(BaseTenantless):
 
 class Convite(BaseTenantless):
     """Convite para um e-mail entrar numa organização com um papel."""
-
-    api_scope_resource = "invitations"
-    api_scope_custom_actions = {"accept": "can_accept_convite"}
 
     organizacao = models.ForeignKey(
         Organizacao,

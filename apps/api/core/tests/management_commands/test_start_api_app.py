@@ -199,7 +199,7 @@ def test_urls_py_traz_o_router(projeto):
     assert conteudo == (
         "from django.urls import include, path\n"
         "\n"
-        "from rest_framework.routers import DefaultRouter\n"
+        "from apps.api.core.routers import DefaultRouter\n"
         "\n"
         "router = DefaultRouter()\n"
         "\n"

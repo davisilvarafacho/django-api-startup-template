@@ -29,7 +29,7 @@ def test_parse_scope_wildcard_de_recurso():
     assert parse_scope("organizations:*") == ("organizations", "*")
 
 
-@pytest.mark.parametrize("valor", ["organizations", "Organizations:read", "org anizations:read", "org:Read"])
+@pytest.mark.parametrize("valor", ["organizations", "Organizations:read", "org anizations:read", "org:Read", "teams:read\n", "teams\n:read"])
 def test_parse_scope_rejeita_formato_invalido(valor):
     with pytest.raises(ValueError, match="[Ss]cope|[Rr]ecurso|[Aa]ction"):
         parse_scope(valor)
@@ -208,3 +208,28 @@ def test_disabled_resource_has_no_wildcard_expansion():
     for scope in ("teams:read", "teams:*", "*"):
         with pytest.raises(ScopeNotAvailable):
             registry.expand(scope)
+
+
+@pytest.mark.parametrize("credential", ["session", "api_key", "anonymous", "missing_tenant"])
+def test_routed_api_root_preserves_explicit_session_and_tenant_permissions(credential):
+    from types import SimpleNamespace
+
+    from django.urls import resolve
+
+    from rest_framework.test import APIRequestFactory, force_authenticate
+
+    from apps.api.autenticacao.models import TokenType
+
+    match = resolve("/auth/")
+    request = APIRequestFactory().get("/auth/")
+    request.resolver_match = match
+    request.tenant = None if credential == "missing_tenant" else SimpleNamespace(organization_id=1)
+    if credential != "anonymous":
+        token = SimpleNamespace(type=TokenType.API_KEY, scopes=["*"], organization_id=1) if credential == "api_key" else None
+        force_authenticate(request, user=SimpleNamespace(is_authenticated=True, pk=1), token=token)
+    else:
+        from django.contrib.auth.models import AnonymousUser
+
+        force_authenticate(request, user=AnonymousUser())
+    response = match.func(request, **match.kwargs)
+    assert response.status_code == (200 if credential == "session" else 403)

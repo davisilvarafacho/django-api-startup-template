@@ -6,13 +6,11 @@ from django.db.models import ProtectedError
 
 from rest_framework import status
 from rest_framework.decorators import action
-from rest_framework.permissions import DjangoModelPermissions
 from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet, ModelViewSet
 
 from apps.api.core.context import token_atual
 from apps.api.core.errors import APIError, CoreErrorCode
-from apps.api.core.scope_mixins import ScopeResourceMixin
 from apps.api.metadata.handlers import aplicar_metadata
 from apps.api.metadata.serializers import MetadataAlteracaoSerializer
 from apps.logs.models import LogAlteracao
@@ -21,30 +19,6 @@ from apps.logs.serializers import LogAlteracaoSerpySerializer
 from .handlers import ativar_registro, inativar_registro
 from .permissions import ModelPermissionMixin
 from .schema import LOGS_ACTION_SCHEMA
-
-
-class PermissionsViewSetMixin:
-    """Mixin responsável pelas permissões adicionais por action."""
-
-    base_permissions = {
-        "grid": ["%(app_label)s.view_%(model_name)s"],
-        "form": ["%(app_label)s.view_%(model_name)s"],
-        "logs": ["%(app_label)s.view_%(model_name)s"],
-        "bulk_create": ["%(app_label)s.add_%(model_name)s"],
-        "bulk_update": ["%(app_label)s.change_%(model_name)s"],
-        "clonar": ["%(app_label)s.add_%(model_name)s"],
-        "ativar": ["%(app_label)s.can_toggle_%(model_name)s"],
-        "inativar": ["%(app_label)s.can_toggle_%(model_name)s"],
-        "invalidate_cache": ["%(app_label)s.change_%(model_name)s"],
-    }
-
-    def check_permissions(self, request):
-        for permission in self.get_permissions():
-            if issubclass(permission.__class__, DjangoModelPermissions):
-                permission.perms_map = {**permission.perms_map, **self.base_permissions, **self.extra_permissions}
-
-            if not permission.has_permission(request, self):
-                self.permission_denied(request, message=getattr(permission, "message", None), code=getattr(permission, "code", None))
 
 
 class QuerysetViewSetMixin:
@@ -150,8 +124,6 @@ class CacheViewSetMixin:
 
 
 class UtilsViewSetMixin(
-    ScopeResourceMixin,
-    PermissionsViewSetMixin,
     QuerysetViewSetMixin,
     ObjectCacheViewSetMixin,
     SerializerViewSetMixin,
@@ -323,7 +295,7 @@ class LogsViewSetMixin:
         resolvem para o filterset/serializer do recurso, não do log.
 
         A autorização é dupla: `view_<model>` (declarada em
-        `PermissionsViewSetMixin.base_permissions`) e o próprio `get_object()`,
+        `authorization_policy`) e o próprio `get_object()`,
         que passa pelo RLS e responde 404 para objeto de outra organização.
 
         Args:
@@ -370,7 +342,6 @@ class BaseModelViewSet(ModelPermissionMixin, UtilsViewSetMixin, MetadataViewSetM
     filterset_fields = {}
     search_fields = []
     ordering_fields = []
-    extra_permissions = {}
 
     def perform_create(self, serializer, **overwrite):
         return serializer.save(**overwrite)

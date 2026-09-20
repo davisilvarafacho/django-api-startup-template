@@ -255,6 +255,10 @@ default sobre a tabela unificada de tokens.
 do recurso público. O `ScopeRegistry` deriva scopes das actions efetivamente
 roteadas e traduz suas permissions Django. Não declare `api_scope_resource`,
 `scope_resource` ou listas paralelas de scopes no model/documentação.
+Overrides de `authorization_policy` ou `queryset` em `as_view()` são rejeitados
+pelos checks e pela descoberta de scopes, e negados durante a request mesmo
+quando o servidor inicia sem executar checks. Declare uma classe de ViewSet própria
+para cada combinação de model e policy.
 
 CRUD roteado gera `read/create/update/delete`, salvo bloqueio da policy.
 Actions customizadas declaram `ActionPolicy`; disponibilidade para key exige

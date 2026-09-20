@@ -4,20 +4,12 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
-from enum import Enum
 
 from django.core.checks import Error, register
 from django.core.exceptions import ImproperlyConfigured
 from django.db import models
 
 SCOPE_TOKEN_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
-
-
-class ScopeAction(str, Enum):  # noqa: UP042 -- StrEnum exige Python 3.11+; o projeto suporta 3.10.
-    READ = "read"
-    CREATE = "create"
-    UPDATE = "update"
-    DELETE = "delete"
 
 
 @dataclass(frozen=True)
@@ -40,9 +32,9 @@ def parse_scope(value):
     resource, sep, action = value.partition(":")
     if not sep:
         raise ValueError(f"Scope '{value}' precisa seguir o formato 'resource:action' ou '*'.")
-    if resource != "*" and not SCOPE_TOKEN_PATTERN.match(resource):
+    if resource != "*" and not SCOPE_TOKEN_PATTERN.fullmatch(resource):
         raise ValueError(f"Recurso de scope inválido: '{resource}'.")
-    if action != "*" and not SCOPE_TOKEN_PATTERN.match(action):
+    if action != "*" and not SCOPE_TOKEN_PATTERN.fullmatch(action):
         raise ValueError(f"Action de scope inválida: '{action}'.")
     if resource == "*":
         raise ValueError("O wildcard global deve ser usado sozinho como '*'.")
@@ -91,7 +83,7 @@ class ScopeRegistry:
         """Expand a wildcard into available scopes; reject unavailable concrete actions."""
         resource, action = parse_scope(scope)
         definitions = self._resources.values() if resource == "*" else [self.lookup(resource)]
-        scopes = []
+        scopes: list[str] = []
         for definition in definitions:
             if definition is None:
                 raise ImproperlyConfigured(f"Recurso de scope desconhecido: '{resource}'.")
@@ -133,7 +125,7 @@ class ScopeRegistry:
     def check(self):
         errors = []
         for resource in self._resources:
-            if not SCOPE_TOKEN_PATTERN.match(resource):
+            if not SCOPE_TOKEN_PATTERN.fullmatch(resource):
                 errors.append(
                     Error(
                         f"Recurso de scope '{resource}' não segue o formato esperado.",

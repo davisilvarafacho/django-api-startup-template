@@ -19,7 +19,8 @@ from asgiref.sync import async_to_sync
 from celery import shared_task
 from guardian.shortcuts import assign_perm
 
-from apps.api.autenticacao.permissions import CustomDjangoModelPermissions
+from apps.api.base.permissions import ModelPermissionMixin, ResourceAccessPermission
+from apps.api.base.resource_policies import ResourcePolicy
 from apps.organizacoes.models import Organizacao
 from internal_frameworks.permission_cache.backends import CachedModelBackend, CachedObjectPermissionBackend
 from internal_frameworks.permission_cache.epochs import EpochStore
@@ -223,22 +224,26 @@ def test_direct_user_has_perm_preserves_result_with_cache_enabled_or_disabled(se
 
 
 def test_drf_model_permissions_transparently_use_cached_backend():
-    class OrganizationView:
+    class OrganizationView(ModelPermissionMixin):
         queryset = Organizacao.objects.all()
+        action = "list"
+        authorization_policy = ResourcePolicy(resource="organizations", minimum_roles={"read": None}, api_key_enabled=False)
 
     user = criar_usuario()
     user.user_permissions.add(permission("view_organizacao"))
     factory = APIRequestFactory()
     first_raw_request = factory.get("/organizacoes/")
     force_authenticate(first_raw_request, user=user)
+    first_raw_request.tenant_required = False
     first_request = Request(first_raw_request)
-    permission_class = CustomDjangoModelPermissions()
+    permission_class = ResourceAccessPermission()
 
     assert permission_class.has_permission(first_request, OrganizationView()) is True
 
     reloaded = Usuario.objects.get(pk=user.pk)
     second_raw_request = factory.get("/organizacoes/")
     force_authenticate(second_raw_request, user=reloaded)
+    second_raw_request.tenant_required = False
     second_request = Request(second_raw_request)
     with CaptureQueriesContext(connection) as queries:
         assert permission_class.has_permission(second_request, OrganizationView()) is True

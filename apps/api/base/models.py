@@ -284,15 +284,6 @@ class CapabilityMixin(models.Model):
         abstract = True
 
 
-class ApiScopeMixin(models.Model):
-    # Interface pública e estável de scopes/permissions (`resource:action`).
-    # `None` significa que o model não é exposto pelo registry de scopes.
-    api_scope_resource = None
-
-    class Meta:
-        abstract = True
-
-
 class MetadataMixin(models.Model):
     """Acesso de leitura ao metadata genérico do objeto.
 
@@ -397,7 +388,6 @@ class ChangeTrackingMixin(models.Model):
 
 class BaseTenantless(
     MetadataMixin,
-    ApiScopeMixin,
     CapabilityMixin,
     CloneMixin,
     FieldPolicyMixin,

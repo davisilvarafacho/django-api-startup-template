@@ -19,6 +19,12 @@ class ResourceAccessPermission(BasePermission):
     """Resolve the DRF action before choosing human or API key authorization."""
 
     def has_permission(self, request, view):
+        # Only policy-bound views participate in discovery and additive authorization.
+        if not isinstance(view, ModelPermissionMixin):
+            return False
+        # WSGI/ASGI servers may skip system checks; callbacks must still fail closed.
+        if {"authorization_policy", "queryset"}.intersection(vars(view)):
+            return False
         policy = getattr(view, "authorization_policy", None)
         if not isinstance(policy, ResourcePolicy):
             return False

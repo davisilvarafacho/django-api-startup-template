@@ -12,6 +12,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 import pytest
 
 from apps.api.base import views
+from apps.api.base.tests.support import policy_view
 from apps.organizacoes.models import Papel, Time
 
 
@@ -153,7 +154,7 @@ def test_session_requires_both_permission_and_role(permission_granted, role, exp
             return role >= minimum
 
     request = SimpleNamespace(user=User(), auth=None, tenant=Tenant())
-    view = SimpleNamespace(
+    view = policy_view(
         queryset=Time.objects.all(),
         action="partial_update",
         authorization_policy=ResourcePolicy(resource="teams", minimum_roles={"update": Papel.GESTOR}),
@@ -184,7 +185,7 @@ def test_api_key_checks_availability_before_scopes_without_owner_permissions(sco
     request = SimpleNamespace(
         user=None, auth=SimpleNamespace(type=TokenType.API_KEY, scopes=[scope], organization_id=1), tenant=SimpleNamespace(organization_id=1)
     )
-    view = SimpleNamespace(
+    view = policy_view(
         queryset=Time.objects.all(),
         action="partial_update",
         authorization_policy=ResourcePolicy(
@@ -307,7 +308,7 @@ def test_options_does_not_borrow_metadata_action_authority():
 
     ActionPolicy, ResourcePolicy = policy_types()
     request = SimpleNamespace(method="OPTIONS", auth=None, user=Usuario(is_active=True, is_superuser=True), tenant_required=False)
-    view = SimpleNamespace(
+    view = policy_view(
         queryset=Time.objects.none(),
         action="metadata",
         authorization_policy=ResourcePolicy(
@@ -436,7 +437,7 @@ def test_api_key_malformed_scope_container_does_not_grant_global_authority():
         auth=SimpleNamespace(type=TokenType.API_KEY, scopes="*", organization_id=1),
         tenant=SimpleNamespace(organization_id=1),
     )
-    view = SimpleNamespace(
+    view = policy_view(
         queryset=Time.objects.none(), action="list", authorization_policy=ResourcePolicy(resource="teams", minimum_roles={"read": Papel.GESTOR})
     )
     with pytest.raises(APIError) as error:
@@ -477,3 +478,139 @@ def test_startup_check_rejects_public_action_in_model_mixin():
 
     with pytest.raises(ImproperlyConfigured, match="pública"):
         validate_resource_policy(View, {"list"}, declared_permissions())
+
+
+@pytest.mark.parametrize("override", ["authorization_policy", "queryset"])
+def test_route_policy_or_queryset_override_fails_startup_and_discovery(override):
+    from django.test import override_settings
+    from django.urls import path
+
+    from apps.api.base.permissions import ModelPermissionMixin
+    from apps.api.base.policy_checks import check_resource_policies
+    from apps.api.core.scope_registry import ScopeRegistry, discover_scope_resources
+    from apps.organizacoes.models import Vinculo
+
+    _, ResourcePolicy = policy_types()
+
+    class View(ModelPermissionMixin, mixins.ListModelMixin, viewsets.GenericViewSet):
+        queryset = Time.objects.none()
+        authorization_policy = ResourcePolicy(resource="teams", minimum_roles={"read": Papel.GESTOR}, api_key_enabled=False)
+
+    value = (
+        ResourcePolicy(resource="unregistered", minimum_roles={"read": Papel.GESTOR})
+        if override == "authorization_policy"
+        else Vinculo.objects.none()
+    )
+    patterns = [path("teams/", View.as_view({"get": "list"}, **{override: value}))]
+    registry = ScopeRegistry()
+    registry.register(View, {"list"})
+    with override_settings(ROOT_URLCONF=type("URLConf", (), {"urlpatterns": patterns})):
+        errors = check_resource_policies(None)
+        assert any(error.id == "base.E004" and override in error.msg for error in errors)
+        with pytest.raises(ImproperlyConfigured, match=override):
+            discover_scope_resources(registry, force=True)
+    assert registry.all_resources() == {}
+    assert registry.discovered is False
+
+
+@pytest.mark.parametrize("path", ["/teams/", "/v1/teams/123/pretend_action/", "/different/version/nested/teams/"])
+@pytest.mark.parametrize("granted", [False, True])
+def test_policy_permissions_use_action_independent_of_url(path, granted):
+    from apps.api.base.permissions import ModelPermissionMixin
+
+    _, ResourcePolicy = policy_types()
+
+    class View(ModelPermissionMixin, viewsets.GenericViewSet):
+        queryset = Time.objects.none()
+        throttle_classes = []
+        authorization_policy = ResourcePolicy(resource="teams", minimum_roles={"read": None}, api_key_enabled=False)
+
+        def list(self, request):
+            return Response({"allowed": True})
+
+    request = APIRequestFactory().get(path)
+    request.tenant_required = False
+    force_authenticate(
+        request,
+        user=SimpleNamespace(
+            is_authenticated=True,
+            has_perm=lambda permission: granted and permission == "organizacoes.view_time",
+            has_perms=lambda permissions: granted,
+        ),
+    )
+    assert View.as_view({"get": "list"})(request).status_code == (200 if granted else 403)
+
+
+def test_default_permissions_deny_authenticated_view_without_policy():
+    class View(viewsets.GenericViewSet):
+        queryset = Time.objects.none()
+        throttle_classes = []
+
+        def list(self, request):
+            return Response({"unsafe": True})
+
+    request = APIRequestFactory().get("/teams/")
+    request.tenant_required = False
+    force_authenticate(request, user=SimpleNamespace(is_authenticated=True, has_perms=lambda permissions: True))
+    assert View.as_view({"get": "list"})(request).status_code == 403
+
+
+@pytest.mark.parametrize("override", ["authorization_policy", "queryset"])
+@pytest.mark.parametrize("credential", ["session", "api_key"])
+def test_callback_override_is_denied_at_runtime_without_startup_checks(override, credential):
+    from apps.api.autenticacao.models import TokenType
+    from apps.api.base.permissions import ModelPermissionMixin
+    from apps.organizacoes.models import Vinculo
+
+    _, ResourcePolicy = policy_types()
+
+    class View(ModelPermissionMixin, viewsets.GenericViewSet):
+        queryset = Time.objects.none()
+        throttle_classes = []
+        authorization_policy = ResourcePolicy(resource="teams", minimum_roles={"read": Papel.GESTOR}, api_key_enabled=override == "queryset")
+
+        def list(self, request):
+            return Response({"unsafe": True})
+
+    value = (
+        ResourcePolicy(resource="unregistered", minimum_roles={"read": Papel.GESTOR})
+        if override == "authorization_policy"
+        else Vinculo.objects.none()
+    )
+    request = APIRequestFactory().get("/unchecked/teams/")
+    request.tenant = SimpleNamespace(organization_id=1, has_minimum_role=lambda minimum: True)
+    token = SimpleNamespace(type=TokenType.API_KEY, scopes=["*"], organization_id=1) if credential == "api_key" else None
+    force_authenticate(request, user=SimpleNamespace(is_authenticated=True, has_perm=lambda permission: True), token=token)
+    response = View.as_view({"get": "list"}, **{override: value})(request)
+    assert response.status_code == 403
+
+
+@pytest.mark.parametrize("placement", ["class", "callback"])
+@pytest.mark.parametrize("credential", ["session", "api_key"])
+@pytest.mark.parametrize("permission_mode", ["default", "explicit"])
+def test_non_mixin_view_cannot_authorize_unregistered_policy(placement, credential, permission_mode):
+    from apps.api.autenticacao.models import TokenType
+    from apps.api.base.permissions import ResourceAccessPermission
+
+    _, ResourcePolicy = policy_types()
+    policy = ResourcePolicy(resource="unregistered", minimum_roles={"read": Papel.GESTOR})
+
+    class View(viewsets.GenericViewSet):
+        queryset = Time.objects.none()
+        throttle_classes = []
+        authorization_policy = None
+        required_token_scopes = ["unregistered:read"]
+
+        def list(self, request):
+            return Response({"unsafe": True})
+
+    if permission_mode == "explicit":
+        View.permission_classes = [ResourceAccessPermission]
+    if placement == "class":
+        View.authorization_policy = policy
+    initkwargs = {"authorization_policy": policy} if placement == "callback" else {}
+    request = APIRequestFactory().get("/unregistered/")
+    request.tenant = SimpleNamespace(organization_id=1, has_minimum_role=lambda minimum: True)
+    token = SimpleNamespace(type=TokenType.API_KEY, scopes=["*"], organization_id=1) if credential == "api_key" else None
+    force_authenticate(request, user=SimpleNamespace(is_authenticated=True, has_perm=lambda permission: True), token=token)
+    assert View.as_view({"get": "list"}, **initkwargs)(request).status_code == 403

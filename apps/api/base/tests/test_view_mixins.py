@@ -1,13 +1,11 @@
 import pytest
 
-from apps.api.autenticacao.permissions import CustomDjangoModelPermissions
 from apps.api.base import views
 
 
 @pytest.mark.parametrize(
     ("mixin_name", "methods"),
     [
-        ("PermissionsViewSetMixin", ["check_permissions"]),
         ("QuerysetViewSetMixin", ["get_queryset", "modify_base_queryset"]),
         ("ObjectCacheViewSetMixin", ["get_object"]),
         (
@@ -37,7 +35,6 @@ def test_view_mixins_expoem_metodos_de_sua_responsabilidade(mixin_name, methods)
 
 def test_utils_viewset_mixin_compoe_comportamentos_compartilhados():
     expected_mixins = (
-        views.PermissionsViewSetMixin,
         views.QuerysetViewSetMixin,
         views.ObjectCacheViewSetMixin,
         views.SerializerViewSetMixin,
@@ -119,21 +116,3 @@ def test_invalidacao_de_cache_inclui_infraestrutura_de_cache():
     assert issubclass(views.CacheInvalidationViewSetMixin, views.CacheViewSetMixin)
     assert views.CacheViewSetMixin.cache_timeout == 60
     assert not hasattr(views.BaseModelViewSet, "cache_timeout")
-
-
-def test_permissions_mapeiam_actions_para_operacoes_crud():
-    assert views.PermissionsViewSetMixin.base_permissions == {
-        "grid": ["%(app_label)s.view_%(model_name)s"],
-        "form": ["%(app_label)s.view_%(model_name)s"],
-        "logs": ["%(app_label)s.view_%(model_name)s"],
-        "bulk_create": ["%(app_label)s.add_%(model_name)s"],
-        "bulk_update": ["%(app_label)s.change_%(model_name)s"],
-        "clonar": ["%(app_label)s.add_%(model_name)s"],
-        "ativar": ["%(app_label)s.can_toggle_%(model_name)s"],
-        "inativar": ["%(app_label)s.can_toggle_%(model_name)s"],
-        "invalidate_cache": ["%(app_label)s.change_%(model_name)s"],
-    }
-
-
-def test_permissions_nao_mantem_action_de_lookup_removida():
-    assert "lookup" not in CustomDjangoModelPermissions.perms_map

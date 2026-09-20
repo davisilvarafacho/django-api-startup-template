@@ -2,6 +2,7 @@
 
 from rest_framework.test import APIRequestFactory, force_authenticate
 
+from apps.api.base.permissions import ModelPermissionMixin
 from apps.api.base.resource_policies import ActionPolicy, ResourcePolicy
 from apps.usuarios.models import Usuario
 
@@ -37,3 +38,8 @@ class TenantFreeAuthenticatedRequestFactory(APIRequestFactory):
         request.tenant_required = False
         force_authenticate(request, user=Usuario(pk=999999, is_active=True, is_superuser=True))
         return request
+
+
+def policy_view(**attributes):
+    """Build a policy-bound view with class declarations, like a routed ViewSet."""
+    return type("PolicyView", (ModelPermissionMixin,), attributes)()
