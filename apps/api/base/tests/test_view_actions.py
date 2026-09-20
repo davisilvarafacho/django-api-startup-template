@@ -1,10 +1,9 @@
 from rest_framework import serializers
-from rest_framework.permissions import AllowAny
-from rest_framework.test import APIRequestFactory
 
 import pytest
 
 from apps.api.base.serializers import BaseModelSerializer
+from apps.api.base.tests.support import TenantFreeAuthenticatedRequestFactory, usuario_policy
 from apps.api.base.views import BaseModelViewSet, ClonarViewSetMixin
 from apps.usuarios.models import Usuario
 from tests.support.usuarios import criar_usuario
@@ -19,7 +18,8 @@ class _UsuarioSerializer(BaseModelSerializer):
 class _UsuarioCloneViewSet(ClonarViewSetMixin, BaseModelViewSet):
     queryset = Usuario.objects.all()
     serializer_class = _UsuarioSerializer
-    permission_classes = [AllowAny]
+    permission_classes = []
+    authorization_policy = usuario_policy("clonar")
     authentication_classes = []
     filter_backends = []
 
@@ -38,7 +38,8 @@ class _UsuarioReadSerializer(BaseModelSerializer):
 class _UsuarioReadViewSet(BaseModelViewSet):
     queryset = Usuario.objects.all()
     serializer_class = _UsuarioReadSerializer
-    permission_classes = [AllowAny]
+    permission_classes = []
+    authorization_policy = usuario_policy()
     authentication_classes = []
     filter_backends = []
 
@@ -46,7 +47,7 @@ class _UsuarioReadViewSet(BaseModelViewSet):
 @pytest.mark.django_db
 def test_clonar_aplica_body_validado_antes_da_primeira_gravacao():
     usuario = criar_usuario(email="original@example.com", first_name="Original")
-    request = APIRequestFactory().post(
+    request = TenantFreeAuthenticatedRequestFactory().post(
         f"/usuarios/{usuario.pk}/clonar/",
         {"email": "clone@example.com", "first_name": "Clone"},
         format="json",
@@ -65,7 +66,7 @@ def test_clonar_aplica_body_validado_antes_da_primeira_gravacao():
 @pytest.mark.django_db
 def test_clonar_nao_persiste_quando_body_e_invalido():
     usuario = criar_usuario(email="original@example.com")
-    request = APIRequestFactory().post(
+    request = TenantFreeAuthenticatedRequestFactory().post(
         f"/usuarios/{usuario.pk}/clonar/",
         {"email": "email-invalido"},
         format="json",
@@ -81,7 +82,7 @@ def test_clonar_nao_persiste_quando_body_e_invalido():
 @pytest.mark.django_db
 def test_list_usa_representacao_do_serializer():
     criar_usuario(first_name="Maria", last_name="Silva")
-    request = APIRequestFactory().get("/usuarios/")
+    request = TenantFreeAuthenticatedRequestFactory().get("/usuarios/")
     view = _UsuarioReadViewSet.as_view({"get": "list"})
 
     response = view(request)
@@ -93,7 +94,7 @@ def test_list_usa_representacao_do_serializer():
 @pytest.mark.django_db
 def test_retrieve_usa_representacao_do_serializer():
     usuario = criar_usuario(first_name="Maria", last_name="Silva")
-    request = APIRequestFactory().get(f"/usuarios/{usuario.pk}/")
+    request = TenantFreeAuthenticatedRequestFactory().get(f"/usuarios/{usuario.pk}/")
     view = _UsuarioReadViewSet.as_view({"get": "retrieve"})
 
     response = view(request, pk=usuario.pk)

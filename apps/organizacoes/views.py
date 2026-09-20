@@ -1,15 +1,14 @@
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from drf_spectacular.utils import extend_schema_view
 
 from apps.api.autenticacao.models import TokenType
-from apps.api.autenticacao.permissions import CustomDjangoModelPermissions, TokenScopePermission, require_token_scopes
 from apps.api.autenticacao.recent_auth import RecentAuthenticationPermission, require_recent_auth
+from apps.api.base.permissions import ModelPermissionMixin
+from apps.api.base.resource_policies import ActionPolicy, ResourcePolicy
 from apps.api.core.errors import APIError
-from apps.api.core.scope_mixins import ScopeResourceMixin
 from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.memberships import Vinculos
 from apps.organizacoes.models import Convite, Organizacao, Papel, Time, Vinculo
@@ -20,7 +19,6 @@ from apps.organizacoes.organizations import (
     EncerramentoSemAlteracao,
     Organizacoes,
 )
-from apps.organizacoes.permissions import CanAcceptConvitePermission, ChangeOrganizacaoPermission, PapelMinimoPermission, TenantPermission
 from apps.organizacoes.schema import (
     document_invitation_accept,
     document_membership_delete,
@@ -55,7 +53,7 @@ def _carregar_assinaturas() -> type[AssinaturasCicloOrganizacao]:
     partial_update=document_organization_billing_email_update,
 )
 class OrganizacaoViewSet(
-    ScopeResourceMixin,
+    ModelPermissionMixin,
     mixins.ListModelMixin,
     mixins.CreateModelMixin,
     mixins.RetrieveModelMixin,
@@ -63,23 +61,16 @@ class OrganizacaoViewSet(
     viewsets.GenericViewSet,
 ):
     serializer_class = OrganizacaoSerializer
-    authorization_model = Organizacao
-    permission_classes = [IsAuthenticated, TenantPermission, TokenScopePermission, CustomDjangoModelPermissions, RecentAuthenticationPermission]
-    # Sem `queryset` estático (depende do usuário autenticado); a superfície
-    # pública corresponde ao model mesmo assim.
-    scope_resource = "organizations"
-    session_only_actions = {"create", "encerramento", "update", "partial_update"}
-
-    def get_permissions(self):
-        if self.action == "encerramento":
-            return [
-                IsAuthenticated(),
-                TenantPermission(),
-                TokenScopePermission(),
-                ChangeOrganizacaoPermission(),
-                RecentAuthenticationPermission(),
-            ]
-        return super().get_permissions()
+    # Tenant-free routes: queryset restricts membership; object-level services
+    # retain ADMINISTRADOR for billing updates and PROPRIETARIO for closure.
+    authorization_policy = ResourcePolicy(
+        resource="organizations",
+        model=Organizacao,
+        minimum_roles={"read": None, "create": None, "update": None, "close": None},
+        api_key_forbidden_actions={"create", "update", "close"},
+        custom_actions={"encerramento": ActionPolicy(action="close", permission="change_organizacao")},
+    )
+    permission_classes = [RecentAuthenticationPermission]
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -163,9 +154,8 @@ class OrganizacaoViewSet(
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class TenantViewSetMixin(ScopeResourceMixin):
-    permission_classes = [IsAuthenticated, TenantPermission, TokenScopePermission, CustomDjangoModelPermissions, PapelMinimoPermission]
-    papel_minimo = Papel.VISUALIZADOR
+class TenantViewSetMixin(ModelPermissionMixin):
+    """Tenant-filtered resources share mandatory model authorization."""
 
     def get_organizacao_id(self):
         return self.request.organizacao_id
@@ -174,14 +164,10 @@ class TenantViewSetMixin(ScopeResourceMixin):
 class TimeViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
     serializer_class = TimeSerializer
     queryset = Time.objects.select_related("organizacao")
-    papeis_por_action = {
-        "list": Papel.VISUALIZADOR,
-        "retrieve": Papel.VISUALIZADOR,
-        "create": Papel.GESTOR,
-        "update": Papel.GESTOR,
-        "partial_update": Papel.GESTOR,
-        "destroy": Papel.GESTOR,
-    }
+    authorization_policy = ResourcePolicy(
+        resource="teams",
+        minimum_roles={"read": Papel.VISUALIZADOR, "create": Papel.GESTOR, "update": Papel.GESTOR, "delete": Papel.GESTOR},
+    )
 
     def get_queryset(self):
         return super().get_queryset().filter(organizacao_id=self.get_organizacao_id(), is_active=True).order_by("nome")
@@ -212,14 +198,11 @@ class VinculoViewSet(
 ):
     serializer_class = VinculoSerializer
     queryset = Vinculo.objects.select_related("usuario", "organizacao").prefetch_related("times")
-    session_only_actions = {"destroy"}
-    papeis_por_action = {
-        "list": Papel.VISUALIZADOR,
-        "retrieve": Papel.VISUALIZADOR,
-        "update": Papel.ADMINISTRADOR,
-        "partial_update": Papel.ADMINISTRADOR,
-        "destroy": Papel.ADMINISTRADOR,
-    }
+    authorization_policy = ResourcePolicy(
+        resource="memberships",
+        minimum_roles={"read": Papel.VISUALIZADOR, "update": Papel.ADMINISTRADOR, "delete": Papel.ADMINISTRADOR},
+        api_key_forbidden_actions={"delete"},
+    )
 
     def get_queryset(self):
         return super().get_queryset().filter(organizacao_id=self.get_organizacao_id(), is_active=True).order_by("usuario__email")
@@ -235,19 +218,11 @@ class VinculoViewSet(
 class ConviteViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
     serializer_class = ConviteSerializer
     queryset = Convite.objects.select_related("convidado_por", "organizacao")
-    papeis_por_action = {
-        "list": Papel.GESTOR,
-        "retrieve": Papel.GESTOR,
-        "create": Papel.GESTOR,
-        "update": Papel.GESTOR,
-        "partial_update": Papel.GESTOR,
-        "destroy": Papel.GESTOR,
-    }
-
-    def get_permissions(self):
-        if self.action == "aceitar":
-            return [IsAuthenticated(), TenantPermission(), TokenScopePermission(), CanAcceptConvitePermission()]
-        return super().get_permissions()
+    authorization_policy = ResourcePolicy(
+        resource="invitations",
+        minimum_roles={"read": Papel.GESTOR, "create": Papel.GESTOR, "update": Papel.GESTOR, "delete": Papel.GESTOR, "accept": None},
+        custom_actions={"aceitar": ActionPolicy(action="accept", permission="can_accept_convite", api_key_allowed=True)},
+    )
 
     def get_queryset(self):
         return super().get_queryset().filter(organizacao_id=self.get_organizacao_id(), is_active=True).order_by("-id")
@@ -271,7 +246,6 @@ class ConviteViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
 
     @document_invitation_accept
     @action(detail=False, methods=["post"], url_path="aceitar")
-    @require_token_scopes("invitations:accept")
     def aceitar(self, request):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)

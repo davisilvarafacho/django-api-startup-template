@@ -2,14 +2,13 @@
 
 from django.urls import NoReverseMatch, include, path, reverse
 
-from rest_framework.permissions import AllowAny
 from rest_framework.routers import SimpleRouter
-from rest_framework.test import APIRequestFactory
 
 import pytest
 from drf_spectacular.generators import SchemaGenerator
 
 from apps.api.base.serializers import BaseModelSerializer
+from apps.api.base.tests.support import TenantFreeAuthenticatedRequestFactory, usuario_policy
 from apps.api.base.views import BaseModelViewSet, PermissionsViewSetMixin
 from apps.logs.models import LogAlteracao
 from apps.usuarios.models import Usuario
@@ -25,13 +24,14 @@ class _UsuarioSerializer(BaseModelSerializer):
 class _UsuarioViewSet(BaseModelViewSet):
     queryset = Usuario.objects.all()
     serializer_class = _UsuarioSerializer
-    permission_classes = [AllowAny]
+    permission_classes = []
+    authorization_policy = usuario_policy()
     authentication_classes = []
     filter_backends = []
 
 
 def _pedir_logs(usuario, **query):
-    request = APIRequestFactory().get(f"/usuarios/{usuario.pk}/logs/", query)
+    request = TenantFreeAuthenticatedRequestFactory().get(f"/usuarios/{usuario.pk}/logs/", query)
     view = _UsuarioViewSet.as_view({"get": "logs"})
     return view(request, pk=usuario.pk)
 
@@ -106,7 +106,7 @@ def test_logs_exige_a_permission_de_leitura_do_recurso():
 @pytest.mark.django_db
 def test_logs_recusa_metodos_de_escrita():
     usuario = criar_usuario(email="alvo@exemplo.com")
-    request = APIRequestFactory().post(f"/usuarios/{usuario.pk}/logs/", {}, format="json")
+    request = TenantFreeAuthenticatedRequestFactory().post(f"/usuarios/{usuario.pk}/logs/", {}, format="json")
 
     response = _UsuarioViewSet.as_view({"get": "logs"})(request, pk=usuario.pk)
 

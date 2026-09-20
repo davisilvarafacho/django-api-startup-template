@@ -2,13 +2,12 @@
 
 from django.contrib.auth.models import Permission
 
-from rest_framework.permissions import AllowAny
-from rest_framework.test import APIRequestFactory, force_authenticate
+from rest_framework.test import force_authenticate
 
 import pytest
 
-from apps.api.autenticacao.permissions import CustomDjangoModelPermissions
 from apps.api.base.serializers import BaseModelSerializer
+from apps.api.base.tests.support import TenantFreeAuthenticatedRequestFactory, usuario_policy
 from apps.api.base.views import BaseModelViewSet
 from apps.api.metadata.models import Metadata
 from apps.organizacoes.context import organizacao_atual_privilegiada
@@ -28,19 +27,21 @@ class _UsuarioSerializer(BaseModelSerializer):
 class _UsuarioViewSet(BaseModelViewSet):
     queryset = Usuario.objects.all()
     serializer_class = _UsuarioSerializer
-    permission_classes = [AllowAny]
+    permission_classes = []
+    authorization_policy = usuario_policy()
     authentication_classes = []
     filter_backends = []
 
 
 class _SemMetadataViewSet(_UsuarioViewSet):
     metadata_habilitado = False
+    authorization_policy = usuario_policy(metadata=False)
 
 
 class _UsuarioProtegidoViewSet(_UsuarioViewSet):
-    """Exercita a permissão real; os demais testes usam `AllowAny` de propósito."""
+    """Exercita a policy com permissions reais de usuários sem privilégios."""
 
-    permission_classes = [CustomDjangoModelPermissions]
+    permission_classes = []
 
 
 @pytest.fixture
@@ -50,7 +51,7 @@ def organizacao():
 
 def test_get_devolve_documento_vazio_quando_nao_ha_metadata(organizacao):
     usuario = criar_usuario()
-    request = APIRequestFactory().get(f"/usuarios/{usuario.pk}/metadata/")
+    request = TenantFreeAuthenticatedRequestFactory().get(f"/usuarios/{usuario.pk}/metadata/")
     view = _UsuarioViewSet.as_view({"get": "metadata"})
 
     with organizacao_atual_privilegiada(organizacao.pk):
@@ -62,12 +63,12 @@ def test_get_devolve_documento_vazio_quando_nao_ha_metadata(organizacao):
 
 def test_patch_grava_e_devolve_o_documento(organizacao):
     usuario = criar_usuario()
-    request = APIRequestFactory().patch(
+    request = TenantFreeAuthenticatedRequestFactory().patch(
         f"/usuarios/{usuario.pk}/metadata/",
         {"dados": {"erp_id": "X-1"}},
         format="json",
     )
-    view = _UsuarioViewSet.as_view({"patch": "metadata"})
+    view = _UsuarioViewSet.as_view({"patch": "metadata_update"})
 
     with organizacao_atual_privilegiada(organizacao.pk):
         response = view(request, pk=usuario.pk)
@@ -79,8 +80,8 @@ def test_patch_grava_e_devolve_o_documento(organizacao):
 
 def test_patch_funde_com_o_documento_existente(organizacao):
     usuario = criar_usuario()
-    view = _UsuarioViewSet.as_view({"patch": "metadata"})
-    factory = APIRequestFactory()
+    view = _UsuarioViewSet.as_view({"patch": "metadata_update"})
+    factory = TenantFreeAuthenticatedRequestFactory()
 
     with organizacao_atual_privilegiada(organizacao.pk):
         view(
@@ -94,12 +95,12 @@ def test_patch_funde_com_o_documento_existente(organizacao):
 
 def test_patch_invalido_devolve_422(organizacao):
     usuario = criar_usuario()
-    request = APIRequestFactory().patch(
+    request = TenantFreeAuthenticatedRequestFactory().patch(
         f"/usuarios/{usuario.pk}/metadata/",
         {"dados": {"tentativas": 3}},
         format="json",
     )
-    view = _UsuarioViewSet.as_view({"patch": "metadata"})
+    view = _UsuarioViewSet.as_view({"patch": "metadata_update"})
 
     with organizacao_atual_privilegiada(organizacao.pk):
         response = view(request, pk=usuario.pk)
@@ -122,7 +123,7 @@ def test_opt_out_remove_a_rota():
 
 def test_get_exige_permissao_de_visualizacao(organizacao):
     usuario = criar_usuario()
-    request = APIRequestFactory().get(f"/usuarios/{usuario.pk}/metadata/")
+    request = TenantFreeAuthenticatedRequestFactory().get(f"/usuarios/{usuario.pk}/metadata/")
     force_authenticate(request, user=usuario)
     view = _UsuarioProtegidoViewSet.as_view({"get": "metadata"})
 
@@ -136,13 +137,13 @@ def test_patch_exige_permissao_de_alteracao_e_nao_basta_a_de_leitura(organizacao
     usuario = criar_usuario()
     usuario.user_permissions.add(Permission.objects.get(codename="view_usuario"))
     autor = Usuario.objects.get(pk=usuario.pk)
-    request = APIRequestFactory().patch(
+    request = TenantFreeAuthenticatedRequestFactory().patch(
         f"/usuarios/{usuario.pk}/metadata/",
         {"dados": {"erp_id": "X-1"}},
         format="json",
     )
     force_authenticate(request, user=autor)
-    view = _UsuarioProtegidoViewSet.as_view({"patch": "metadata"})
+    view = _UsuarioProtegidoViewSet.as_view({"patch": "metadata_update"})
 
     with organizacao_atual_privilegiada(organizacao.pk):
         response = view(request, pk=usuario.pk)
@@ -155,13 +156,13 @@ def test_patch_passa_com_permissao_de_alteracao(organizacao):
     usuario = criar_usuario()
     usuario.user_permissions.add(Permission.objects.get(codename="change_usuario"))
     autor = Usuario.objects.get(pk=usuario.pk)
-    request = APIRequestFactory().patch(
+    request = TenantFreeAuthenticatedRequestFactory().patch(
         f"/usuarios/{usuario.pk}/metadata/",
         {"dados": {"erp_id": "X-1"}},
         format="json",
     )
     force_authenticate(request, user=autor)
-    view = _UsuarioProtegidoViewSet.as_view({"patch": "metadata"})
+    view = _UsuarioProtegidoViewSet.as_view({"patch": "metadata_update"})
 
     with organizacao_atual_privilegiada(organizacao.pk):
         response = view(request, pk=usuario.pk)

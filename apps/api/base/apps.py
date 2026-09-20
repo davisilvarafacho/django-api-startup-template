@@ -8,4 +8,4 @@ class BaseConfig(AppConfig):
     def ready(self):
         # O import é o que registra o system check das regras de unicidade
         # multi-tenant (`base.W001` / `base.W002`).
-        from . import model_checks  # noqa: F401 -- import por efeito colateral (@register).
+        from . import model_checks, policy_checks  # noqa: F401 -- import por efeito colateral (@register).

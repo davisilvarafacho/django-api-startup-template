@@ -1,5 +1,6 @@
 from unittest.mock import Mock
 
+from django.contrib.auth.models import Permission
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 
@@ -79,6 +80,7 @@ def test_middleware_resolves_missing_membership_once_per_request():
 @pytest.mark.django_db
 def test_time_view_filters_and_creates_by_tenant_organization_id():
     user = criar_usuario()
+    user.user_permissions.add(*Permission.objects.filter(content_type__app_label="organizacoes", codename__in=["view_time", "add_time"]))
     acme = Organizacao.objects.create(nome="Acme", slug="acme")
     other = Organizacao.objects.create(nome="Other", slug="other")
     Vinculo.objects.create(usuario=user, organizacao=acme, papel=Papel.GESTOR)

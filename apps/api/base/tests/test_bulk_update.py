@@ -4,12 +4,10 @@ Como a `Base` é abstrata, os testes usam o model concreto `Usuario` com um View
 e serializer locais, dirigidos por `APIRequestFactory` (sem depender de rota).
 """
 
-from rest_framework.permissions import AllowAny
-from rest_framework.test import APIRequestFactory
-
 import pytest
 
 from apps.api.base.serializers import BaseModelSerializer
+from apps.api.base.tests.support import TenantFreeAuthenticatedRequestFactory, usuario_policy
 from apps.api.base.views import BaseModelViewSet, BulkUpdateViewSetMixin
 from apps.usuarios.models import Usuario
 from tests.support.usuarios import criar_usuario
@@ -24,13 +22,14 @@ class _UsuarioWriteSerializer(BaseModelSerializer):
 class _UsuarioViewSet(BulkUpdateViewSetMixin, BaseModelViewSet):
     queryset = Usuario.objects.all()
     serializer_class = _UsuarioWriteSerializer
-    permission_classes = [AllowAny]
+    permission_classes = []
+    authorization_policy = usuario_policy("bulk_update")
     authentication_classes = []
     filter_backends = []
 
 
 def _bulk_update(payload):
-    request = APIRequestFactory().patch("/bulk_update/", payload, format="json")
+    request = TenantFreeAuthenticatedRequestFactory().patch("/bulk_update/", payload, format="json")
     view = _UsuarioViewSet.as_view({"patch": "bulk_update"})
     return view(request)
 

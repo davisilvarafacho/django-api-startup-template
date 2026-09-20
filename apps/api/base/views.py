@@ -19,6 +19,7 @@ from apps.logs.models import LogAlteracao
 from apps.logs.serializers import LogAlteracaoSerpySerializer
 
 from .handlers import ativar_registro, inativar_registro
+from .permissions import ModelPermissionMixin
 from .schema import LOGS_ACTION_SCHEMA
 
 
@@ -289,19 +290,16 @@ class MetadataViewSetMixin:
 
         return [action for action in actions if action.__name__ != "metadata"]
 
-    @action(methods=["get", "patch"], detail=True)
+    @action(methods=["get"], detail=True)
     def metadata(self, request, *args, **kwargs):
-        """Lê ou altera o documento de metadata do objeto.
-
-        `PATCH` funde as chaves enviadas com as existentes; valor `null` remove
-        a chave. As permissões vêm do método HTTP: `view_<model>` no `GET` e
-        `change_<model>` no `PATCH`.
-        """
+        """Read metadata; the concrete policy declares its read permission."""
         instance = self.get_object()
+        return Response({"dados": instance.raw_metadata})
 
-        if request.method == "GET":
-            return Response({"dados": instance.raw_metadata})
-
+    @metadata.mapping.patch
+    def metadata_update(self, request, *args, **kwargs):
+        """Update metadata through a distinct DRF action at the same URL."""
+        instance = self.get_object()
         serializer = MetadataAlteracaoSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         registro = aplicar_metadata(instance, serializer.validated_data["dados"])
@@ -365,7 +363,7 @@ class GenericBaseViewSet(UtilsViewSetMixin, GenericViewSet):
     pass
 
 
-class BaseModelViewSet(UtilsViewSetMixin, MetadataViewSetMixin, LogsViewSetMixin, ModelViewSet):
+class BaseModelViewSet(ModelPermissionMixin, UtilsViewSetMixin, MetadataViewSetMixin, LogsViewSetMixin, ModelViewSet):
     queryset = None
     serializer_class = None
     serializer_classes = {}

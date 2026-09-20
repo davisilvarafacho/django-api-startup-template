@@ -25,7 +25,7 @@ def _operacoes_encerramento():
 
 
 def test_organizacao_viewset_declara_model_para_a_policy_de_autorizacao():
-    assert OrganizacaoViewSet.authorization_model is Organizacao
+    assert OrganizacaoViewSet.authorization_policy.get_model(OrganizacaoViewSet) is Organizacao
 
 
 def test_post_encerramento_documenta_sem_body_e_somente_202_204_e_erros_reais():
