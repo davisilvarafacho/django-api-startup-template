@@ -429,6 +429,12 @@ class APIKeyViewSet(viewsets.ModelViewSet):
             return APIKeyWriteSerializer
         return APIKeySerializer
 
+    @action(detail=False, methods=["get"])
+    def scopes(self, request):
+        from .scope_delegation import scope_catalog
+
+        return Response(scope_catalog(request.user))
+
     def perform_destroy(self, instance):
         revoke_api_key(instance, actor=self.request.user)
 

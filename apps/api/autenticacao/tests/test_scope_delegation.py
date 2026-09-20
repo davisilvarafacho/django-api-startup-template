@@ -6,7 +6,7 @@ from apps.api.autenticacao.permissions import IsSuperUser
 from apps.api.autenticacao.scope_delegation import validate_scope_delegation
 from apps.api.core.errors import APIError
 from apps.api.core.scope_registry import ScopeRegistry
-from apps.organizacoes.models import Convite, Time
+from apps.organizacoes.views import ConviteViewSet, TimeViewSet
 from apps.usuarios.models import Usuario
 from tests.support.usuarios import criar_usuario
 
@@ -14,13 +14,9 @@ from tests.support.usuarios import criar_usuario
 @pytest.fixture
 def registro_isolado(monkeypatch):
     registry = ScopeRegistry()
-    registry.register("teams", model=Time)
-    registry.register("users", model=Usuario)
-    registry.register(
-        "invitations",
-        model=Convite,
-        custom_actions={"accept": "can_accept_convite"},
-    )
+    registry.register(TimeViewSet, {"list", "create", "partial_update", "destroy"})
+    registry.register(ConviteViewSet, {"aceitar"})
+    registry.discovered = True
     monkeypatch.setattr("apps.api.core.scope_registry.scope_registry", registry)
     return registry
 
@@ -45,7 +41,7 @@ def test_usuario_nao_delega_scope_sem_permission(registro_isolado):
     usuario = criar_usuario()
 
     with pytest.raises(APIError) as exc:
-        validate_scope_delegation(usuario, ["users:delete"])
+        validate_scope_delegation(usuario, ["teams:delete"])
 
     assert exc.value.code == "auth.scope_not_delegable"
 
@@ -125,10 +121,10 @@ def test_wildcard_global_qualificado_nao_e_delegavel_nem_por_superuser(registro_
 def test_superuser_sempre_pode_delegar_qualquer_scope(registro_isolado):
     usuario = criar_usuario(is_superuser=True, is_staff=True)
 
-    assert validate_scope_delegation(usuario, ["*", "teams:delete", "users:read"]) == (
+    assert validate_scope_delegation(usuario, ["*", "teams:delete", "teams:read"]) == (
         "*",
         "teams:delete",
-        "users:read",
+        "teams:read",
     )
 
 
@@ -142,12 +138,13 @@ def test_superuser_excluido_nao_atende_permission_de_superuser():
 
 
 @pytest.mark.django_db
-def test_superuser_excluido_nao_delega_scopes(registro_isolado):
+@pytest.mark.parametrize("scopes", [[], ["*"]])
+def test_superuser_excluido_nao_delega_scopes(registro_isolado, scopes):
     usuario = criar_usuario(is_superuser=True, is_staff=True)
     usuario.is_deleted = True
 
     with pytest.raises(APIError) as exc:
-        validate_scope_delegation(usuario, ["*"])
+        validate_scope_delegation(usuario, scopes)
 
     assert exc.value.code == "auth.scope_not_delegable"
 
@@ -159,4 +156,16 @@ def test_recurso_desconhecido_nao_e_delegavel(registro_isolado):
     with pytest.raises(APIError) as exc:
         validate_scope_delegation(usuario, ["desconhecido:read"])
 
-    assert exc.value.code == "auth.scope_not_delegable"
+    assert exc.value.code == "auth.invalid_scope"
+
+
+@pytest.mark.parametrize("scope", ["memberships:delete", "organizations:update"])
+@pytest.mark.django_db
+def test_superuser_cannot_delegate_session_only_operation(scope):
+    usuario = criar_usuario(is_superuser=True, is_staff=True)
+
+    with pytest.raises(APIError) as exc:
+        validate_scope_delegation(usuario, [scope])
+
+    assert exc.value.code == "auth.scope_not_available"
+    assert exc.value.path == ("scopes", 0)

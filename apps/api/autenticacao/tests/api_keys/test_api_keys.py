@@ -649,3 +649,65 @@ def test_rotacao_reinicia_locks_se_instancia_tem_responsavel_obsoleto(monkeypatc
 
     assert chamadas[:2] == [{responsavel.pk}, {responsavel.pk, novo_responsavel.pk}]
     assert issued.instance.responsavel_id == novo_responsavel.pk
+
+
+@pytest.mark.parametrize(
+    ("scope", "code", "status"),
+    [
+        ("missing:read", "auth.invalid_scope", 422),
+        (None, "auth.invalid_scope", 422),
+        (123, "auth.invalid_scope", 422),
+        (["teams:read"], "auth.invalid_scope", 422),
+        (" teams:read", "auth.invalid_scope", 422),
+        ("memberships:activate", "auth.invalid_scope", 422),
+        ("memberships:delete", "auth.scope_not_available", 422),
+        ("teams:delete", "auth.scope_not_delegable", 403),
+    ],
+)
+def test_scope_errors_include_payload_index(ator, organizacao, responsavel, scope, code, status):
+    client = _com_header(_client_com_sessao(ator), organizacao)
+    response = client.post("/auth/api_keys/", {"name": "Key", "responsavel": responsavel.pk, "scopes": ["teams:read", scope]}, format="json")
+    assert response.status_code == status
+    assert response.data["errors"][0]["code"] == code
+    assert response.json()["errors"][0]["path"] == ["scopes", 1]
+
+
+def test_catalog_reports_availability_delegation_and_expansion(ator, organizacao):
+    response = _com_header(_client_com_sessao(ator, reauthenticated=False), organizacao).get("/auth/api_keys/scopes/")
+    assert response.status_code == 200
+    actions = {item["scope"]: item for item in response.data["actions"]}
+    assert actions["teams:read"]["delegable_by_current_user"] is True
+    assert actions["teams:delete"]["delegable_by_current_user"] is False
+    assert actions["teams:delete"]["reason"] == "missing_permission"
+    assert actions["memberships:delete"] == {
+        "resource": "memberships",
+        "action": "delete",
+        "scope": "memberships:delete",
+        "available_for_api_key": False,
+        "delegable_by_current_user": False,
+        "reason": "session_only",
+    }
+    assert "memberships:activate" not in actions
+    assert response.data["wildcards"]["memberships:*"] == ["memberships:read", "memberships:update"]
+
+
+def test_catalog_requires_management_permission_and_tenant(organizacao, responsavel, ator):
+    assert _com_header(_client_com_sessao(responsavel), organizacao).get("/auth/api_keys/scopes/").status_code == 403
+    assert _client_com_sessao(ator).get("/auth/api_keys/scopes/").status_code == 422
+
+
+def test_catalog_refuses_api_key_even_with_global_scope(ator, organizacao):
+    assert _client_api_key(ator, organizacao, scopes=["*"]).get("/auth/api_keys/scopes/").status_code == 403
+
+
+def test_broad_delegation_permission_does_not_allow_forbidden_or_global_scope(ator, organizacao, responsavel):
+    ator.user_permissions.add(Permission.objects.get(content_type__app_label="autenticacao", codename="grant_api_scopes"))
+    client = _com_header(_client_com_sessao(ator), organizacao)
+    payload = {"name": "Key", "responsavel": responsavel.pk, "scopes": ["teams:*", "memberships:*"]}
+    assert client.post("/auth/api_keys/", payload, format="json").status_code == 201
+    for scope, code in [("memberships:delete", "auth.scope_not_available"), ("*", "auth.scope_not_delegable")]:
+        payload["scopes"] = [scope]
+        response = client.post("/auth/api_keys/", payload, format="json")
+        assert response.data["errors"][0]["code"] == code
+    catalog = client.get("/auth/api_keys/scopes/").data
+    assert next(item for item in catalog["actions"] if item["scope"] == "teams:delete")["delegable_by_current_user"] is True

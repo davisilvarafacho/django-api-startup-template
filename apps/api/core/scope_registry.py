@@ -1,11 +1,4 @@
-"""Registry `resource:action`: a linguagem pública de scopes e permissions.
-
-Todo model de negócio pode declarar `api_scope_resource = "recurso"`; o
-registry traduz esse contrato estável (`resource:action`) para os codenames
-internos do Django (`app_label.action_model`), usados por scopes de API key e
-por `user.has_perm()`. Ver a spec normativa em
-`.ai/brainstorming/spec/2026-07-28-auth-tokens-api-keys-design.md`.
-"""
+"""The single scope registry, derived from ResourcePolicy and routed handlers."""
 
 import re
 from collections.abc import Mapping
@@ -13,7 +6,6 @@ from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from enum import Enum
 
-from django.apps import apps as django_apps
 from django.core.checks import Error, register
 from django.core.exceptions import ImproperlyConfigured
 from django.db import models
@@ -28,21 +20,12 @@ class ScopeAction(str, Enum):  # noqa: UP042 -- StrEnum exige Python 3.11+; o pr
     DELETE = "delete"
 
 
-# Prefixo de codename que o Django cria automaticamente para cada model.
-CRUD_DJANGO_PREFIXES = {
-    ScopeAction.READ: "view",
-    ScopeAction.CREATE: "add",
-    ScopeAction.UPDATE: "change",
-    ScopeAction.DELETE: "delete",
-}
-
-
 @dataclass(frozen=True)
 class ScopeDefinition:
     resource: str
     model: type[models.Model] | None
     action_permissions: Mapping[str, str] = dataclass_field(default_factory=dict)
-    custom_actions: frozenset = frozenset()
+    unavailable_actions: frozenset = frozenset()
 
 
 def parse_scope(value):
@@ -50,20 +33,19 @@ def parse_scope(value):
 
     `*` sozinho é o wildcard global; `resource:*` é o wildcard do recurso.
     """
+    if not isinstance(value, str):
+        raise ValueError("Scope precisa ser uma string.")
     if value == "*":
         return ("*", "*")
-
     resource, sep, action = value.partition(":")
     if not sep:
         raise ValueError(f"Scope '{value}' precisa seguir o formato 'resource:action' ou '*'.")
-
     if resource != "*" and not SCOPE_TOKEN_PATTERN.match(resource):
         raise ValueError(f"Recurso de scope inválido: '{resource}'.")
     if action != "*" and not SCOPE_TOKEN_PATTERN.match(action):
         raise ValueError(f"Action de scope inválida: '{action}'.")
     if resource == "*":
         raise ValueError("O wildcard global deve ser usado sozinho como '*'.")
-
     return (resource, action)
 
 
@@ -71,13 +53,10 @@ def matches_scope(granted, required):
     """`required` (sempre concreto) é satisfeito pelo scope `granted` (pode ter wildcard)?"""
     granted_resource, granted_action = parse_scope(granted)
     required_resource, required_action = parse_scope(required)
-
     if granted_resource == "*":
         return True
-
     if granted_resource != required_resource:
         return False
-
     return granted_action == "*" or granted_action == required_action
 
 
@@ -88,39 +67,45 @@ class ScopeRegistry:
         self._resources: dict[str, ScopeDefinition] = {}
         self.discovered = False
 
-    def register(self, resource, *, model=None, custom_actions=None):
-        if not SCOPE_TOKEN_PATTERN.match(resource):
-            raise ImproperlyConfigured(f"Nome de recurso de scope inválido: '{resource}'.")
+    def register(self, view, actions):
+        """Register only operations resolved from exposed handlers and their policy."""
+        from apps.api.base.policy_checks import declared_permissions, validate_resource_policy
+        from apps.api.base.resource_policies import ResourcePolicy
 
-        if resource in self._resources:
-            raise ImproperlyConfigured(f"Recurso de scope duplicado: '{resource}'.")
-
-        action_permissions = {}
-        if model is not None:
-            model_name = model._meta.model_name
-            action_permissions = {action.value: f"{prefix}_{model_name}" for action, prefix in CRUD_DJANGO_PREFIXES.items()}
-
-        custom_actions = custom_actions or {}
-        if not isinstance(custom_actions, Mapping):
-            raise ImproperlyConfigured(f"Actions customizadas de '{resource}' devem mapear action para codename Django.")
-
-        for action, codename in custom_actions.items():
-            if not SCOPE_TOKEN_PATTERN.match(action):
-                raise ImproperlyConfigured(f"Action de scope inválida: '{action}'.")
-            if not SCOPE_TOKEN_PATTERN.match(codename):
-                raise ImproperlyConfigured(f"Codename Django inválido: '{codename}'.")
-            if action in action_permissions:
-                raise ImproperlyConfigured(f"Action de scope duplicada para '{resource}': '{action}'.")
-            action_permissions[action] = codename
-
+        policy = getattr(view, "authorization_policy", None)
+        if not isinstance(policy, ResourcePolicy):
+            raise ImproperlyConfigured("ViewSet concreto sem ResourcePolicy.")
+        rules = validate_resource_policy(view, set(actions), declared_permissions())
+        if policy.resource in self._resources:
+            raise ImproperlyConfigured(f"Recurso de scope duplicado: '{policy.resource}'.")
         definition = ScopeDefinition(
-            resource=resource,
-            model=model,
-            action_permissions=action_permissions,
-            custom_actions=frozenset(custom_actions),
+            resource=policy.resource,
+            model=policy.get_model(view),
+            action_permissions={rule.action: rule.permission for rule in rules},
+            unavailable_actions=frozenset(rule.action for rule in rules if not rule.api_key_allowed),
         )
-        self._resources[resource] = definition
+        self._resources[policy.resource] = definition
         return definition
+
+    def expand(self, scope):
+        """Expand a wildcard into available scopes; reject unavailable concrete actions."""
+        resource, action = parse_scope(scope)
+        definitions = self._resources.values() if resource == "*" else [self.lookup(resource)]
+        scopes = []
+        for definition in definitions:
+            if definition is None:
+                raise ImproperlyConfigured(f"Recurso de scope desconhecido: '{resource}'.")
+            if action != "*" and action not in definition.action_permissions:
+                raise ImproperlyConfigured(f"Action '{action}' não é válida para o recurso '{resource}'.")
+            available = sorted(set(definition.action_permissions) - definition.unavailable_actions)
+            if action != "*":
+                if action not in available:
+                    raise ScopeNotAvailable(f"Scope '{scope}' indisponível para API key.")
+                available = [action]
+            scopes.extend(f"{definition.resource}:{operation}" for operation in available)
+        if not scopes:
+            raise ScopeNotAvailable(f"Scope '{scope}' sem actions disponíveis para API key.")
+        return sorted(scopes)
 
     def lookup(self, resource):
         return self._resources.get(resource)
@@ -131,17 +116,12 @@ class ScopeRegistry:
         Útil para exibir, na linguagem pública, o que um usuário pode delegar
         a uma API key (ver `apps.api.autenticacao.scope_delegation`).
         """
-        scopes = []
-        for resource, definition in self._resources.items():
-            if definition.model is None:
-                continue
-
-            app_label = definition.model._meta.app_label
-            for action, codename in definition.action_permissions.items():
-                if user.has_perm(f"{app_label}.{codename}"):
-                    scopes.append(f"{resource}:{action}")
-
-        return scopes
+        return [
+            f"{resource}:{action}"
+            for resource, definition in self._resources.items()
+            for action, permission in definition.action_permissions.items()
+            if action not in definition.unavailable_actions and user.has_perm(permission)
+        ]
 
     def all_resources(self):
         return dict(self._resources)
@@ -163,79 +143,58 @@ class ScopeRegistry:
         return errors
 
 
+class ScopeNotAvailable(ValueError):
+    """A known operation is unavailable to API keys."""
+
+
 scope_registry = ScopeRegistry()
 
 
 def discover_scope_resources(registry=None, *, force=False):
-    """Registra todo model concreto com `api_scope_resource` declarado (!= None)."""
-    registry = registry or scope_registry
+    """Load URL patterns first, then atomically publish their validated policies."""
+    from apps.api.base.policy_checks import routed_model_viewsets
 
+    registry = registry if registry is not None else scope_registry
     if registry.discovered and not force:
         return registry
-
-    if force:
+    discovered = ScopeRegistry()
+    try:
+        for view, actions in routed_model_viewsets().items():
+            discovered.register(view, actions)
+    except ImproperlyConfigured:
         registry.reset()
-
-    for model in django_apps.get_models():
-        resource = getattr(model, "api_scope_resource", None)
-        if resource is None:
-            continue
-        registry.register(
-            resource,
-            model=model,
-            custom_actions=getattr(model, "api_scope_custom_actions", None),
-        )
-
+        raise
+    registry._resources = discovered._resources
     registry.discovered = True
     return registry
 
 
 @register()
 def check_scope_registry(app_configs, **kwargs):
+    try:
+        discover_scope_resources(force=True)
+    except ImproperlyConfigured as exc:
+        return [Error(str(exc), id="api.scopes.E001")]
     return scope_registry.check()
 
 
 def required_django_permissions(scope):
-    """Traduz um scope concreto (`resource:action` ou `*`) para `app_label.codename`."""
-    resource, action = parse_scope(scope)
-
-    definitions = scope_registry.all_resources().values() if resource == "*" else [_get_definition(resource)]
-
-    permissions = []
-    for definition in definitions:
-        if definition.model is None:
-            continue
-
-        app_label = definition.model._meta.app_label
-        codenames = _codenames_for_action(definition, action)
-        permissions.extend(f"{app_label}.{codename}" for codename in codenames)
-
-    return permissions
+    """Translate available concrete scopes or wildcards into Django permissions."""
+    registry = discover_scope_resources()
+    return [registry.lookup(resource).action_permissions[action] for resource, action in (parse_scope(value) for value in registry.expand(scope))]
 
 
 def validate_registered_scope(scope):
-    """Valida que um scope usa recurso e action existentes no registry."""
+    """Validate known exposed actions, including session-only actions on old keys.
+
+    Issuance additionally checks availability in validate_scope_delegation. Keeping
+    structural validation separate lets existing keys be revoked or suspended.
+    """
     resource, action = parse_scope(scope)
     if resource == "*":
         return
-
-    definition = _get_definition(resource)
-    _codenames_for_action(definition, action)
-
-
-def _get_definition(resource):
-    definition = scope_registry.lookup(resource)
+    definition = discover_scope_resources().lookup(resource)
     if definition is None:
         raise ImproperlyConfigured(f"Recurso de scope desconhecido: '{resource}'.")
-    return definition
-
-
-def _codenames_for_action(definition, action):
-    if action == "*":
-        return list(definition.action_permissions.values())
-
-    codename = definition.action_permissions.get(action)
-    if codename is None and action not in definition.custom_actions:
-        raise ImproperlyConfigured(f"Action '{action}' não é válida para o recurso '{definition.resource}'.")
-
-    return [codename] if codename else []
+    if action != "*" and action not in definition.action_permissions:
+        raise ImproperlyConfigured(f"Action '{action}' não é válida para o recurso '{resource}'.")

@@ -193,7 +193,7 @@ class APIKeyWriteSerializer(APIKeySerializer):
 
     name = serializers.CharField()
     responsavel = serializers.PrimaryKeyRelatedField(queryset=get_user_model().objects.none())
-    scopes = serializers.ListField(child=serializers.CharField(), required=False, default=list)
+    scopes = serializers.ListField(child=serializers.JSONField(allow_null=True), required=False, default=list)
     expiry = serializers.DateTimeField(required=False, allow_null=True)
 
     def __init__(self, *args, **kwargs):

@@ -513,6 +513,7 @@ class TokenMetaData(models.Model):
         verbose_name = _("Metadado de token")
         verbose_name_plural = _("Metadados de tokens")
         permissions = [
+            ("grant_api_scopes", _("Pode conceder scopes disponíveis para API keys")),
             ("grant_unrestricted_apikey", _("Pode conceder API keys com scope irrestrito (*)")),
         ]
 

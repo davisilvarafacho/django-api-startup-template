@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from django.core.exceptions import ImproperlyConfigured
 
 import pytest
@@ -10,7 +12,8 @@ from apps.api.core.scope_registry import (
     required_django_permissions,
     scope_registry,
 )
-from apps.organizacoes.models import Convite, Time
+from apps.organizacoes.models import Time
+from apps.organizacoes.views import ConviteViewSet, TimeViewSet
 from tests.support.usuarios import criar_usuario
 
 
@@ -58,45 +61,44 @@ def test_scope_concedido_nao_satisfaz_requisito(granted, required):
 
 def test_registry_rejeita_recurso_duplicado():
     registry = ScopeRegistry()
-    registry.register("teams", model=Time)
+    registry.register(TimeViewSet, {"list", "create", "partial_update", "destroy"})
 
     with pytest.raises(ImproperlyConfigured, match="teams"):
-        registry.register("teams", model=Time)
+        registry.register(TimeViewSet, {"list", "create", "partial_update", "destroy"})
 
 
 def test_registry_rejeita_nome_de_recurso_invalido():
     registry = ScopeRegistry()
 
+    class InvalidView(TimeViewSet):
+        authorization_policy = replace(TimeViewSet.authorization_policy, resource="Teams")
+
     with pytest.raises(ImproperlyConfigured):
-        registry.register("Teams", model=Time)
+        registry.register(InvalidView, {"list"})
 
 
-def test_registry_deriva_permissoes_crud_do_model():
+def test_registry_deriva_permissoes_das_actions_expostas():
     registry = ScopeRegistry()
-    definition = registry.register("teams", model=Time)
+    definition = registry.register(TimeViewSet, {"list", "create", "partial_update", "destroy"})
 
     assert definition.action_permissions == {
-        "read": "view_time",
-        "create": "add_time",
-        "update": "change_time",
-        "delete": "delete_time",
+        "read": "organizacoes.view_time",
+        "create": "organizacoes.add_time",
+        "update": "organizacoes.change_time",
+        "delete": "organizacoes.delete_time",
     }
 
 
 def test_registry_mapeia_action_customizada_para_permission_django():
     registry = ScopeRegistry()
-    definition = registry.register(
-        "invitations",
-        model=Convite,
-        custom_actions={"accept": "can_accept_convite"},
-    )
+    definition = registry.register(ConviteViewSet, {"aceitar"})
 
-    assert definition.action_permissions["accept"] == "can_accept_convite"
+    assert definition.action_permissions["accept"] == "organizacoes.can_accept_convite"
 
 
 def test_registry_lookup():
     registry = ScopeRegistry()
-    registry.register("teams", model=Time)
+    registry.register(TimeViewSet, {"list", "create", "partial_update", "destroy"})
 
     assert registry.lookup("teams").model is Time
     assert registry.lookup("nao_existe") is None
@@ -105,7 +107,8 @@ def test_registry_lookup():
 @pytest.fixture
 def registro_isolado(monkeypatch):
     registry = ScopeRegistry()
-    registry.register("teams", model=Time)
+    registry.register(TimeViewSet, {"list", "create", "partial_update", "destroy"})
+    registry.discovered = True
     monkeypatch.setattr("apps.api.core.scope_registry.scope_registry", registry)
     return registry
 
@@ -150,7 +153,7 @@ def test_discover_scope_resources_e_idempotente_e_sem_inconsistencias():
     discover_scope_resources(force=True)
 
     assert scope_registry.check() == []
-    assert scope_registry.lookup("invitations").action_permissions["accept"] == "can_accept_convite"
+    assert scope_registry.lookup("invitations").action_permissions["accept"] == "organizacoes.can_accept_convite"
 
     # Chamar de novo não deve levantar por recurso duplicado.
     discover_scope_resources()
@@ -168,3 +171,40 @@ def test_display_permissions_for_traduz_permissions_django_para_resource_action(
     assert registro_isolado.display_permissions_for(usuario) == ["teams:read"]
 
     discover_scope_resources(force=True)
+
+
+def test_discovery_uses_only_exposed_policy_operations():
+    registry = discover_scope_resources(ScopeRegistry())
+    memberships = registry.lookup("memberships")
+    assert set(memberships.action_permissions) == {"read", "update", "delete"}
+    assert registry.expand("memberships:*") == ["memberships:read", "memberships:update"]
+    assert "memberships:delete" not in registry.expand("*")
+    assert registry.lookup("users") is None
+    assert "invitations:accept" in registry.expand("invitations:*")
+
+
+def test_failed_rediscovery_cannot_reuse_previous_scopes(monkeypatch):
+    registry = discover_scope_resources(ScopeRegistry())
+
+    class MissingPolicy(TimeViewSet):
+        authorization_policy = None
+
+    monkeypatch.setattr("apps.api.base.policy_checks.routed_model_viewsets", lambda: {MissingPolicy: {"list"}})
+    with pytest.raises(ImproperlyConfigured):
+        discover_scope_resources(registry, force=True)
+    assert registry.discovered is False
+    assert registry.all_resources() == {}
+
+
+def test_disabled_resource_has_no_wildcard_expansion():
+    from apps.api.core.scope_registry import ScopeNotAvailable
+
+    class DisabledView(TimeViewSet):
+        authorization_policy = replace(TimeViewSet.authorization_policy, api_key_enabled=False)
+
+    registry = ScopeRegistry()
+    registry.register(DisabledView, {"list"})
+    assert registry.lookup("teams").unavailable_actions == {"read"}
+    for scope in ("teams:read", "teams:*", "*"):
+        with pytest.raises(ScopeNotAvailable):
+            registry.expand(scope)
