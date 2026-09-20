@@ -108,6 +108,20 @@ def test_wildcard_de_recurso_ambiguo_nao_e_delegavel_nem_por_superuser(registro_
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("is_superuser", [False, True])
+def test_wildcard_global_qualificado_nao_e_delegavel_nem_por_superuser(registro_isolado, is_superuser):
+    usuario = criar_usuario(is_superuser=is_superuser, is_staff=is_superuser)
+
+    with pytest.raises(APIError) as exc:
+        validate_scope_delegation(usuario, ["*:*"])
+
+    assert exc.value.code == "auth.invalid_scope"
+    assert exc.value.status_code == 422
+    assert exc.value.field == "scopes"
+    assert exc.value.path == ("scopes", 0)
+
+
+@pytest.mark.django_db
 def test_superuser_sempre_pode_delegar_qualquer_scope(registro_isolado):
     usuario = criar_usuario(is_superuser=True, is_staff=True)
 

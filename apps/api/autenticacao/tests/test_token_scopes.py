@@ -185,3 +185,17 @@ def test_api_key_com_wildcard_de_recurso_ambiguo_persistido_falha_fechado():
         permission.has_permission(request, ViewQueExigeLeituraDeTimes())
 
     assert exc.value.code == "auth.insufficient_scope"
+
+
+def test_api_key_com_wildcard_global_qualificado_persistido_falha_fechado():
+    class ViewQueExigeLeituraDeTimes:
+        def get_required_token_scopes(self):
+            return ["teams:read"]
+
+    permission = permissions.TokenScopePermission()
+    request = RequestFalsa("GET", TokenFalso(TokenType.API_KEY, scopes=["*:*"]))
+
+    with pytest.raises(APIError) as exc:
+        permission.has_permission(request, ViewQueExigeLeituraDeTimes())
+
+    assert exc.value.code == "auth.insufficient_scope"
