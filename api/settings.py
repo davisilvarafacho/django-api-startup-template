@@ -170,6 +170,7 @@ BUSINESS_APPS = [
     "apps.logs",
     "apps.organizacoes",
     "apps.usuarios",
+    "apps.workspaces",
 ]
 
 INSTALLED_APPS = LIBS_APPS + DJANGO_APPS + BUSINESS_APPS + ENV_APPS
