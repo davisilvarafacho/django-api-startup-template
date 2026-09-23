@@ -11,6 +11,7 @@ import pytest
 from apps.api.core.errors import APIError
 from apps.organizacoes.memberships import OcupacaoSeats, Vinculos
 from apps.organizacoes.models import Convite, Organizacao, Papel, Vinculo
+from apps.workspaces.models import VinculoWorkspace, Workspace
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
@@ -90,6 +91,21 @@ def test_criar_proprietario_cria_vinculo_pelo_servico():
     assert vinculo.organizacao == organizacao
     assert vinculo.usuario == usuario
     assert vinculo.papel == Papel.PROPRIETARIO
+
+
+def test_atualizar_vinculo_promovido_recebe_acessos_e_rebaixado_preserva_linhas():
+    organizacao = Organizacao.objects.create(nome="Acme", slug="acme-promocao-workspace")
+    administrador = criar_usuario(email="admin-ws@example.com")
+    alvo_usuario = criar_usuario(email="alvo-ws@example.com")
+    Vinculo.objects.create(organizacao=organizacao, usuario=administrador, papel=Papel.ADMINISTRADOR)
+    alvo = Vinculo.objects.create(organizacao=organizacao, usuario=alvo_usuario, papel=Papel.MEMBRO)
+    workspace = Workspace.objects.create(organizacao=organizacao, nome="Matriz", slug="matriz")
+
+    Vinculos.atualizar_vinculo(alvo, dados={"papel": Papel.ADMINISTRADOR}, ator=administrador)
+    acesso = VinculoWorkspace.objects.get(vinculo=alvo, workspace=workspace)
+    Vinculos.atualizar_vinculo(alvo, dados={"papel": Papel.MEMBRO}, ator=administrador)
+
+    assert acesso.is_deleted is False
 
 
 def test_aceitar_convite_cria_vinculo_e_consumo_sem_manter_reserva():

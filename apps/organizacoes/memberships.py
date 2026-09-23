@@ -357,6 +357,10 @@ class Vinculos:
                     vinculo_bloqueado.save()
                 if times is not None:
                     vinculo_bloqueado.times.set(times)
+                if papel_pretendido >= Papel.ADMINISTRADOR and vinculo_bloqueado.is_active and not vinculo_bloqueado.is_deleted:
+                    from apps.workspaces.accesses import AcessosWorkspace
+
+                    AcessosWorkspace.garantir_obrigatorios(vinculo_bloqueado, using=using)
                 vinculo_atualizado = vinculo_bloqueado
 
         if erro_capacidade is not None:
