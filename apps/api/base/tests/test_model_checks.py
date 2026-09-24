@@ -5,6 +5,7 @@ from django.db import models
 from apps.api.base.model_checks import (
     ID_TENANT_NAO_E_PRIMEIRO,
     ID_UNICIDADE_GLOBAL,
+    ID_WORKSPACE_OBRIGATORIO_SEM_CONSTRAINT,
     models_multitenant,
     verificar_unicidade_multitenant,
 )
@@ -62,6 +63,25 @@ class RegistroSemTenant(BaseTenantless):
         app_label = "base"
 
 
+class RegistroWorkspaceObrigatorioSemConstraint(Base):
+    workspace_required = True
+    codigo = models.CharField(max_length=32)
+
+    class Meta:
+        app_label = "base"
+
+
+class RegistroWorkspaceObrigatorioComConstraint(Base):
+    workspace_required = True
+    codigo = models.CharField(max_length=32)
+
+    class Meta:
+        app_label = "base"
+        constraints = [
+            models.CheckConstraint(condition=models.Q(workspace__isnull=False), name="registro_workspace_obrigatorio_check"),
+        ]
+
+
 def test_campo_unique_e_unique_together_viram_w001():
     avisos = verificar_unicidade_multitenant([RegistroComUnicidadeGlobal])
     ids = [aviso.id for aviso in avisos]
@@ -93,3 +113,11 @@ def test_models_multitenant_so_traz_subclasses_de_base():
 
     assert RegistroComUnicidadeGlobal in modelos
     assert all(issubclass(model, Base) for model in modelos)
+
+
+def test_workspace_obrigatorio_exige_constraint_contra_nulo():
+    avisos = verificar_unicidade_multitenant([RegistroWorkspaceObrigatorioSemConstraint, RegistroWorkspaceObrigatorioComConstraint])
+
+    workspace_avisos = [aviso for aviso in avisos if aviso.id == ID_WORKSPACE_OBRIGATORIO_SEM_CONSTRAINT]
+    assert len(workspace_avisos) == 1
+    assert workspace_avisos[0].obj is RegistroWorkspaceObrigatorioSemConstraint

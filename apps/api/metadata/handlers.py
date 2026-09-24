@@ -71,7 +71,12 @@ def aplicar_metadata(objeto, alteracoes):
     dados = mesclar_dados(registro.dados if registro is not None else {}, alteracoes)
 
     if registro is None:
-        return Metadata.objects.create(content_type=content_type, object_id=objeto.pk, dados=dados)
+        return Metadata.objects.create(
+            content_type=content_type,
+            object_id=objeto.pk,
+            dados=dados,
+            workspace_id=getattr(objeto, "workspace_id", None),
+        )
 
     registro.dados = dados
     registro.save(update_fields=["dados"])

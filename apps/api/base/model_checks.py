@@ -27,6 +27,7 @@ CAMPO_TENANT = "organizacao"
 
 ID_UNICIDADE_GLOBAL = "base.W001"
 ID_TENANT_NAO_E_PRIMEIRO = "base.W002"
+ID_WORKSPACE_OBRIGATORIO_SEM_CONSTRAINT = "base.W003"
 
 
 def models_multitenant():
@@ -54,6 +55,7 @@ def verificar_unicidade_multitenant(models_verificados):
         avisos.extend(_verificar_unique_together(model))
         avisos.extend(_verificar_constraints(model))
         avisos.extend(_verificar_indexes(model))
+        avisos.extend(_verificar_workspace_obrigatorio(model))
     return avisos
 
 
@@ -154,6 +156,47 @@ def _verificar_indexes(model):
             )
         )
     return avisos
+
+
+def _verificar_workspace_obrigatorio(model):
+    if not getattr(model, "workspace_required", False):
+        return []
+
+    for constraint in model._meta.constraints:
+        if not isinstance(constraint, models.CheckConstraint):
+            continue
+        condition = constraint.condition
+        if condition is not None and _constraint_rejects_workspace_nulo(condition):
+            return []
+
+    return [
+        Warning(
+            f"{_rotulo(model)} declara workspace_required=True sem constraint que rejeite workspace nulo.",
+            hint="Declare uma CheckConstraint com condition=models.Q(workspace__isnull=False).",
+            obj=model,
+            id=ID_WORKSPACE_OBRIGATORIO_SEM_CONSTRAINT,
+        )
+    ]
+
+
+def _constraint_rejects_workspace_nulo(condition):
+    """Reconhece constraints que exigem ``workspace IS NOT NULL``."""
+    if isinstance(condition, models.Q):
+        if condition.negated:
+            return len(condition.children) == 1 and condition.children[0] == ("workspace__isnull", True)
+
+        resultados = [_q_child_rejects_workspace_nulo(child) for child in condition.children]
+        if condition.connector == models.Q.AND:
+            return any(resultados)
+        if condition.connector == models.Q.OR:
+            return bool(resultados) and all(resultados)
+    return False
+
+
+def _q_child_rejects_workspace_nulo(child):
+    if isinstance(child, tuple):
+        return child == ("workspace__isnull", False)
+    return _constraint_rejects_workspace_nulo(child)
 
 
 @register()

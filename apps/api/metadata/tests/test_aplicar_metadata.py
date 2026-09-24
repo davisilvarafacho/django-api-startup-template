@@ -8,6 +8,7 @@ from apps.api.metadata.handlers import aplicar_metadata
 from apps.api.metadata.models import Metadata
 from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.models import Organizacao
+from apps.workspaces.models import Workspace
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
@@ -58,3 +59,14 @@ def test_nao_cria_registro_quando_a_validacao_falha(organizacao):
             aplicar_metadata(usuario, {"": "sem chave"})
 
         assert Metadata.all_objects.count() == 0
+
+
+def test_novo_metadata_herda_workspace_do_objeto(organizacao):
+    workspace = Workspace.objects.create(organizacao=organizacao, nome="Principal", slug="principal")
+    usuario = criar_usuario()
+    usuario.workspace_id = workspace.pk
+
+    with organizacao_atual_privilegiada(organizacao.pk):
+        registro = aplicar_metadata(usuario, {"origem": "workspace"})
+
+    assert registro.workspace_id == workspace.pk
