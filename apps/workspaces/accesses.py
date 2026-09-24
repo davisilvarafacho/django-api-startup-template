@@ -1,4 +1,5 @@
 from django.db import transaction
+from django.db.models import Q
 
 from apps.api.core.errors import APIError
 from apps.organizacoes.memberships import Vinculos
@@ -10,6 +11,16 @@ from apps.workspaces.models import VinculoWorkspace, Workspace
 
 class AcessosWorkspace:
     _access_model = VinculoWorkspace
+
+    @classmethod
+    def _lock_vinculos(
+        cls, *, organizacao_id: int, vinculo_ids: set[int] = frozenset(), ator: Usuario | None = None, using: str
+    ) -> dict[int, Vinculo]:
+        filtro = Q(organizacao_id=organizacao_id)
+        alvo = Q(pk__in=vinculo_ids) if vinculo_ids else Q(pk__in=[])
+        if ator is not None:
+            alvo |= Q(usuario_id=ator.pk)
+        return {vinculo.pk: vinculo for vinculo in Vinculo.all_objects.using(using).select_for_update().filter(filtro & alvo).order_by("pk")}
 
     @classmethod
     def _garantir_para_workspace(cls, workspace: Workspace, *, using: str) -> list[VinculoWorkspace]:
@@ -47,7 +58,10 @@ class AcessosWorkspace:
         using = vinculo._state.db or workspace._state.db or "default"
         with transaction.atomic(using=using):
             org = Organizacao.all_objects.using(using).select_for_update().get(pk=vinculo.organizacao_id)
-            alvo = Vinculo.all_objects.using(using).select_for_update().get(pk=vinculo.pk, organizacao_id=org.pk)
+            bloqueados = cls._lock_vinculos(organizacao_id=org.pk, vinculo_ids={vinculo.pk}, ator=ator, using=using)
+            alvo = bloqueados.get(vinculo.pk)
+            if alvo is None:
+                raise APIError(WorkspaceErrorCode.ACCESS_REQUIRED, status_code=422)
             if ator is not None:
                 Vinculos.bloquear_e_exigir_papel(
                     organizacao=org, usuario=ator, papel_minimo=Papel.ADMINISTRADOR if validar_papel_ator else None, using=using
@@ -88,7 +102,10 @@ class AcessosWorkspace:
         using = acesso._state.db or "default"
         with transaction.atomic(using=using):
             org = Organizacao.all_objects.using(using).select_for_update().get(pk=acesso.vinculo.organizacao_id)
-            vinculo = Vinculo.all_objects.using(using).select_for_update().get(pk=acesso.vinculo_id, organizacao_id=org.pk)
+            bloqueados = cls._lock_vinculos(organizacao_id=org.pk, vinculo_ids={acesso.vinculo_id}, ator=ator, using=using)
+            vinculo = bloqueados.get(acesso.vinculo_id)
+            if vinculo is None:
+                raise APIError(WorkspaceErrorCode.ACCESS_REQUIRED, status_code=422)
             if ator is not None:
                 Vinculos.bloquear_e_exigir_papel(
                     organizacao=org, usuario=ator, papel_minimo=Papel.ADMINISTRADOR if validar_papel_ator else None, using=using
@@ -133,9 +150,19 @@ class AcessosWorkspace:
                 raise APIError(WorkspaceErrorCode.ACCESS_REQUIRED, status_code=422)
             acessos_queryset = cls._access_model.all_objects.using(using).filter(vinculo_id=alvo.pk).order_by("pk")
             workspace_ids_existentes = set(acessos_queryset.values_list("workspace_id", flat=True))
-            workspaces = {
-                ws.pk: ws for ws in Workspace.all_objects.using(using).select_for_update().filter(pk__in=workspace_ids_existentes).order_by("pk")
-            }
+            # Lock every Workspace that participates in the selection before
+            # locking any access rows.  Loading the requested IDs as well as
+            # existing relations lets us reject a cross-tenant relation with
+            # the same stable error used by the other Workspace operations.
+            workspace_ids_selecionados = set(workspace_ids)
+            workspace_ids = workspace_ids_existentes | workspace_ids_selecionados
+            workspaces_locked = list(
+                Workspace.all_objects.using(using).select_for_update().filter(pk__in=workspace_ids).order_by("pk")
+            )
+            workspaces = {ws.pk: ws for ws in workspaces_locked}
+            for ws in workspaces_locked:
+                if ws.organizacao_id != org.pk:
+                    raise APIError(WorkspaceErrorCode.ORGANIZATION_MISMATCH, status_code=422)
             acessos = list(acessos_queryset.select_for_update())
             ativos = {
                 a.workspace_id: a
@@ -146,12 +173,14 @@ class AcessosWorkspace:
                 and workspaces[a.workspace_id].is_active
                 and not workspaces[a.workspace_id].is_deleted
             }
-            if alvo.current_workspace_id is not None and alvo.current_workspace_id not in workspace_ids:
+            if len(workspaces) != len(workspace_ids):
                 raise APIError(WorkspaceErrorCode.INVALID_SELECTION, status_code=422)
-            if not set(workspace_ids).issubset(ativos):
+            if alvo.current_workspace_id is not None and alvo.current_workspace_id not in workspace_ids_selecionados:
+                raise APIError(WorkspaceErrorCode.INVALID_SELECTION, status_code=422)
+            if not workspace_ids_selecionados.issubset(ativos):
                 raise APIError(WorkspaceErrorCode.INVALID_SELECTION, status_code=422)
             for acesso in acessos:
-                novo = acesso.workspace_id in workspace_ids
+                novo = acesso.workspace_id in workspace_ids_selecionados
                 if acesso.selected_for_view != novo:
                     acesso.selected_for_view = novo
                     acesso.save(using=using, update_fields=["selected_for_view"])

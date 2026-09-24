@@ -25,6 +25,12 @@ class Workspaces:
             org = Organizacao.all_objects.using(using).select_for_update().get(pk=organizacao.pk)
             if org.is_deleted or not org.is_active:
                 raise APIError(WorkspaceErrorCode.WORKSPACE_INACTIVE, status_code=422)
+            afetados_ids = set(
+                Vinculo.all_objects.using(using)
+                .filter(organizacao_id=org.pk, papel__gte=Papel.ADMINISTRADOR, is_active=True, is_deleted=False)
+                .values_list("pk", flat=True)
+            )
+            AcessosWorkspace._lock_vinculos(organizacao_id=org.pk, vinculo_ids=afetados_ids, ator=ator, using=using)
             if ator is not None:
                 Vinculos.bloquear_e_exigir_papel(
                     organizacao=org, usuario=ator, papel_minimo=Papel.ADMINISTRADOR if validar_papel_ator else None, using=using
@@ -56,11 +62,25 @@ class Workspaces:
         using = workspace._state.db or "default"
         with transaction.atomic(using=using):
             org = Organizacao.all_objects.using(using).select_for_update().get(pk=workspace.organizacao_id)
+            # Inativar mutates every active access in the Workspace.  Lock all
+            # of the affected memberships before taking the Workspace lock;
+            # only locking memberships that currently point at ``current``
+            # would leave another writer free to change its access concurrently.
+            acesso_vinculo_ids = set(
+                AcessosWorkspace._access_model.all_objects.using(using)
+                .filter(workspace_id=workspace.pk)
+                .values_list("vinculo_id", flat=True)
+            )
+            atual_vinculo_ids = set(
+                Vinculo.all_objects.using(using).filter(current_workspace_id=workspace.pk).values_list("pk", flat=True)
+            )
+            afetados_ids = acesso_vinculo_ids | atual_vinculo_ids
+            bloqueados = AcessosWorkspace._lock_vinculos(organizacao_id=org.pk, vinculo_ids=afetados_ids, ator=ator, using=using)
             if ator is not None:
                 Vinculos.bloquear_e_exigir_papel(
                     organizacao=org, usuario=ator, papel_minimo=Papel.ADMINISTRADOR if validar_papel_ator else None, using=using
                 )
-            vinculos = list(Vinculo.all_objects.using(using).select_for_update().filter(current_workspace_id=workspace.pk).order_by("pk"))
+            vinculos = [bloqueados[vinculo_id] for vinculo_id in sorted(afetados_ids) if vinculo_id in bloqueados]
             alvo = Workspace.all_objects.using(using).select_for_update().get(pk=workspace.pk, organizacao_id=org.pk)
             if alvo.is_deleted or not alvo.is_active:
                 return

@@ -28,3 +28,23 @@ Foi feita uma tentativa de execução focada após adicionar os testes, mas ela 
 ## Commit
 
 `feat: gerenciar ciclo de vida de workspaces` (hash disponível no histórico do worktree)
+
+## Fix report — rodada de revisão
+
+- A ordem de locks foi explicitada nas operações de Workspace: Organização, todos os Vínculos afetados ordenados por PK, Workspaces ordenados por PK e, por fim, acessos. `inativar()` agora bloqueia também vínculos que só possuem acessos no Workspace; `atualizar_vinculo()` bloqueia vínculo alvo e vínculo do ator em conjunto antes da validação.
+- `selecionar_visualizacao()` bloqueia os Workspaces solicitados e relacionados, rejeita relações cross-tenant com `workspaces.organization_mismatch` e mantém a validação atômica da seleção.
+- Incluídos testes PostgreSQL concorrentes com duas threads/conexões para criação + promoção e resolução + inativação, além de testes de limpeza de `current_workspace` e rejeição cross-tenant.
+
+### Verificação da rodada
+
+- `uv run ruff check apps/workspaces apps/organizacoes/memberships.py`: **passou** (`All checks passed!`).
+- `uv run python manage.py check`: **passou** (`System check identified no issues (4 silenced).`).
+- `uv run python -m compileall -q apps/workspaces apps/organizacoes`: **passou**.
+- `git diff --check`: **passou**.
+- `uv run pytest apps/workspaces/tests/test_workspaces.py apps/workspaces/tests/test_accesses.py apps/organizacoes/tests/test_onboarding.py apps/organizacoes/tests/test_memberships.py -q --reuse-db`: **bloqueado no setup**: PostgreSQL em `localhost:5432` recusou conexão (`33 errors`, nenhum teste chegou às asserções).
+- Nova tentativa após a publicação da porta: **bloqueada no setup** por autenticação PostgreSQL (`fe_sendauth: no password supplied`, `35 errors`, nenhum teste chegou às asserções).
+- Com as credenciais temporárias do container (`DATABASE_USER=postgres`, `DATABASE_PASSWORD=postgres`), o mesmo comando passou: **35 passed, 1 warning in 38.58s**.
+
+### Commit da rodada
+
+`fix: ordenar locks e cobrir corridas de workspaces`

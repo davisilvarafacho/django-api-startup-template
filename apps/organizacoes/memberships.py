@@ -307,6 +307,29 @@ class Vinculos:
             usuarios_bloqueados = lock_user_accounts((ator,), using=using)
             ator_bloqueado = usuarios_bloqueados.get(ator.pk) if ator is not None else None
             organizacao = cls._bloquear_organizacao_aberta(vinculo.organizacao_id, using=using)
+            # Membership mutations follow the same global order as Workspace
+            # services: lock every distinct affected membership by PK before
+            # validating the actor or touching subscription/workspace rows.
+            vinculo_ids = {vinculo.pk}
+            if ator_bloqueado is not None:
+                ator_vinculo_id = (
+                    Vinculo.all_objects.using(using)
+                    .filter(organizacao_id=organizacao.pk, usuario_id=ator_bloqueado.pk)
+                    .values_list("pk", flat=True)
+                    .first()
+                )
+                if ator_vinculo_id is not None:
+                    vinculo_ids.add(ator_vinculo_id)
+            vinculos_bloqueados = {
+                bloqueado.pk: bloqueado
+                for bloqueado in Vinculo.all_objects.using(using)
+                .select_for_update()
+                .filter(organizacao_id=organizacao.pk, pk__in=vinculo_ids)
+                .order_by("pk")
+            }
+            vinculo_bloqueado = vinculos_bloqueados.get(vinculo.pk)
+            if vinculo_bloqueado is None:
+                raise Vinculo.DoesNotExist
             vinculo_ator = None
             if ator_bloqueado is not None:
                 vinculo_ator = cls.bloquear_e_exigir_papel(
@@ -323,7 +346,6 @@ class Vinculos:
                     mensagem="Você não pode conceder um papel acima do seu.",
                 )
             assinatura, papeis_isentos = cls._bloquear_contrato_corrente(organizacao)
-            vinculo_bloqueado = Vinculo.all_objects.using(using).select_for_update().get(pk=vinculo.pk, organizacao=organizacao)
             times = novos_dados.pop("times", None)
             papel_pretendido = novos_dados.get("papel", vinculo_bloqueado.papel)
             cls._proteger_ultimo_proprietario(

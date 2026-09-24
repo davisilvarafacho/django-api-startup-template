@@ -4,7 +4,7 @@ from apps.api.core.errors import APIError
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
 from apps.workspaces.accesses import AcessosWorkspace
 from apps.workspaces.errors import WorkspaceErrorCode
-from apps.workspaces.models import Workspace
+from apps.workspaces.models import VinculoWorkspace, Workspace
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
@@ -36,3 +36,16 @@ def test_selecao_nao_remove_workspace_atual_nem_atualiza_parcialmente():
 
     assert excinfo.value.code == WorkspaceErrorCode.INVALID_SELECTION
     assert {a.workspace_id for a in vinculo.workspaces.filter(selected_for_view=True)} == {primeiro.pk, segundo.pk}
+
+
+def test_selecao_rejeita_relacao_de_workspace_de_outra_organizacao():
+    organizacao = Organizacao.objects.create(nome="Acme", slug="ws-selecao-cross")
+    outra_organizacao = Organizacao.objects.create(nome="Outra", slug="ws-selecao-cross-outra")
+    vinculo = Vinculo.objects.create(organizacao=organizacao, usuario=criar_usuario(), papel=Papel.MEMBRO)
+    workspace = Workspace.objects.create(organizacao=outra_organizacao, nome="Fora", slug="fora")
+    VinculoWorkspace.objects.create(vinculo=vinculo, workspace=workspace)
+
+    with pytest.raises(APIError) as excinfo:
+        AcessosWorkspace.selecionar_visualizacao(vinculo=vinculo, workspace_ids={workspace.pk})
+
+    assert excinfo.value.code == WorkspaceErrorCode.ORGANIZATION_MISMATCH
