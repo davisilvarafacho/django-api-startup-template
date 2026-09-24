@@ -122,7 +122,7 @@ def test_middleware_resolve_sessao_em_uma_query_e_mantem_transacao_ate_a_respost
         "rls": str(organizacao.pk),
     }
     selects_de_vinculo = [query for query in queries if 'FROM "vinculo"' in query["sql"]]
-    assert len(selects_de_vinculo) == 1
+    assert len(selects_de_vinculo) == 3  # resolução do tenant + validação/lock do Workspace atual
     assert context.CHAVE_TENANT not in get_active_rls_context()
 
 
@@ -166,7 +166,7 @@ def test_middleware_prioriza_vinculo_da_organizacao_atual_quando_slug_foi_reutil
         "rls": str(organizacao_atual.pk),
     }
     selects_de_vinculo = [query for query in queries if 'FROM "vinculo"' in query["sql"]]
-    assert len(selects_de_vinculo) == 1
+    assert len(selects_de_vinculo) == 3  # resolução do tenant + validação/lock do Workspace atual
 
 
 @pytest.mark.django_db

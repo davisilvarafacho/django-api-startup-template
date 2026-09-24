@@ -193,7 +193,7 @@ class AcessosWorkspace:
             if organizacao_id is None:
                 return None
             organizacao = Organizacao.all_objects.using(using).select_for_update().get(pk=organizacao_id)
-            alvo = Vinculo.all_objects.using(using).select_for_update().select_related("current_workspace").get(pk=vinculo.pk)
+            alvo = Vinculo.all_objects.using(using).select_for_update().get(pk=vinculo.pk)
             if organizacao.is_deleted or not organizacao.is_active or alvo.is_deleted or not alvo.is_active or alvo.current_workspace_id is None:
                 if alvo.current_workspace_id is not None:
                     alvo.current_workspace_id = None

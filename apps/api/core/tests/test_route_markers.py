@@ -49,12 +49,19 @@ class ViewTenantComum(APIView):
         return Response()
 
 
+@route_markers.no_workspace
+class ViewSemWorkspace(APIView):
+    def post(self, request):
+        return Response()
+
+
 urlpatterns = [
     path("_test/regularizar/", ViewSetComRegularizacao.as_view({"post": "regularizar"})),
     path("_test/comum/", ViewSetComRegularizacao.as_view({"post": "comum"})),
     path("_test/metodo/", ViewComMetodoRegularizacao.as_view()),
     path("_test/io-externo/", ViewComIoExterno.as_view()),
     path("_test/tenant-comum/", ViewTenantComum.as_view()),
+    path("_test/sem-workspace/", ViewSemWorkspace.as_view()),
 ]
 
 
@@ -130,6 +137,15 @@ def test_io_externo_sem_transacao_e_um_marcador_declarativo_registrado():
     assert tem_marcador(Qualquer, route_markers.MARCADOR_IO_EXTERNO_SEM_TRANSACAO)
 
 
+def test_no_workspace_e_um_marcador_declarativo_registrado():
+    @route_markers.no_workspace
+    class Qualquer:
+        pass
+
+    assert route_markers.MARCADOR_SEM_WORKSPACE in route_markers.MARCADORES_ROTA
+    assert tem_marcador(Qualquer, route_markers.MARCADOR_SEM_WORKSPACE)
+
+
 @override_settings(ROOT_URLCONF=__name__)
 @pytest.mark.django_db(transaction=True)
 def test_middleware_encerra_atomic_somente_para_rota_marcada(rf):
@@ -170,6 +186,15 @@ def test_marcador_de_regularizacao_resolve_metodo_da_api_view():
         "/_test/metodo/",
         "POST",
         route_markers.MARCADOR_REGULARIZACAO_ASSINATURA,
+    )
+
+
+@override_settings(ROOT_URLCONF=__name__)
+def test_marcador_de_no_workspace_resolve_a_rota():
+    assert route_markers.rota_tem_marcador(
+        "/_test/sem-workspace/",
+        "POST",
+        route_markers.MARCADOR_SEM_WORKSPACE,
     )
 
 
