@@ -608,6 +608,7 @@ def test_roles_reais_separam_web_ingresso_e_migration(papel_ingresso):
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.skipif(sys.platform == "win32", reason="Gunicorn usa fcntl e não inicia no Windows")
 def test_processo_http_ingresso_recebe_webhook_assinado_com_login_minimo(papel_http_ingresso, tmp_path):
     organizacao = Organizacao.objects.create(nome="HTTP ingress", slug="http-ingress")
     assinatura = _criar_assinatura(organizacao, _criar_versao(codigo="http-ingress"))
@@ -668,12 +669,12 @@ def test_processo_http_ingresso_recebe_webhook_assinado_com_login_minimo(papel_h
     environment = {
         **os.environ,
         "DJANGO_ENVIRONMENT": "test",
-        "DJANGO_SECRET_KEY": settings.SECRET_KEY,
+        "DJANGO_SECRET_KEY": str(settings.SECRET_KEY),
         "DJANGO_ALLOWED_HOSTS": "127.0.0.1,localhost",
-        "DATABASE_NAME": database["NAME"],
+        "DATABASE_NAME": str(database["NAME"]),
         "DATABASE_USER": PAPEL_HTTP_INGRESSO,
         "DATABASE_PASSWORD": SENHA_HTTP_INGRESSO,
-        "DATABASE_HOST": database["HOST"],
+        "DATABASE_HOST": str(database["HOST"]),
         "DATABASE_PORT": str(database["PORT"]),
         "BILLING_DATABASE_MODE": "ingress",
         "STRIPE_API_KEY": "sk_test_http_ingress",
@@ -1681,17 +1682,20 @@ def test_migrations_0009_0011_revertem_com_auditoria_automatica_e_fatos_nulos(pa
             assert cursor.fetchone() == (0, 0, 0, 0)
 
         MigrationExecutor(conexao_migration).migrate([("faturamento", "0011_fatos_invoice_e_lease_recovery")])
+        modelos_historicos = MigrationExecutor(conexao_migration).loader.project_state([("faturamento", "0011_fatos_invoice_e_lease_recovery")]).apps
+        EventoCobrancaHistorico = modelos_historicos.get_model("faturamento", "EventoCobranca")
+        ReaberturaEventoCobrancaHistorico = modelos_historicos.get_model("faturamento", "ReaberturaEventoCobranca")
         with organizacao_atual_privilegiada(organizacao.pk):
-            evento = EventoCobranca.objects.create(
-                organizacao=organizacao,
+            evento = EventoCobrancaHistorico.objects.create(
+                organizacao_id=organizacao.pk,
                 variante="stripe",
                 identificador_evento="evt_reverse_financeiro",
                 tipo="invoice.paid",
                 status=StatusEventoCobranca.FALHOU,
                 hash_payload="b" * 64,
             )
-            ReaberturaEventoCobranca.objects.create(
-                organizacao=organizacao,
+            ReaberturaEventoCobrancaHistorico.objects.create(
+                organizacao_id=organizacao.pk,
                 evento=evento,
                 motivo="Reconciliação automática",
                 ator=None,

@@ -136,6 +136,32 @@ endereço de e-mail válido ou `null`, que remove o destinatário específico de
 faturamento. Campo ausente, vazio ou com formato inválido responde `422`; outros
 campos da organização não são alterados por essa rota.
 
+## Workspaces
+
+Organização é o tenant; Workspace é o recorte de subtenancy dentro dele. O
+Workspace atual fica em `Vinculo.current_workspace` e, portanto, é compartilhado
+entre as sessões e dispositivos desse vínculo. A seleção de visualização fica
+persistida nos vínculos e é aplicada automaticamente pelo RLS.
+
+| Rota | Contrato |
+| --- | --- |
+| `GET /workspaces/` | Lista Workspaces ativos da Organização; uma sessão humana vê os acessíveis ao Vínculo e uma API key vê todos. |
+| `POST /workspaces/` | Cria um Workspace; exige papel de administrador. |
+| `GET/PATCH/DELETE /workspaces/{id}/` | Consulta, atualiza ou inativa um Workspace; mutações exigem administrador. Inativação limpa referências atuais inválidas. |
+| `POST /workspaces/{id}/atual/` | Define o Workspace atual do Vínculo humano. A seleção é persistente e substitui a anterior. |
+| `PUT /workspaces/visualizacao/` | Persiste a seleção de visualização do Vínculo humano. O Workspace atual precisa permanecer selecionado. |
+| `GET/POST/PATCH/DELETE /vinculos-workspaces/` | Lista e administra os acessos dos vínculos; criação, reativação e revogação exigem administrador. O último acesso obrigatório não pode ser removido. |
+
+Em models opcionais, omitir `workspace` mantém `NULL`, que significa registro
+compartilhado pela Organização. Em models obrigatórios, omitir o campo usa o
+Workspace atual humano; API keys devem informar explicitamente um Workspace
+ativo. Um Workspace inativo, alheio ou sem acesso ativo é rejeitado.
+
+Rotas marcadas com `@no_workspace` são de control plane: não exigem Workspace
+atual e enxergam apenas registros compartilhados. O contexto `system` atravessa
+Workspaces somente dentro da Organização explicitamente selecionada; não é um
+atalho para atravessar tenants.
+
 ## Assinatura
 
 `GET /planos/` exige autenticação, dispensa `X-Organization` e lista somente

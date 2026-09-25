@@ -18,6 +18,7 @@ from apps.organizacoes.models import Convite, Organizacao, Time, Vinculo
 from apps.usuarios.accounts import Contas
 from apps.usuarios.emails import emitir_token_troca_email
 from apps.usuarios.models import Usuario
+from apps.workspaces.models import VinculoWorkspace, Workspace
 from internal_frameworks.context import ContextVariable
 from tests.support.usuarios import criar_usuario
 
@@ -42,6 +43,8 @@ def test_registra_todos_os_modelos_concretos_dos_apps():
         PropostaComercial,
         AssinaturaOrganizacao,
         AlteracaoAssinatura,
+        Workspace,
+        VinculoWorkspace,
     }
     modelos_internos_registrados = {model for model in auditlog.get_models() if model.__module__.startswith("apps.")}
 

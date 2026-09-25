@@ -13,6 +13,7 @@ from apps.api.core.route_markers import (
     MARCADOR_PUBLICA,
     MARCADOR_REGULARIZACAO_ASSINATURA,
     MARCADOR_SEM_TENANCY,
+    MARCADOR_SEM_WORKSPACE,
     rota_tem_marcador,
     view_do_path,
 )
@@ -20,6 +21,7 @@ from apps.api.core.routes_registry import routes_registry
 from apps.organizacoes.constants import HEADER_ORGANIZACAO, META_HEADER_ORGANIZACAO
 from apps.organizacoes.context import (
     CHAVE_TENANT,
+    CHAVES_WORKSPACE,
     ContextoOrganizacao,
     PoliticaComercialTenant,
     definir_organizacao_atual,
@@ -27,6 +29,12 @@ from apps.organizacoes.context import (
 from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.models import Vinculo
 from apps.organizacoes.routes import tenant_free_registry
+from apps.workspaces.accesses import AcessosWorkspace
+from apps.workspaces.context import (
+    definir_contexto_workspace_api_key,
+    definir_contexto_workspace_control,
+    definir_contexto_workspace_membership,
+)
 
 
 def _is_api_key(request):
@@ -119,6 +127,8 @@ class OrganizacaoMiddleware:
     def __call__(self, request):
         request.tenant = None
         request.tenant_required = True
+        request.current_workspace = None
+        request.workspace_required = True
 
         try:
             if rota_tem_marcador(request.path_info, request.method, MARCADOR_IO_EXTERNO_SEM_TRANSACAO):
@@ -127,7 +137,7 @@ class OrganizacaoMiddleware:
                         self._preparar_contexto(request)
                     except APIError as exc:
                         return error_response_for_api_error(exc)
-                clear_rls_context({CHAVE_TENANT})
+                clear_rls_context({CHAVE_TENANT, *CHAVES_WORKSPACE})
                 return self.get_response(request)
             with transaction.atomic():
                 try:
@@ -140,7 +150,7 @@ class OrganizacaoMiddleware:
             # dentro de uma transação quebrada, qualquer SQL mascararia a
             # exceção original com TransactionManagementError. O `SET LOCAL`
             # morre no commit/rollback, mas o rastreio em memória da lib não.
-            clear_rls_context({CHAVE_TENANT})
+            clear_rls_context({CHAVE_TENANT, *CHAVES_WORKSPACE})
 
     def _preparar_contexto(self, request):
         request.organizacao_slug = resolve_token_organization(request, getattr(request, "auth", None))
@@ -210,6 +220,18 @@ class OrganizacaoMiddleware:
 
     def _aplicar_contexto(self, request, *, organizacao, vinculo):
         definir_organizacao_atual(organizacao.pk)
+        if rota_tem_marcador(request.path_info, request.method, MARCADOR_SEM_WORKSPACE):
+            definir_contexto_workspace_control()
+            request.workspace_required = False
+        elif vinculo is None:
+            definir_contexto_workspace_api_key()
+        else:
+            workspace_atual = AcessosWorkspace.resolver_atual_valido(vinculo)
+            definir_contexto_workspace_membership(
+                membership_id=vinculo.pk,
+                current_workspace_id=workspace_atual.pk if workspace_atual is not None else None,
+            )
+            request.current_workspace = workspace_atual
         tenant_comercial = self.politica_comercial(
             organizacao,
             vinculo,

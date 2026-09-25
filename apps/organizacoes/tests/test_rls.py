@@ -60,6 +60,7 @@ def ambiente_rls(django_db_setup, django_db_blocker):
             cursor.execute(f"CREATE ROLE {PAPEL_TESTE} LOGIN PASSWORD '{SENHA_TESTE}'")
             cursor.execute(f"GRANT USAGE ON SCHEMA public TO {PAPEL_TESTE}")
             cursor.execute(f"GRANT SELECT ON {TABELA} TO {PAPEL_TESTE}")
+            cursor.execute(f"GRANT SELECT, REFERENCES ON workspace, workspace_vinculo, vinculo, organizacao TO {PAPEL_TESTE}")
 
         yield
 
@@ -113,6 +114,7 @@ def consultar_como_papel_comum(organizacao_id):
         with conexao, conexao.cursor() as cursor:
             if organizacao_id is not None:
                 cursor.execute("SELECT set_config('rls.tenant_id', %s, true)", [str(organizacao_id)])
+            cursor.execute("SELECT set_config('rls.workspace_mode', 'system', true)")
             cursor.execute(f"SELECT descricao FROM {TABELA} ORDER BY descricao")
             return [linha[0] for linha in cursor.fetchall()]
     finally:

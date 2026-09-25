@@ -17,6 +17,8 @@ from django.db import transaction
 
 from django_rls.context import clear_rls_context, set_rls_context
 
+from apps.workspaces.context import CHAVES_WORKSPACE, definir_contexto_workspace_system
+
 CHAVE_TENANT = "tenant_id"
 
 if TYPE_CHECKING:
@@ -90,13 +92,14 @@ def organizacao_atual(organizacao_id):
     """
     with transaction.atomic():
         definir_organizacao_atual(organizacao_id)
+        definir_contexto_workspace_system()
         try:
             yield
         finally:
             # `SET LOCAL` morre no commit, mas o rastreio em memória da lib não.
             # Sem limpar, o guard continuaria achando que há contexto e deixaria
             # passar uma query sem escopo no banco.
-            clear_rls_context({CHAVE_TENANT})
+            clear_rls_context({CHAVE_TENANT, *CHAVES_WORKSPACE})
 
 
 @contextmanager
@@ -112,7 +115,8 @@ def organizacao_atual_privilegiada(organizacao_id):
     """
     with transaction.atomic():
         set_rls_context(CHAVE_TENANT, organizacao_id, is_local=True, system=True, source="sistema")
+        definir_contexto_workspace_system()
         try:
             yield
         finally:
-            clear_rls_context({CHAVE_TENANT})
+            clear_rls_context({CHAVE_TENANT, *CHAVES_WORKSPACE})

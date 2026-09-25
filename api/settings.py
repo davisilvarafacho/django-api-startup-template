@@ -170,6 +170,7 @@ BUSINESS_APPS = [
     "apps.logs",
     "apps.organizacoes",
     "apps.usuarios",
+    "apps.workspaces",
 ]
 
 INSTALLED_APPS = LIBS_APPS + DJANGO_APPS + BUSINESS_APPS + ENV_APPS
@@ -414,7 +415,12 @@ DJANGO_RLS = {
     "AUDIT_LOG": IN_PRODUCTION,
     # Evita reabrir a conexão de teste durante o teardown; em produção permanece ativo.
     "RESET_CONTEXT_ON_CONNECT": not TESTING,
-    "REGISTERED_CONTEXT_KEYS": ("billing_ingress",),
+    "REGISTERED_CONTEXT_KEYS": (
+        "billing_ingress",
+        "membership_id",
+        "current_workspace_id",
+        "workspace_mode",
+    ),
 }
 
 CHECKOUT_VARIANTS = {
@@ -563,6 +569,7 @@ REST_FRAMEWORK = {
         # que o contexto de RLS já esteja aplicado. Exceções são declarativas:
         # `public_routes.py` (sem token) e `tenant_free_routes.py` (sem organização).
         "apps.organizacoes.permissions.TenantPermission",
+        "apps.workspaces.permissions.WorkspacePermission",
         "apps.api.autenticacao.permissions.TokenScopePermission",
         "apps.api.autenticacao.permissions.CustomDjangoModelPermissions",
         # No-op sem `@require_recent_auth` declarado na view/action/método.

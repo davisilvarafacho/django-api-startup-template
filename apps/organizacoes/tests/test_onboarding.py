@@ -108,6 +108,7 @@ def test_onboarding_inapto_falha_antes_de_carregar_modulos_comerciais(monkeypatc
 )
 def test_onboarding_copia_email_e_cria_proprietario_e_contrato_sob_rls(settings, modo, metodo_esperado):
     from apps.organizacoes.onboarding import OrganizationOnboarding
+    from apps.workspaces.models import VinculoWorkspace, Workspace
 
     settings.ASSINATURAS_ONBOARDING_MODO = modo
     settings.ASSINATURAS_ONBOARDING_PLANO = "inicial"
@@ -124,8 +125,11 @@ def test_onboarding_copia_email_e_cria_proprietario_e_contrato_sob_rls(settings,
 
     organizacao.refresh_from_db()
     vinculo = Vinculo.objects.get(organizacao=organizacao, usuario=usuario)
+    workspace = Workspace.objects.get(organizacao=organizacao, slug="principal")
     assert organizacao.email_faturamento == "owner@example.com"
     assert vinculo.papel == Papel.PROPRIETARIO
+    assert vinculo.current_workspace_id == workspace.pk
+    assert VinculoWorkspace.objects.filter(vinculo=vinculo, workspace=workspace, selected_for_view=True).count() == 1
     assert CatalogoPlanosTeste.chamadas == [
         {
             "codigo": "inicial",
@@ -140,14 +144,14 @@ def test_onboarding_copia_email_e_cria_proprietario_e_contrato_sob_rls(settings,
             "organizacao_id": organizacao.pk,
             "versao_plano": "versao-inicial",
             "preco_plano": "preco-inicial",
-            "contexto_rls": {"tenant_id": str(organizacao.pk)},
+            "contexto_rls": {"tenant_id": str(organizacao.pk), "workspace_mode": "system"},
         }
     ]
 
 
 @pytest.mark.parametrize(
     "colaborador",
-    ["contas", "organizacoes", "vinculos", "catalogo", "assinaturas"],
+    ["contas", "organizacoes", "vinculos", "workspace", "catalogo", "assinaturas"],
 )
 def test_onboarding_reverte_organizacao_e_vinculo_quando_colaborador_falha(monkeypatch, settings, colaborador):
     from apps.organizacoes import onboarding
@@ -177,6 +181,14 @@ def test_onboarding_reverte_organizacao_e_vinculo_quando_colaborador_falha(monke
             raise RuntimeError("vinculos")
 
         monkeypatch.setattr(Vinculos, "criar_proprietario", classmethod(vincular_e_falhar))
+    elif colaborador == "workspace":
+        from apps.workspaces.workspaces import Workspaces
+
+        monkeypatch.setattr(
+            Workspaces,
+            "criar_inicial",
+            classmethod(lambda cls, **kwargs: (_ for _ in ()).throw(RuntimeError("workspace"))),
+        )
     elif colaborador == "catalogo":
         monkeypatch.setattr(
             CatalogoPlanosTeste,

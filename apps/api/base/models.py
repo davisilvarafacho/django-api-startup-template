@@ -11,6 +11,7 @@ from django_rls.models import RLSModel, RLSQuerySet
 from django_rls.policies import TenantPolicy
 
 from apps.api.core.context import request_atual, usuario_atual
+from apps.workspaces.policies import WorkspacePolicy
 
 
 class Estados(models.IntegerChoices):
@@ -442,9 +443,30 @@ class TenantMixin(models.Model):
         abstract = True
 
 
-class Base(TenantMixin, BaseTenantless, RLSModel):
+class WorkspaceMixin(models.Model):
+    workspace_required = False
+
+    workspace = models.ForeignKey(
+        "workspaces.Workspace",
+        verbose_name=_("workspace"),
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+        help_text=_("Workspace do registro; vazio indica compartilhamento na Organização."),
+        db_comment="Workspace do registro; nulo indica compartilhamento na Organização.",
+    )
+
+    class Meta:
+        abstract = True
+
+
+class Base(WorkspaceMixin, TenantMixin, BaseTenantless, RLSModel):
     """Base padrão para modelos de negócio isolados por organização."""
 
     class Meta:
         abstract = True
-        rls_policies = [TenantPolicy(name="isolamento_organizacao", tenant_field="organizacao")]
+        rls_policies = [
+            TenantPolicy(name="isolamento_organizacao", tenant_field="organizacao"),
+            WorkspacePolicy(name="isolamento_workspace", permissive=False),
+        ]

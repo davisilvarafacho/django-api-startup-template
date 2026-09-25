@@ -6,6 +6,11 @@ from rest_framework import serializers
 
 import serpy
 
+from apps.api.base.models import Base
+from apps.api.core.errors import APIError
+from apps.workspaces.errors import WorkspaceErrorCode
+from apps.workspaces.models import Workspace
+
 
 def _forbidden_model_write_names(serializer):
     model = serializer.Meta.model
@@ -99,7 +104,50 @@ class WriteOnlyFieldsSerializerMixin:
                 self.fields[field_name].write_only = True
 
 
+class WorkspaceAssignmentSerializerMixin:
+    """Resolve e valida o Workspace de registros Base durante a escrita."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if "workspace" not in self.fields:
+            return
+
+        from apps.workspaces.accesses import AcessosWorkspace
+
+        request = self.context.get("request")
+        self.fields["workspace"].queryset = AcessosWorkspace.queryset_gravavel(request) if request is not None else Workspace.objects.none()
+
+    def to_internal_value(self, data):
+        workspace_was_sent = isinstance(data, Mapping) and "workspace" in data
+        validated_data = super().to_internal_value(data)
+        model = self.Meta.model
+
+        if not issubclass(model, Base) or (self.instance is not None and not workspace_was_sent):
+            return validated_data
+
+        if workspace_was_sent:
+            workspace = validated_data.get("workspace")
+            if workspace is None and model.workspace_required:
+                raise serializers.ValidationError({"workspace": "Este campo não pode ser nulo."}, code="null")
+            if workspace is not None:
+                from apps.workspaces.accesses import AcessosWorkspace
+
+                validated_data["workspace"] = AcessosWorkspace.exigir_workspace_gravavel(request=self.context["request"], workspace=workspace)
+            return validated_data
+
+        if model.workspace_required and self.instance is None:
+            request = self.context.get("request")
+            workspace = getattr(request, "current_workspace", None)
+            if workspace is None:
+                raise APIError(WorkspaceErrorCode.CURRENT_REQUIRED, status_code=409, field="workspace")
+            validated_data["workspace"] = workspace
+        else:
+            validated_data["workspace"] = None
+        return validated_data
+
+
 class BaseModelSerializer(
+    WorkspaceAssignmentSerializerMixin,
     ForbiddenInternalWriteFieldsSerializerMixin,
     InternalFieldsSerializerMixin,
     ReadOnlyFieldsSerializerMixin,

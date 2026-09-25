@@ -7,6 +7,7 @@ from apps.organizacoes.memberships import Vinculos
 from apps.organizacoes.models import Convite, Organizacao, Time, Vinculo
 from apps.organizacoes.organizations import Organizacoes
 from apps.organizacoes.teams import Times
+from apps.workspaces.serializers import WorkspaceCompactSerializer
 
 
 def _validar_papel_ator(request) -> bool:
@@ -22,11 +23,12 @@ class UsuarioResumoSerializer(serializers.Serializer):
 
 class OrganizacaoSerializer(serializers.ModelSerializer):
     papel = serializers.SerializerMethodField()
+    current_workspace = serializers.SerializerMethodField()
 
     class Meta:
         model = Organizacao
-        fields = ["id", "nome", "slug", "papel"]
-        read_only_fields = ["id", "papel"]
+        fields = ["id", "nome", "slug", "papel", "current_workspace"]
+        read_only_fields = ["id", "papel", "current_workspace"]
 
     def get_papel(self, obj):
         if self.context.get("include_personal_role") is False:
@@ -43,6 +45,29 @@ class OrganizacaoSerializer(serializers.ModelSerializer):
 
         vinculo = Vinculo.objects.filter(organizacao=obj, usuario=request.user, is_active=True).first()
         return vinculo.papel if vinculo else None
+
+    def get_current_workspace(self, obj):
+        if self.context.get("include_personal_role") is False:
+            return None
+
+        vinculos_por_organizacao = self.context.get("vinculos_por_organizacao", {})
+        vinculo = vinculos_por_organizacao.get(obj.id)
+        if vinculo is None:
+            request = self.context.get("request")
+            if not request or not request.user.is_authenticated:
+                return None
+            vinculo = (
+                Vinculo.objects.select_related("current_workspace")
+                .filter(
+                    organizacao=obj,
+                    usuario=request.user,
+                    is_active=True,
+                )
+                .first()
+            )
+
+        workspace = vinculo.current_workspace if vinculo is not None else None
+        return WorkspaceCompactSerializer(workspace).data if workspace is not None else None
 
 
 class OrganizacaoEmailFaturamentoSerializer(serializers.ModelSerializer):

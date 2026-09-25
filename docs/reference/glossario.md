@@ -40,6 +40,24 @@ A associação de um Usuário a uma Organização, com um Papel e um estado de
 atividade.
 _Evitar_: usuário da organização, membership
 
+**Workspace**:
+O recorte de subtenancy dentro de uma Organização. Um registro com Workspace
+fica visível apenas nos contextos autorizados; `NULL` indica que o registro é
+compartilhado pela Organização.
+_Evitar_: Organização, Time, filial quando a semântica for de isolamento
+
+**Workspace atual**:
+O Workspace persistido em `Vinculo.current_workspace`, usado como padrão para
+consultas e escritas humanas. É compartilhado entre sessões e dispositivos do
+mesmo Vínculo.
+_Evitar_: Workspace da sessão, último Workspace do navegador
+
+**Seleção de visualização**:
+Conjunto persistido de Workspaces marcados em `VinculoWorkspace` para aparecer
+nas consultas humanas. Não substitui o Workspace atual e não altera a
+Organização do Vínculo.
+_Evitar_: filtro local, Workspace ativo
+
 **Papel**:
 O nível de autoridade de um Vínculo dentro da Organização.
 _Evitar_: perfil, permissão quando o sentido for nível organizacional
@@ -49,7 +67,7 @@ Uma reserva temporária para que um e-mail crie ou use um Vínculo em uma
 Organização.
 _Evitar_: Vínculo pendente
 
-## Autorização de campos (planejado)
+## Workspaces e autorização de campos
 
 **Política de escrita de campo**:
 Regra de uma organização que protege um campo gravável de um recurso e define o

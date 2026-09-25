@@ -123,6 +123,16 @@ class Vinculo(BaseTenantless):
     )
     papel = models.PositiveSmallIntegerField(_("papel"), choices=Papel.choices, default=Papel.MEMBRO)
     times = models.ManyToManyField(Time, verbose_name=_("times"), blank=True, related_name="vinculos")
+    current_workspace = models.ForeignKey(
+        "workspaces.Workspace",
+        verbose_name=_("workspace atual"),
+        on_delete=models.SET_NULL,
+        related_name="vinculos_atuais",
+        null=True,
+        blank=True,
+        help_text=_("Workspace operacional atual deste vínculo."),
+        db_comment="Workspace operacional atual deste vínculo.",
+    )
 
     def tem_papel_minimo(self, papel):
         """Informa se este vínculo alcança o nível `papel`."""

@@ -21,7 +21,9 @@ __all__ = [
     "MARCADOR_PUBLICA",
     "MARCADOR_IO_EXTERNO_SEM_TRANSACAO",
     "MARCADOR_REGULARIZACAO_ASSINATURA",
+    "MARCADOR_SEM_WORKSPACE",
     "MARCADOR_SEM_TENANCY",
+    "no_workspace",
     "MARCADORES_ROTA",
     "no_tenancy",
     "io_externo_sem_transacao",
@@ -36,7 +38,16 @@ MARCADOR_PUBLICA = "_rota_publica"
 MARCADOR_SEM_TENANCY = "_rota_sem_tenancy"
 MARCADOR_REGULARIZACAO_ASSINATURA = "_rota_regularizacao_assinatura"
 MARCADOR_IO_EXTERNO_SEM_TRANSACAO = "_rota_io_externo_sem_transacao"
-MARCADORES_ROTA = frozenset({MARCADOR_PUBLICA, MARCADOR_SEM_TENANCY, MARCADOR_REGULARIZACAO_ASSINATURA, MARCADOR_IO_EXTERNO_SEM_TRANSACAO})
+MARCADOR_SEM_WORKSPACE = "_rota_sem_workspace"
+MARCADORES_ROTA = frozenset(
+    {
+        MARCADOR_PUBLICA,
+        MARCADOR_SEM_TENANCY,
+        MARCADOR_REGULARIZACAO_ASSINATURA,
+        MARCADOR_IO_EXTERNO_SEM_TRANSACAO,
+        MARCADOR_SEM_WORKSPACE,
+    }
+)
 
 
 def _marcar(view, marcador):
@@ -54,6 +65,11 @@ def public(view):
 def no_tenancy(view):
     """Dispensa organização: exige token, mas não um `X-Organization`."""
     return _marcar(view, MARCADOR_SEM_TENANCY)
+
+
+def no_workspace(view):
+    """Dispensa Workspace atual, mas mantém Organização e acesso comercial."""
+    return _marcar(view, MARCADOR_SEM_WORKSPACE)
 
 
 def regularizacao_assinatura(view):

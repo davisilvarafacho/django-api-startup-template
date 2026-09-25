@@ -78,8 +78,11 @@ Código de produção nunca importa `tests`. Fixture específica de um app fica 
   base), `core` (registries, cache, erros, health, management commands),
   `autenticacao`, `mcp_server` e `metadata`. É o que o template entrega pronto.
 - **Identidade, tenancy e domínio** (`apps/organizacoes/`, `apps/usuarios/`,
-  `apps/logs/`) — os apps que herdam de `BaseGlobal` por serem lidos antes de
-  existir contexto RLS, mais o app de trilha de auditoria.
+  `apps/workspaces/`, `apps/logs/`) — os apps que herdam de `BaseGlobal` por
+  serem lidos antes de existir contexto RLS, o app de subtenancy de Workspaces
+  e o app de trilha de auditoria. Workspaces usa models tenantless para
+  representar a própria fronteira e é aplicado às entidades de negócio por
+  `Base`.
 
 Apps de negócio novos nascem no primeiro nível de `apps/`, ao lado de
 `organizacoes/` e `usuarios/`.
@@ -101,6 +104,7 @@ BUSINESS_APPS = [
     "apps.logs",
     "apps.organizacoes",
     "apps.usuarios",
+    "apps.workspaces",
 ]
 ```
 
@@ -213,6 +217,13 @@ Precisa conhecer um model do domínio?
 
 Configuração de ambiente nunca entra nessa árvore: vai para
 `api/configure_enviroment.py`.
+
+`apps/workspaces/` é um app de domínio de primeiro nível, ao lado de
+`organizacoes/` e `usuarios/`. Ele concentra os models `Workspace` e
+`VinculoWorkspace`, o contexto RLS, os serviços de ciclo de vida, serializers e
+rotas de subtenancy. Não deve ser colocado em `apps/organizacoes/subapps/`:
+Workspace é uma fronteira compartilhada por vários domínios, embora pertença a
+uma Organização.
 
 ## Como um app estende o comportamento global
 

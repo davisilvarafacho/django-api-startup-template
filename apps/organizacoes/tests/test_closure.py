@@ -117,7 +117,7 @@ def test_termo_imediato_encerra_contrato_e_revoga_acessos_sem_excluir_usuarios()
         {
             "organizacao_id": organizacao.pk,
             "encerrada_em": agora,
-            "contexto_rls": {"tenant_id": str(organizacao.pk)},
+            "contexto_rls": {"tenant_id": str(organizacao.pk), "workspace_mode": "system"},
         }
     ]
 

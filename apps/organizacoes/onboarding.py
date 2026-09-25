@@ -71,7 +71,10 @@ class OrganizationOnboarding:
                 catalogo_planos, assinaturas = _carregar_colaboradores_comerciais()
             modo, codigo_plano, periodicidade = _configuracao_onboarding()
             organizacao = Organizacoes.criar(nome=nome, slug=slug, proprietario=conta)
-            Vinculos.criar_proprietario(organizacao, conta)
+            proprietario = Vinculos.criar_proprietario(organizacao, conta)
+            from apps.workspaces.workspaces import Workspaces
+
+            Workspaces.criar_inicial(organizacao=organizacao, proprietario=proprietario)
             versao_plano, preco_plano = catalogo_planos.obter_versao_inicial(
                 codigo=codigo_plano,
                 periodicidade=periodicidade,
