@@ -241,7 +241,10 @@ def test_migration_0008_protege_transicoes_e_reverse_restaura_guarda_0007():
     try:
         executor.migrate([("assinaturas", "0007_propostas_comerciais_enterprise")])
         organizacao = Organizacao.objects.create(nome="Migration 0008", slug="migration-proposta-0008")
-        proposta = _criar_proposta(organizacao)
+        modelo_historico = executor.loader.project_state([("assinaturas", "0007_propostas_comerciais_enterprise")]).apps.get_model(
+            "assinaturas", "PropostaComercial"
+        )
+        proposta = _criar_proposta(organizacao, model=modelo_historico)
 
         with organizacao_atual_privilegiada(organizacao.pk), connection.cursor() as cursor:
             cursor.execute("UPDATE proposta_comercial SET revisao = revisao + 1 WHERE id = %s", [proposta.pk])
@@ -267,7 +270,7 @@ def test_migration_0008_protege_transicoes_e_reverse_restaura_guarda_0007():
 
 @pytest.mark.django_db(transaction=True)
 def test_migration_0009_protege_insert_e_reverse_preserva_guarda_0008():
-    from apps.assinaturas.models import PropostaComercial, StatusPropostaComercial
+    from apps.assinaturas.models import StatusPropostaComercial
     from apps.assinaturas.tests.test_proposal_models import _criar_proposta
     from apps.organizacoes.context import organizacao_atual_privilegiada
     from apps.organizacoes.models import Organizacao
@@ -276,8 +279,8 @@ def test_migration_0009_protege_insert_e_reverse_preserva_guarda_0008():
     executor = MigrationExecutor(connection)
     alvos_finais = executor.loader.graph.leaf_nodes()
 
-    def inserir_aceita(proposta, ator):
-        campos = [field for field in PropostaComercial._meta.concrete_fields if not field.primary_key]
+    def inserir_aceita(proposta, ator, model):
+        campos = [field for field in model._meta.concrete_fields if not field.primary_key]
         colunas = [connection.ops.quote_name(field.column) for field in campos]
         agora = timezone.now()
         substituicoes = {
@@ -306,9 +309,12 @@ def test_migration_0009_protege_insert_e_reverse_preserva_guarda_0008():
         executor.migrate([("assinaturas", "0008_endurecer_transicoes_propostas")])
         organizacao = Organizacao.objects.create(nome="Migration 0009", slug="migration-proposta-0009")
         ator = criar_usuario(email="migration-proposta-0009@example.com")
-        proposta = _criar_proposta(organizacao)
+        modelo_historico = executor.loader.project_state([("assinaturas", "0008_endurecer_transicoes_propostas")]).apps.get_model(
+            "assinaturas", "PropostaComercial"
+        )
+        proposta = _criar_proposta(organizacao, model=modelo_historico)
         with organizacao_atual_privilegiada(organizacao.pk):
-            inserir_aceita(proposta, ator)
+            inserir_aceita(proposta, ator, modelo_historico)
 
         executor = MigrationExecutor(connection)
         executor.migrate([("assinaturas", "0009_proteger_estado_inicial_proposta")])
@@ -317,12 +323,12 @@ def test_migration_0009_protege_insert_e_reverse_preserva_guarda_0008():
             pytest.raises(DatabaseError, match="estado inicial"),
             transaction.atomic(),
         ):
-            inserir_aceita(proposta, ator)
+            inserir_aceita(proposta, ator, modelo_historico)
 
         executor = MigrationExecutor(connection)
         executor.migrate([("assinaturas", "0008_endurecer_transicoes_propostas")])
         with organizacao_atual_privilegiada(organizacao.pk):
-            inserir_aceita(proposta, ator)
+            inserir_aceita(proposta, ator, modelo_historico)
             with pytest.raises(DatabaseError, match="revisão"), transaction.atomic(), connection.cursor() as cursor:
                 cursor.execute("UPDATE proposta_comercial SET revisao = revisao + 1 WHERE id = %s", [proposta.pk])
     finally:

@@ -144,7 +144,7 @@ def test_onboarding_copia_email_e_cria_proprietario_e_contrato_sob_rls(settings,
             "organizacao_id": organizacao.pk,
             "versao_plano": "versao-inicial",
             "preco_plano": "preco-inicial",
-            "contexto_rls": {"tenant_id": str(organizacao.pk)},
+            "contexto_rls": {"tenant_id": str(organizacao.pk), "workspace_mode": "system"},
         }
     ]
 

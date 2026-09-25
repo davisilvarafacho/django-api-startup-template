@@ -81,9 +81,17 @@ def _dados_proposta(organizacao: Organizacao, **sobrescritos):
     return dados
 
 
-def _criar_proposta(organizacao: Organizacao, **sobrescritos) -> PropostaComercial:
+def _criar_proposta(organizacao: Organizacao, *, model=None, **sobrescritos) -> PropostaComercial:
+    modelo = model or PropostaComercial
+    dados = _dados_proposta(organizacao, **sobrescritos)
+    campos = {field.name for field in modelo._meta.concrete_fields}
+    dados = {nome: valor for nome, valor in dados.items() if nome in campos}
+    if model is not None:
+        for field in modelo._meta.concrete_fields:
+            if field.is_relation and field.name in dados:
+                dados[field.attname] = dados.pop(field.name).pk
     with organizacao_atual_privilegiada(organizacao.pk):
-        return PropostaComercial.objects.create(**_dados_proposta(organizacao, **sobrescritos))
+        return modelo.objects.create(**dados)
 
 
 def _dados_assinatura(organizacao: Organizacao, **sobrescritos):
