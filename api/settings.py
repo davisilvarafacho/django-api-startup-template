@@ -169,6 +169,7 @@ BUSINESS_APPS = [
     "apps.assinaturas.subapps.faturamento",
     "apps.logs",
     "apps.organizacoes",
+    # "apps.parametros",  # TODO: reativar depois de corrigir apps/parametros/models.py (Parametro.value)
     "apps.usuarios",
     "apps.workspaces",
 ]
@@ -847,4 +848,4 @@ OTEL_ENABLED = get_bool_from_env("OTEL_ENABLED", False)
 
 OTEL_EXPORTER_OTLP_ENDPOINT = get_env_var("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
 
-OTEL_SERVICE_NAME = get_env_var("OTEL_SERVICE_NAME", "drf-base-api")
+OTEL_SERVICE_NAME = get_env_var("OTEL_SERVICE_NAME", "django-api-startup-template")

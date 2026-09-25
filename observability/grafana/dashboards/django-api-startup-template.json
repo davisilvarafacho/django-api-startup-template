@@ -1,8 +1,8 @@
 {
-  "uid": "drf-base-api",
-  "title": "DRF Base API — visão geral",
+  "uid": "django-api-startup-template",
+  "title": "Django API Startup Template — visão geral",
   "description": "Método RED (Rate, Errors, Duration) sobre as métricas do django-prometheus, mais logs do Loki.",
-  "tags": ["drf-base-api"],
+  "tags": ["django-api-startup-template"],
   "timezone": "browser",
   "schemaVersion": 39,
   "version": 1,
@@ -149,7 +149,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "{job=\"drf-base-api\", level=~\"ERROR|CRITICAL\"}"
+          "expr": "{job=\"django-api-startup-template\", level=~\"ERROR|CRITICAL\"}"
         }
       ]
     }

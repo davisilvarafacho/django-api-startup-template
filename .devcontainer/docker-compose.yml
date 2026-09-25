@@ -1,4 +1,4 @@
-name: drf-base-api-devcontainer
+name: django-api-startup-template-devcontainer
 
 x-app-environment: &app-environment
   DJANGO_ENVIRONMENT: development

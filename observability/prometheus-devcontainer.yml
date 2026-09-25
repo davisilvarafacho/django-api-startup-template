@@ -3,9 +3,9 @@ global:
   scrape_interval: 15s
 
 scrape_configs:
-  - job_name: drf-base-api
+  - job_name: django-api-startup-template
     metrics_path: /metrics
     static_configs:
       - targets: ["app:8000"]
         labels:
-          service: drf-base-api
+          service: django-api-startup-template

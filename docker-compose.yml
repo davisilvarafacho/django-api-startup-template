@@ -1,4 +1,4 @@
-name: drf-base-api
+name: django-api-startup-template
 
 x-web-database-environment: &web-database-environment
   DATABASE_NAME: ${DATABASE_NAME:-base}
@@ -52,7 +52,7 @@ services:
       retries: 5
 
   web:
-    image: ${APP_IMAGE:-drf-base-api-app:local}
+    image: ${APP_IMAGE:-django-api-startup-template-app:local}
     build: .
     env_file: .env
     # Dentro da rede do compose, os serviços resolvem por nome.
@@ -76,7 +76,7 @@ services:
         condition: service_healthy
 
   billing_ingress:
-    image: ${APP_IMAGE:-drf-base-api-app:local}
+    image: ${APP_IMAGE:-django-api-startup-template-app:local}
     build: .
     env_file: .env
     environment:
@@ -103,7 +103,7 @@ services:
 
   mcp:
     profiles: ["mcp"]
-    image: ${APP_IMAGE:-drf-base-api-app:local}
+    image: ${APP_IMAGE:-django-api-startup-template-app:local}
     build: .
     command:
       - uvicorn
@@ -168,7 +168,7 @@ services:
     restart: unless-stopped
 
   celery_worker:
-    image: ${APP_IMAGE:-drf-base-api-app:local}
+    image: ${APP_IMAGE:-django-api-startup-template-app:local}
     build: .
     command: celery -A api worker -l info -Q celery
     env_file: .env
@@ -185,7 +185,7 @@ services:
       disable: true
 
   billing_ingress_worker:
-    image: ${APP_IMAGE:-drf-base-api-app:local}
+    image: ${APP_IMAGE:-django-api-startup-template-app:local}
     build: .
     command: celery -A api worker -l info -Q billing_ingress
     env_file: .env
@@ -212,7 +212,7 @@ services:
       disable: true
 
   celery_beat:
-    image: ${APP_IMAGE:-drf-base-api-app:local}
+    image: ${APP_IMAGE:-django-api-startup-template-app:local}
     build: .
     command: celery -A api beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
     env_file: .env

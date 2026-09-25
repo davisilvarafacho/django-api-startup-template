@@ -3,7 +3,7 @@
   "packages": {
     ".": {
       "release-type": "python",
-      "package-name": "drf-base-api",
+      "package-name": "django-api-startup-template",
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
         {

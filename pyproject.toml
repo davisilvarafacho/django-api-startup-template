@@ -1,5 +1,5 @@
 [project]
-name = "drf-base-api-project"
+name = "django-api-startup-template"
 version = "0.1.0"
 description = "Projeto base para APIs Django REST Framework."
 requires-python = ">=3.11"

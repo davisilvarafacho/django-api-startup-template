@@ -24,7 +24,7 @@ make dev-obs-up
 ```
 
 Esse comando usa a mesma stack, mas conecta Tempo e Prometheus à rede
-`drf-base-api-devcontainer_default` e raspa métricas em `app:8000`.
+`django-api-startup-template-devcontainer_default` e raspa métricas em `app:8000`.
 
 ## 2. Ligar traces e logs
 
@@ -61,7 +61,7 @@ make worker-observed
 | Sinal | Onde | O que esperar |
 |---|---|---|
 | Métricas | `curl localhost:8000/metrics` | Séries `django_http_*`. Fora das redes internas o endpoint responde 403 — é o comportamento correto. |
-| Logs | Grafana → Explore → Loki → `{job="drf-base-api"}` | Uma linha JSON por request com `request_id`. |
+| Logs | Grafana → Explore → Loki → `{job="django-api-startup-template"}` | Uma linha JSON por request com `request_id`. |
 | Traces | Grafana → Explore → Tempo | Spans de request, query e task. |
 | Correlação | No painel de log, clicar em **TraceID** | Abre o trace correspondente no Tempo. |
 

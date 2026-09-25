@@ -69,12 +69,12 @@ obs-down: ## Derruba a stack de observabilidade
 	docker compose -f docker-compose.observability.yml down
 
 dev-obs-up: ## Sobe a observabilidade na rede do devcontainer (execute no host)
-	APPLICATION_NETWORK=drf-base-api-devcontainer_default \
+	APPLICATION_NETWORK=django-api-startup-template-devcontainer_default \
 	PROMETHEUS_CONFIG=./observability/prometheus-devcontainer.yml \
 	docker compose -f docker-compose.observability.yml up -d
 
 dev-obs-down: ## Derruba a observabilidade conectada ao devcontainer
-	APPLICATION_NETWORK=drf-base-api-devcontainer_default \
+	APPLICATION_NETWORK=django-api-startup-template-devcontainer_default \
 	PROMETHEUS_CONFIG=./observability/prometheus-devcontainer.yml \
 	docker compose -f docker-compose.observability.yml down
 

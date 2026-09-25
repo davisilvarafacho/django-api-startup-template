@@ -1,9 +1,9 @@
 # Carrega os dashboards versionados em observability/grafana/dashboards/.
 apiVersion: 1
 providers:
-  - name: drf-base-api
+  - name: django-api-startup-template
     orgId: 1
-    folder: DRF Base API
+    folder: Django API Startup Template
     type: file
     disableDeletion: false
     updateIntervalSeconds: 30

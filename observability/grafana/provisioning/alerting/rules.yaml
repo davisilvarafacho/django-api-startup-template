@@ -15,7 +15,7 @@ apiVersion: 1
 groups:
   - orgId: 1
     name: disponibilidade
-    folder: DRF Base API
+    folder: Django API Startup Template
     interval: 1m
     rules:
       - uid: drf_api_fora_do_ar
@@ -27,7 +27,7 @@ groups:
         annotations:
           summary: O Prometheus não obtém resposta do /metrics da API.
           description: >-
-            O target `drf-base-api` está down há mais de 2 minutos. Confira o
+            O target `django-api-startup-template` está down há mais de 2 minutos. Confira o
             container `web` e o nginx antes de olhar para dependências.
         # Sem a série `up` não há o que avaliar: em produção isso significa
         # scrape quebrado, então alerta. Localmente, pause a regra quando for
@@ -43,7 +43,7 @@ groups:
             model:
               refId: A
               editorMode: code
-              expr: up{job="drf-base-api"}
+              expr: up{job="django-api-startup-template"}
               instant: false
               range: true
               intervalMs: 1000
@@ -84,7 +84,7 @@ groups:
 
   - orgId: 1
     name: saude-das-respostas
-    folder: DRF Base API
+    folder: Django API Startup Template
     interval: 1m
     rules:
       - uid: drf_taxa_de_erro_5xx
@@ -96,8 +96,8 @@ groups:
         annotations:
           summary: Mais de 5% das respostas são 5xx nos últimos 5 minutos.
           description: >-
-            Proporção atual: {{ $values.B }}. Comece pelo painel "DRF Base API —
-            visão geral" e pelos logs no Loki filtrando por `status>=500`.
+            Proporção atual: {{ $values.B }}. Comece pelo painel "Django API Startup
+            Template — visão geral" e pelos logs no Loki filtrando por `status>=500`.
         # Sem tráfego a divisão não produz série; ausência de dados aqui é
         # silêncio legítimo, não incidente.
         noDataState: NoData

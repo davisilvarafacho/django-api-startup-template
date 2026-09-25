@@ -11,7 +11,7 @@
 #
 # No host, o Django exporta para http://localhost:4318. No devcontainer, usa
 # http://tempo:4318 pela rede externa (ver docs/how-to/observabilidade-local.md).
-name: drf-base-api-observability
+name: django-api-startup-template-observability
 
 services:
   tempo:
@@ -45,7 +45,7 @@ services:
     volumes:
       - ./observability/config.alloy:/etc/alloy/config.alloy:ro
       # LOGGING_ROOT do Django (ver api/settings.py).
-      - ./logs:/var/log/drf-base-api:ro
+      - ./logs:/var/log/django-api-startup-template:ro
       - alloy_data:/var/lib/alloy/data
     depends_on:
       - loki
@@ -100,7 +100,7 @@ volumes:
 
 networks:
   # Tempo recebe traces e o Prometheus raspa métricas pela rede da aplicação.
-  # O devcontainer seleciona drf-base-api-devcontainer_default via Makefile.
+  # O devcontainer seleciona django-api-startup-template-devcontainer_default via Makefile.
   application:
-    name: ${APPLICATION_NETWORK:-drf-base-api_default}
+    name: ${APPLICATION_NETWORK:-django-api-startup-template_default}
     external: true

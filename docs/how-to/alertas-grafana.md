@@ -76,7 +76,7 @@ falha é só a entrega, com erro nos logs do container quando um alerta dispara.
 
 | Regra | Condição | `for` | `severity` |
 |---|---|---|---|
-| API fora do ar | `up{job="drf-base-api"} < 1` | 2 min | `critical` |
+| API fora do ar | `up{job="django-api-startup-template"} < 1` | 2 min | `critical` |
 | Taxa de erros 5xx acima de 5% | proporção de respostas `5xx` > 0,05 | 5 min | `critical` |
 | Latência p95 acima de 1s | `histogram_quantile(0.95, ...)` > 1 | 10 min | `warning` |
 

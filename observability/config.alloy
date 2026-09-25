@@ -1,8 +1,8 @@
 local.file_match "django_json_logs" {
   path_targets = [{
     __address__ = "localhost",
-    __path__    = "/var/log/drf-base-api/*.jsonl",
-    job         = "drf-base-api",
+    __path__    = "/var/log/django-api-startup-template/*.jsonl",
+    job         = "django-api-startup-template",
   }]
 }
 

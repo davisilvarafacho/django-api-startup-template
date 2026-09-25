@@ -1,8 +1,8 @@
-site_name: DRF Base API
+site_name: Django API Startup Template
 site_description: Base reutilizável para APIs Django REST Framework.
-site_url: https://github.com/davisilvarafacho/drf-base-api-project
-repo_url: https://github.com/davisilvarafacho/drf-base-api-project
-repo_name: davisilvarafacho/drf-base-api-project
+site_url: https://github.com/davisilvarafacho/django-api-startup-template
+repo_url: https://github.com/davisilvarafacho/django-api-startup-template
+repo_name: davisilvarafacho/django-api-startup-template
 
 theme:
   name: material
