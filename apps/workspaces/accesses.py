@@ -1,6 +1,7 @@
 from django.db import transaction
 from django.db.models import Q
 
+from apps.api.autenticacao.models import TokenType
 from apps.api.core.errors import APIError
 from apps.organizacoes.memberships import Vinculos
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
@@ -11,6 +12,35 @@ from apps.workspaces.models import VinculoWorkspace, Workspace
 
 class AcessosWorkspace:
     _access_model = VinculoWorkspace
+
+    @classmethod
+    def queryset_gravavel(cls, request):
+        """Retorna os Workspaces que o request pode atribuir a um registro."""
+        organizacao_id = getattr(request, "organizacao_id", None)
+        if organizacao_id is None:
+            return Workspace.objects.none()
+
+        queryset = Workspace.objects.filter(organizacao_id=organizacao_id, is_active=True, is_deleted=False)
+        if getattr(getattr(request, "auth", None), "type", None) == TokenType.API_KEY:
+            return queryset
+
+        vinculo = getattr(request, "vinculo", None)
+        if vinculo is None:
+            return queryset.none()
+
+        return queryset.filter(
+            vinculos__vinculo_id=vinculo.pk,
+            vinculos__is_active=True,
+            vinculos__is_deleted=False,
+            vinculos__selected_for_view=True,
+        )
+
+    @classmethod
+    def exigir_workspace_gravavel(cls, *, request, workspace: Workspace) -> Workspace:
+        """Revalida o Workspace autorizado imediatamente antes da gravação."""
+        if not cls.queryset_gravavel(request).filter(pk=workspace.pk).exists():
+            raise APIError(WorkspaceErrorCode.ACCESS_REQUIRED, status_code=422)
+        return workspace
 
     @classmethod
     def _lock_vinculos(
@@ -156,9 +186,7 @@ class AcessosWorkspace:
             # the same stable error used by the other Workspace operations.
             workspace_ids_selecionados = set(workspace_ids)
             workspace_ids = workspace_ids_existentes | workspace_ids_selecionados
-            workspaces_locked = list(
-                Workspace.all_objects.using(using).select_for_update().filter(pk__in=workspace_ids).order_by("pk")
-            )
+            workspaces_locked = list(Workspace.all_objects.using(using).select_for_update().filter(pk__in=workspace_ids).order_by("pk"))
             workspaces = {ws.pk: ws for ws in workspaces_locked}
             for ws in workspaces_locked:
                 if ws.organizacao_id != org.pk:
@@ -174,11 +202,11 @@ class AcessosWorkspace:
                 and not workspaces[a.workspace_id].is_deleted
             }
             if len(workspaces) != len(workspace_ids):
-                raise APIError(WorkspaceErrorCode.INVALID_SELECTION, status_code=422)
+                raise APIError(WorkspaceErrorCode.INVALID_SELECTION, status_code=409)
             if alvo.current_workspace_id is not None and alvo.current_workspace_id not in workspace_ids_selecionados:
-                raise APIError(WorkspaceErrorCode.INVALID_SELECTION, status_code=422)
+                raise APIError(WorkspaceErrorCode.INVALID_SELECTION, status_code=409)
             if not workspace_ids_selecionados.issubset(ativos):
-                raise APIError(WorkspaceErrorCode.INVALID_SELECTION, status_code=422)
+                raise APIError(WorkspaceErrorCode.INVALID_SELECTION, status_code=409)
             for acesso in acessos:
                 novo = acesso.workspace_id in workspace_ids_selecionados
                 if acesso.selected_for_view != novo:
