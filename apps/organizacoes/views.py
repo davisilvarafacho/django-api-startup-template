@@ -112,7 +112,7 @@ class OrganizacaoViewSet(
             usuario=self.request.user,
             is_active=True,
             organizacao_id__in=self.get_queryset().values_list("id", flat=True),
-        )
+        ).select_related("current_workspace")
         context["vinculos_por_organizacao"] = {vinculo.organizacao_id: vinculo for vinculo in vinculos}
         return context
 
