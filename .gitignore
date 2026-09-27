@@ -173,3 +173,9 @@ cython_debug/
 
 
 .examples/
+
+# prometheus_client em modo multiprocess (ver PROMETHEUS_MULTIPROC_DIR)
+counter_*.db
+histogram_*.db
+gauge_*.db
+summary_*.db

@@ -837,9 +837,15 @@ PROMETHEUS_EXPORT_MIGRATIONS = False
 PROMETHEUS_MULTIPROC_DIR = get_env_var("PROMETHEUS_MULTIPROC_DIR")
 
 if PROMETHEUS_MULTIPROC_DIR:
-    os.environ.setdefault("PROMETHEUS_MULTIPROC_DIR", PROMETHEUS_MULTIPROC_DIR)
+    os.environ["PROMETHEUS_MULTIPROC_DIR"] = PROMETHEUS_MULTIPROC_DIR
     os.makedirs(PROMETHEUS_MULTIPROC_DIR, exist_ok=True)
-
+else:
+    # O prometheus_client decide o modo multiprocess só pela *presença* da
+    # chave em os.environ (ver values.py:get_value_class), não pelo valor —
+    # um `PROMETHEUS_MULTIPROC_DIR=` vazio no .env já basta para ligar esse
+    # modo e gravar counter_<pid>.db/histogram_<pid>.db no cwd. Remover a
+    # chave garante o modo single-process (MutexValue) de verdade.
+    os.environ.pop("PROMETHEUS_MULTIPROC_DIR", None)
 
 # opentelemetry (traces distribuídos)
 # Desligado por padrão: as libs estão no grupo opcional `observability` e a
