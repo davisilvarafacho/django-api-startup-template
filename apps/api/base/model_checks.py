@@ -13,6 +13,12 @@ Regras verificadas:
 2. Toda `UniqueConstraint` de `Meta.constraints` e todo índice de
    `Meta.indexes` precisa ter `organizacao` como primeiro campo da lista
    (`base.W002`).
+3. Todo índice de `Meta.indexes` com 2+ campos precisa ter `workspace` como
+   segundo campo, logo após `organizacao` (`base.W004`). Toda query sob RLS
+   já é filtrada por workspace além de organização (`WorkspacePolicy`), então
+   o índice deve refletir esse prefixo. Modelos podem declarar
+   `indexes_sem_workspace_obrigatorio` (nomes de índice) para os casos em que
+   isso é proposital.
 
 Os avisos são apenas relato: nada aqui corrige ou bloqueia o boot.
 """
@@ -24,10 +30,12 @@ from django.db import models
 from apps.api.base.models import Base
 
 CAMPO_TENANT = "organizacao"
+CAMPO_WORKSPACE = "workspace"
 
 ID_UNICIDADE_GLOBAL = "base.W001"
 ID_TENANT_NAO_E_PRIMEIRO = "base.W002"
 ID_WORKSPACE_OBRIGATORIO_SEM_CONSTRAINT = "base.W003"
+ID_WORKSPACE_NAO_E_SEGUNDO_NO_INDICE = "base.W004"
 
 
 def models_multitenant():
@@ -142,17 +150,35 @@ def _verificar_constraints(model):
 
 def _verificar_indexes(model):
     avisos = []
+    indices_isentos = frozenset(getattr(model, "indexes_sem_workspace_obrigatorio", ()))
     for index in model._meta.indexes:
         campos = list(index.fields or ())
-        if _tenant_e_o_primeiro(campos):
+        if not _tenant_e_o_primeiro(campos):
+            avisos.append(
+                Warning(
+                    f"O índice '{index.name}' de {_rotulo(model)} não começa por '{CAMPO_TENANT}' (fields={campos}).",
+                    hint=(f"Toda query passa filtrada pela organização: coloque '{CAMPO_TENANT}' como primeiro campo do índice."),
+                    obj=model,
+                    id=ID_TENANT_NAO_E_PRIMEIRO,
+                )
+            )
+            continue
+
+        if len(campos) < 2 or index.name in indices_isentos:
+            continue
+
+        if _nome_do_campo(campos[1]) == CAMPO_WORKSPACE:
             continue
 
         avisos.append(
             Warning(
-                f"O índice '{index.name}' de {_rotulo(model)} não começa por '{CAMPO_TENANT}' (fields={campos}).",
-                hint=(f"Toda query passa filtrada pela organização: coloque '{CAMPO_TENANT}' como primeiro campo do índice."),
+                f"O índice '{index.name}' de {_rotulo(model)} não tem '{CAMPO_WORKSPACE}' como segundo campo (fields={campos}).",
+                hint=(
+                    f"Toda query sob RLS também é filtrada por workspace: coloque '{CAMPO_WORKSPACE}' logo após "
+                    f"'{CAMPO_TENANT}', ou declare o nome do índice em indexes_sem_workspace_obrigatorio se for proposital."
+                ),
                 obj=model,
-                id=ID_TENANT_NAO_E_PRIMEIRO,
+                id=ID_WORKSPACE_NAO_E_SEGUNDO_NO_INDICE,
             )
         )
     return avisos

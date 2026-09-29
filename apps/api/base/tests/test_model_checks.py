@@ -5,6 +5,7 @@ from django.db import models
 from apps.api.base.model_checks import (
     ID_TENANT_NAO_E_PRIMEIRO,
     ID_UNICIDADE_GLOBAL,
+    ID_WORKSPACE_NAO_E_SEGUNDO_NO_INDICE,
     ID_WORKSPACE_OBRIGATORIO_SEM_CONSTRAINT,
     models_multitenant,
     verificar_unicidade_multitenant,
@@ -40,7 +41,7 @@ class RegistroComConstraintSemTenant(Base):
 
 
 class RegistroConforme(Base):
-    """Modelo efêmero que respeita as duas regras."""
+    """Modelo efêmero que respeita as regras de tenant e workspace."""
 
     codigo = models.CharField(max_length=32)
 
@@ -50,7 +51,32 @@ class RegistroConforme(Base):
             models.UniqueConstraint(fields=["organizacao", "codigo"], name="registro_conforme_codigo_unique"),
         ]
         indexes = [
-            models.Index(fields=["organizacao", "codigo"], name="registro_conforme_codigo_idx"),
+            models.Index(fields=["organizacao", "workspace", "codigo"], name="registro_conforme_codigo_idx"),
+        ]
+
+
+class RegistroComIndiceSemWorkspace(Base):
+    """Modelo efêmero que viola a regra 3 (workspace não é o segundo campo do índice)."""
+
+    codigo = models.CharField(max_length=32)
+
+    class Meta:
+        app_label = "base"
+        indexes = [
+            models.Index(fields=["organizacao", "codigo"], name="registro_sem_workspace_codigo_idx"),
+        ]
+
+
+class RegistroComIndiceIsentoDeWorkspace(Base):
+    """Modelo efêmero que declara a exceção proposital de indexes_sem_workspace_obrigatorio."""
+
+    indexes_sem_workspace_obrigatorio = frozenset({"registro_isento_codigo_idx"})
+    codigo = models.CharField(max_length=32)
+
+    class Meta:
+        app_label = "base"
+        indexes = [
+            models.Index(fields=["organizacao", "codigo"], name="registro_isento_codigo_idx"),
         ]
 
 
@@ -121,3 +147,14 @@ def test_workspace_obrigatorio_exige_constraint_contra_nulo():
     workspace_avisos = [aviso for aviso in avisos if aviso.id == ID_WORKSPACE_OBRIGATORIO_SEM_CONSTRAINT]
     assert len(workspace_avisos) == 1
     assert workspace_avisos[0].obj is RegistroWorkspaceObrigatorioSemConstraint
+
+
+def test_indice_sem_workspace_como_segundo_campo_vira_w004():
+    avisos = verificar_unicidade_multitenant([RegistroComIndiceSemWorkspace])
+
+    assert [aviso.id for aviso in avisos] == [ID_WORKSPACE_NAO_E_SEGUNDO_NO_INDICE]
+    assert "registro_sem_workspace_codigo_idx" in avisos[0].msg
+
+
+def test_indice_isento_de_workspace_nao_gera_aviso():
+    assert verificar_unicidade_multitenant([RegistroComIndiceIsentoDeWorkspace]) == []
