@@ -1,0 +1,23 @@
+meta {
+  name: Update
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{base_url}}/convites/:id/
+  body: json
+  auth: inherit
+}
+
+params:path {
+  id:
+}
+
+body:json {
+  {
+    "email": "",
+    "papel": "",
+    "expira_em": null
+  }
+}

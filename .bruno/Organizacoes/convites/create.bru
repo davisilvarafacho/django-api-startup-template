@@ -1,0 +1,19 @@
+meta {
+  name: Create
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/convites/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "email": "",
+    "papel": "",
+    "expira_em": null
+  }
+}

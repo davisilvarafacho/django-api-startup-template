@@ -1,0 +1,24 @@
+meta {
+  name: Checkouts Criar
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/assinatura/checkouts/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "finalidade": "",
+    "chave_idempotencia": "",
+    "alteracao_id": null,
+    "proposta_id": null
+  }
+}
+
+docs {
+  finalidade: contratacao | alteracao | proposta. Envie alteracao_id OU proposta_id conforme o caso.
+}

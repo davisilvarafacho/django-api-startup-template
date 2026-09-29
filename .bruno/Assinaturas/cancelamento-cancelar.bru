@@ -1,0 +1,17 @@
+meta {
+  name: Cancelamento Cancelar
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{base_url}}/assinatura/cancelamento/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "revisao_esperada": null
+  }
+}

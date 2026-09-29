@@ -1,0 +1,25 @@
+meta {
+  name: Aceitar
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{base_url}}/convites/aceitar/
+  body: json
+  auth: inherit
+}
+
+headers {
+  ~X-Organization: {{organizacao_id}}
+}
+
+body:json {
+  {
+    "token": ""
+  }
+}
+
+docs {
+  Rota tenant-free: não exige X-Organization (header herdado da pasta vem desabilitado aqui).
+}

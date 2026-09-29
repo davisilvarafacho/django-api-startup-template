@@ -1,0 +1,17 @@
+meta {
+  name: Visualizacao
+  type: http
+  seq: 7
+}
+
+put {
+  url: {{base_url}}/workspaces/visualizacao/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "workspaces": []
+  }
+}

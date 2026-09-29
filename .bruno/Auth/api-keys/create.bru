@@ -1,0 +1,20 @@
+meta {
+  name: Create
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/auth/api_keys/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "name": "",
+    "responsavel": null,
+    "scopes": [],
+    "expiry": null
+  }
+}

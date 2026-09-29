@@ -1,0 +1,18 @@
+meta {
+  name: Admin Reset
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{base_url}}/auth/mfa/admin-reset/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "user_id": "",
+    "reason": ""
+  }
+}

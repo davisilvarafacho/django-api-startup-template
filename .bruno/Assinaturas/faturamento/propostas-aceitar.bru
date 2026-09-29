@@ -1,0 +1,22 @@
+meta {
+  name: Propostas Aceitar
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{base_url}}/assinatura/propostas/:id/aceitar/
+  body: json
+  auth: inherit
+}
+
+params:path {
+  id:
+}
+
+body:json {
+  {
+    "revisao_esperada": null,
+    "chave_idempotencia": ""
+  }
+}

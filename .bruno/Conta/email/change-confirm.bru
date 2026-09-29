@@ -1,0 +1,17 @@
+meta {
+  name: Change Confirm
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{base_url}}/account/email/change/confirm/
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "token": ""
+  }
+}

@@ -1,0 +1,23 @@
+meta {
+  name: Lookup
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{base_url}}/lookup/:key/?search=
+  body: none
+  auth: inherit
+}
+
+params:path {
+  key:
+}
+
+params:query {
+  search:
+}
+
+docs {
+  Exige apenas autenticação (IsAuthenticated). Confirme se X-Organization é necessário testando com e sem o header.
+}

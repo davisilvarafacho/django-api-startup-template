@@ -1,0 +1,23 @@
+meta {
+  name: Challenge Verify
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{base_url}}/auth/mfa/challenge/verify/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "code": "",
+    "type": "",
+    "trust_device": false
+  }
+}
+
+docs {
+  Usa o pre_auth_token retornado pelo login (status 202) como Bearer token, não o token normal.
+}

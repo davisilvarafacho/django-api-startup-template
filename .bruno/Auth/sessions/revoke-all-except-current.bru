@@ -1,0 +1,11 @@
+meta {
+  name: Revoke All Except Current
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{base_url}}/auth/sessions/revoke_all_except_current/
+  body: none
+  auth: inherit
+}

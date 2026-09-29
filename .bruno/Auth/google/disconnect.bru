@@ -1,0 +1,11 @@
+meta {
+  name: Disconnect
+  type: http
+  seq: 2
+}
+
+delete {
+  url: {{base_url}}/auth/google/disconnect/
+  body: none
+  auth: inherit
+}

@@ -1,0 +1,15 @@
+meta {
+  name: Resume
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{base_url}}/auth/api_keys/:uuid/resume/
+  body: none
+  auth: inherit
+}
+
+params:path {
+  uuid:
+}

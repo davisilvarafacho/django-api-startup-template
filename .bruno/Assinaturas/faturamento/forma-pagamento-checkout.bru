@@ -1,0 +1,17 @@
+meta {
+  name: Forma Pagamento Checkout
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{base_url}}/faturamento/forma-pagamento/checkouts/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "chave_idempotencia": ""
+  }
+}

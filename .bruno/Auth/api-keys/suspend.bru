@@ -1,0 +1,21 @@
+meta {
+  name: Suspend
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{base_url}}/auth/api_keys/:uuid/suspend/
+  body: json
+  auth: inherit
+}
+
+params:path {
+  uuid:
+}
+
+body:json {
+  {
+    "reason": ""
+  }
+}

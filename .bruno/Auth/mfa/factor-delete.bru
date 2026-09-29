@@ -1,0 +1,11 @@
+meta {
+  name: Factor Delete
+  type: http
+  seq: 3
+}
+
+delete {
+  url: {{base_url}}/auth/mfa/factors/totp/
+  body: none
+  auth: inherit
+}

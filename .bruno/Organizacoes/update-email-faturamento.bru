@@ -1,0 +1,21 @@
+meta {
+  name: Update Email Faturamento
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{base_url}}/organizacoes/:id/
+  body: json
+  auth: inherit
+}
+
+params:path {
+  id: {{organizacao_id}}
+}
+
+body:json {
+  {
+    "email_faturamento": null
+  }
+}

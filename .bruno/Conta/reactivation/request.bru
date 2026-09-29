@@ -1,0 +1,17 @@
+meta {
+  name: Request
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{base_url}}/account/reactivation/
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "email": ""
+  }
+}

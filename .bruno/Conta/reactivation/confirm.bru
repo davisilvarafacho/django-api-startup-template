@@ -1,0 +1,17 @@
+meta {
+  name: Confirm
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/account/reactivation/confirm/
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "token": ""
+  }
+}

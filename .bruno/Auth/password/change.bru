@@ -1,0 +1,18 @@
+meta {
+  name: Change
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{base_url}}/auth/password/change/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "new_password": "",
+    "new_password_confirmation": ""
+  }
+}

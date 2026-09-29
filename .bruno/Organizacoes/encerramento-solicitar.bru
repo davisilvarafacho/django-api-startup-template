@@ -1,0 +1,15 @@
+meta {
+  name: Encerramento Solicitar
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{base_url}}/organizacoes/:id/encerramento/
+  body: none
+  auth: inherit
+}
+
+params:path {
+  id: {{organizacao_id}}
+}

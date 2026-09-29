@@ -1,0 +1,17 @@
+meta {
+  name: Reauthenticate
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{base_url}}/auth/reauthenticate/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "password": ""
+  }
+}

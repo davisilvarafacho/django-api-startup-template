@@ -1,0 +1,23 @@
+meta {
+  name: Update
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{base_url}}/auth/api_keys/:uuid/
+  body: json
+  auth: inherit
+}
+
+params:path {
+  uuid:
+}
+
+body:json {
+  {
+    "name": "",
+    "scopes": [],
+    "expiry": null
+  }
+}

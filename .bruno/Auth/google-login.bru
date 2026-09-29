@@ -1,0 +1,18 @@
+meta {
+  name: Google Login
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/auth/google/
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "id_token": "",
+    "device_name": "bruno"
+  }
+}

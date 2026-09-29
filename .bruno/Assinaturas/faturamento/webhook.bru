@@ -1,0 +1,25 @@
+meta {
+  name: Webhook (referencia)
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{base_url}}/faturamento/webhooks/stripe/
+  body: json
+  auth: none
+}
+
+headers {
+  ~X-Organization: {{organizacao_id}}
+}
+
+body:json {
+  {}
+}
+
+docs {
+  Endpoint público destinado ao provedor de pagamento (ex.: Stripe), não ao fluxo autenticado normal.
+  Para testar localmente, use `stripe trigger` ou `stripe listen --forward-to` e copie o payload + header
+  de assinatura (Stripe-Signature) gerados pela CLI do Stripe — não invente um payload manualmente.
+}

@@ -1,0 +1,17 @@
+meta {
+  name: Reset Request
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{base_url}}/auth/password/reset/request/
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "email": "demo@example.com"
+  }
+}

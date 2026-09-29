@@ -1,0 +1,15 @@
+meta {
+  name: Definir Atual
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{base_url}}/workspaces/:id/atual/
+  body: none
+  auth: inherit
+}
+
+params:path {
+  id: {{workspace_id}}
+}

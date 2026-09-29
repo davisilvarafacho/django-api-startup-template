@@ -1,0 +1,19 @@
+meta {
+  name: Create
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/vinculos-workspaces/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "vinculo": null,
+    "workspace": null,
+    "is_active": true
+  }
+}

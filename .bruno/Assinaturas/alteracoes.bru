@@ -1,0 +1,26 @@
+meta {
+  name: Solicitar Alteracao
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{base_url}}/assinatura/alteracoes/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "tipo": "",
+    "revisao_esperada": null,
+    "chave_idempotencia": "",
+    "seats_contratados": null,
+    "versao_plano_id": null,
+    "periodicidade": null
+  }
+}
+
+docs {
+  Campos condicionais conforme "tipo": seats_contratados (aumento/reducao), versao_plano_id (upgrade/downgrade) ou periodicidade (mudanca de periodicidade). Remova os que não se aplicam.
+}

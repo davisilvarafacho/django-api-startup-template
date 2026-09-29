@@ -1,0 +1,23 @@
+meta {
+  name: Update
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{base_url}}/workspaces/:id/
+  body: json
+  auth: inherit
+}
+
+params:path {
+  id: {{workspace_id}}
+}
+
+body:json {
+  {
+    "nome": "",
+    "slug": "",
+    "is_active": true
+  }
+}

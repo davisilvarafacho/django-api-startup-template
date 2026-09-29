@@ -1,0 +1,17 @@
+meta {
+  name: Challenge Start
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/auth/reauthenticate/challenge/start/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "type": ""
+  }
+}

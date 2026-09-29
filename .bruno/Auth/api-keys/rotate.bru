@@ -1,0 +1,15 @@
+meta {
+  name: Rotate
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{base_url}}/auth/api_keys/:uuid/rotate/
+  body: none
+  auth: inherit
+}
+
+params:path {
+  uuid:
+}

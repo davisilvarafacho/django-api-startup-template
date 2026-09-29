@@ -1,0 +1,15 @@
+meta {
+  name: Encerramento Cancelar
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{base_url}}/organizacoes/:id/encerramento/
+  body: none
+  auth: inherit
+}
+
+params:path {
+  id: {{organizacao_id}}
+}
