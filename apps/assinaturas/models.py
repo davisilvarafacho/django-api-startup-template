@@ -826,6 +826,9 @@ class PrecoPlano(BaseTenantless):
 class PropostaComercial(Base):
     """Snapshot negociado especificamente para uma organizacao."""
 
+    # Proposta comercial é sempre no nível da organização, nunca de um workspace específico.
+    indexes_sem_workspace_obrigatorio = frozenset({"proposta_org_status_val_idx"})
+
     versao_plano_referencia = models.ForeignKey(
         VersaoPlano,
         verbose_name=_("versao do plano de referencia"),
@@ -966,6 +969,9 @@ class PropostaComercial(Base):
 
 class AssinaturaOrganizacao(Base):
     """Snapshot corrente dos termos contratuais de uma organização."""
+
+    # Assinatura é sempre no nível da organização, nunca de um workspace específico.
+    indexes_sem_workspace_obrigatorio = frozenset({"assinatura_org_status_idx"})
 
     versao_plano = models.ForeignKey(
         VersaoPlano,
@@ -1193,6 +1199,9 @@ class AssinaturaOrganizacao(Base):
 
 class AlteracaoAssinatura(Base):
     """Pedido imutável e metadados evolutivos de uma mudança contratual."""
+
+    # Alteração contratual é sempre no nível da organização, nunca de um workspace específico.
+    indexes_sem_workspace_obrigatorio = frozenset({"alteracao_org_ass_status_idx"})
 
     assinatura = models.ForeignKey(
         AssinaturaOrganizacao,
