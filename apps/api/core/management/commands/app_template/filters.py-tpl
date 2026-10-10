@@ -1,4 +1,4 @@
 import django_filters.rest_framework as filters
 
 
-from apps.api.base.filters import BaseFilterSet
+from apps.api.base.filtersets import BaseFilterSet
