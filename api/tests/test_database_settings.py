@@ -179,7 +179,7 @@ def test_filas_celery_separam_ingresso_de_processamento_tenantizado():
 
 
 def test_alias_migration_exige_credenciais_completas():
-    base = {**os.environ, "DJANGO_SETTINGS_MODULE": "api.settings", "DJANGO_SECRET_KEY": "test"}
+    base = {**os.environ, "DJANGO_SETTINGS_MODULE": "api.settings", "DJANGO_SECRET_KEY": "test", "DJANGO_ENVIRONMENT": "test"}
     for key in ("BILLING_MIGRATION_DATABASE_USER", "BILLING_MIGRATION_DATABASE_PASSWORD"):
         base.pop(key, None)
     assert _read_setting("'billing_migration' in settings.DATABASES", base) == "False"

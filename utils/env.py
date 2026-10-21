@@ -1,4 +1,3 @@
-import ast
 import os
 from typing import Literal
 
@@ -9,6 +8,9 @@ EnviromentVar = Literal[
     "DJANGO_ENVIRONMENT",
     "DJANGO_EXECUTION_MODE",
     "DJANGO_LOG_LEVEL",
+    "DJANGO_BEHIND_PROXY",
+    "DJANGO_INTERNAL_IPS",
+    "DJANGO_JSON_LOG_FILE_ENABLED",
     "DATABASE_NAME",
     "DATABASE_USER",
     "DATABASE_PASSWORD",
@@ -20,10 +22,11 @@ EnviromentVar = Literal[
     "AUTHORIZATION_CACHE_ENABLED",
     "AUTHORIZATION_CACHE_KEY_PREFIX",
     "AUTHORIZATION_REDIS_URL",
-    "EMAIL_PASSWORD",
     "RESEND_API_KEY",
     "RESEND_FROM_EMAIL",
-    "RABBITMQ_CONNECTION_STRING",
+    # mfa
+    "MFA_SMS_ENABLED",
+    "MFA_SMS_BACKEND",
     # mcp
     "MCP_SERVER_URL",
     "MCP_AUTH_ISSUER_URL",
@@ -66,6 +69,11 @@ EnviromentVar = Literal[
     "CELERY_BROKER_URL",
     "CELERY_RESULT_BACKEND",
     "SUBSCRIPTION_TASK_BATCH_SIZE",
+    "ORGANIZATION_CLOSURE_BATCH_SIZE",
+    # onboarding de organizações
+    "ASSINATURAS_ONBOARDING_MODO",
+    "ASSINATURAS_ONBOARDING_PLANO",
+    "ASSINATURAS_ONBOARDING_PERIODICIDADE",
     # faturamento
     "STRIPE_API_KEY",
     "STRIPE_WEBHOOK_SECRET",
@@ -79,6 +87,19 @@ EnviromentVar = Literal[
     "BILLING_CHECKOUT_CANCEL_URL",
     # sentry
     "SENTRY_DSN",
+    # posthog
+    "POSTHOG_PROJECT_TOKEN",
+    "POSTHOG_HOST",
+    "POSTHOG_DISABLED",
+    # opentelemetry
+    "OTEL_ENABLED",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_SERVICE_NAME",
+    # prometheus
+    "PROMETHEUS_METRICS_TOKEN",
+    "PROMETHEUS_ALLOWED_NETWORKS",
+    "PROMETHEUS_MULTIPROC_DIR",
+    # campos sensíveis
     "SENSITIVE_FIELD_KEYS",
     # metadata
     "METADATA_MAX_KEYS",
@@ -92,13 +113,26 @@ def get_env_var(key: EnviromentVar, default=None):
 
 
 def get_bool_from_env(key: EnviromentVar, default_value):
-    if key in os.environ:
-        value = os.environ[key]
-        try:
-            return ast.literal_eval(value)
-        except ValueError as exc:
-            raise ValueError(f"'{value}' não é um valor válido para '{key}'") from exc
-    return default_value
+    """Lê uma env var booleana, aceitando apenas `true`/`false` (sem distinguir caixa).
+
+    Args:
+        key: Nome da variável, declarado em `EnviromentVar`.
+        default_value: Valor usado quando a variável está ausente ou vazia.
+
+    Returns:
+        O booleano lido do ambiente ou o default.
+
+    Raises:
+        ValueError: Quando o valor presente não é `true` nem `false`.
+    """
+    value = os.environ.get(key, "").strip()
+    if not value:
+        return default_value
+
+    normalized = value.lower()
+    if normalized not in ("true", "false"):
+        raise ValueError(f"'{value}' não é um valor válido para '{key}': use true ou false")
+    return normalized == "true"
 
 
 def get_int_from_env(key: EnviromentVar, default_value):

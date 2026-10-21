@@ -19,8 +19,6 @@ BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
 
 SECRET_KEY = get_env_var("DJANGO_SECRET_KEY")
 
-DEBUG = get_bool_from_env("DJANGO_DEBUG", True)
-
 ENVIROMENT = get_env_var("DJANGO_ENVIRONMENT")
 
 IN_DEVELOPMENT = ENVIROMENT == "development"
@@ -38,6 +36,15 @@ if BILLING_DATABASE_MODE not in {"web", "ingress", "migration"}:
 # ambiente efetivo usado para carregar apps/middlewares/storages específicos.
 # sempre resolve para um valor suportado por `configure_enviroment`.
 TESTING = IN_TEST or "pytest" in sys.modules or "test" in sys.argv
+
+# Falha fechado: um DJANGO_ENVIRONMENT ausente ou com typo cairia em
+# desenvolvimento (DEBUG, toolbars) sem aviso. Sob pytest o valor é opcional.
+if not TESTING and ENVIROMENT not in {"development", "production", "test"}:
+    raise ImproperlyConfigured(f"DJANGO_ENVIRONMENT deve ser 'development', 'production' ou 'test' (recebido: {ENVIROMENT!r}).")
+
+DEBUG = get_bool_from_env("DJANGO_DEBUG", not IN_PRODUCTION)
+if IN_PRODUCTION and DEBUG:
+    raise ImproperlyConfigured("DJANGO_DEBUG não pode ser true em produção.")
 
 if TESTING:
     CONFIG_ENVIRONMENT = "test"
