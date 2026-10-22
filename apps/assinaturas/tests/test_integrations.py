@@ -131,9 +131,9 @@ def _esperar_lock_postgresql(pid: int, *, timeout: float = 5) -> None:
 )
 def test_onboarding_real_resolve_catalogo_e_cria_contrato_na_mesma_transacao(settings, modo, plano, status_esperado):
     _sincronizar_catalogo()
-    settings.ASSINATURAS_ONBOARDING_MODO = modo
-    settings.ASSINATURAS_ONBOARDING_PLANO = plano
-    settings.ASSINATURAS_ONBOARDING_PERIODICIDADE = "mensal"
+    settings.SUBSCRIPTION_ONBOARDING_MODE = modo
+    settings.SUBSCRIPTION_ONBOARDING_PLAN = plano
+    settings.SUBSCRIPTION_ONBOARDING_BILLING_PERIOD = "mensal"
     usuario = criar_usuario(email=f"{modo}@example.com", email_verificado_em=timezone.now())
 
     organizacao = OrganizationOnboarding.criar(usuario=usuario, nome=modo.title(), slug=f"onboarding-real-{modo}")
@@ -147,9 +147,9 @@ def test_onboarding_real_resolve_catalogo_e_cria_contrato_na_mesma_transacao(set
 
 def test_onboarding_real_reverte_inclusive_contrato_quando_etapa_final_falha(monkeypatch, settings):
     _sincronizar_catalogo()
-    settings.ASSINATURAS_ONBOARDING_MODO = "gratuito"
-    settings.ASSINATURAS_ONBOARDING_PLANO = "gratuito"
-    settings.ASSINATURAS_ONBOARDING_PERIODICIDADE = "mensal"
+    settings.SUBSCRIPTION_ONBOARDING_MODE = "gratuito"
+    settings.SUBSCRIPTION_ONBOARDING_PLAN = "gratuito"
+    settings.SUBSCRIPTION_ONBOARDING_BILLING_PERIOD = "mensal"
     usuario = criar_usuario(email="rollback-real@example.com", email_verificado_em=timezone.now())
     original = Assinaturas.criar.__func__
     organizacao_id = None

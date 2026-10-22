@@ -42,15 +42,15 @@ def test_compose_isola_http_e_workers_de_ingresso(compose_path, web_service, ing
     compose = yaml.safe_load((REPOSITORY_ROOT / compose_path).read_text(encoding="utf-8"))
     services = compose["services"]
 
-    assert services[web_service]["environment"]["BILLING_DATABASE_MODE"] == "web"
+    assert services[web_service]["environment"]["DATABASE_BILLING_MODE"] == "web"
     assert services[web_service]["environment"]["DATABASE_USER"] != services["db"]["environment"]["POSTGRES_USER"]
     credenciais_privilegiadas = {
-        "BILLING_INGRESS_DATABASE_USER",
-        "BILLING_INGRESS_DATABASE_PASSWORD",
-        "BILLING_INGRESS_WORKER_DATABASE_USER",
-        "BILLING_INGRESS_WORKER_DATABASE_PASSWORD",
-        "BILLING_MIGRATION_DATABASE_USER",
-        "BILLING_MIGRATION_DATABASE_PASSWORD",
+        "DATABASE_BILLING_INGRESS_USER",
+        "DATABASE_BILLING_INGRESS_PASSWORD",
+        "DATABASE_BILLING_INGRESS_WORKER_USER",
+        "DATABASE_BILLING_INGRESS_WORKER_PASSWORD",
+        "DATABASE_BILLING_MIGRATION_USER",
+        "DATABASE_BILLING_MIGRATION_PASSWORD",
     }
     if compose_path == ".devcontainer/docker-compose.yml":
         # Ausentes (em vez de vazias) para que `make migrate` possa aplicar os
@@ -58,19 +58,19 @@ def test_compose_isola_http_e_workers_de_ingresso(compose_path, web_service, ing
         assert credenciais_privilegiadas.isdisjoint(services[web_service]["environment"])
     else:
         assert all(services[web_service]["environment"][chave] == "" for chave in credenciais_privilegiadas)
-    assert services["billing_ingress"]["environment"]["BILLING_DATABASE_MODE"] == "ingress"
-    assert "BILLING_INGRESS_DATABASE_USER" in services["billing_ingress"]["environment"]["DATABASE_USER"]
-    assert "BILLING_INGRESS_DATABASE_PASSWORD" in services["billing_ingress"]["environment"]["DATABASE_PASSWORD"]
+    assert services["billing_ingress"]["environment"]["DATABASE_BILLING_MODE"] == "ingress"
+    assert "DATABASE_BILLING_INGRESS_USER" in services["billing_ingress"]["environment"]["DATABASE_USER"]
+    assert "DATABASE_BILLING_INGRESS_PASSWORD" in services["billing_ingress"]["environment"]["DATABASE_PASSWORD"]
     assert ingress_port in services["billing_ingress"]["expose"]
     assert "ports" not in services["billing_ingress"]
 
     worker_geral = services["celery_worker" if compose_path == "docker-compose.yml" else "worker"]
     worker_ingresso = services["billing_ingress_worker"]
-    assert worker_geral["environment"]["BILLING_DATABASE_MODE"] == "web"
+    assert worker_geral["environment"]["DATABASE_BILLING_MODE"] == "web"
     assert "billing_ingress" not in str(worker_geral["command"])
-    assert worker_ingresso["environment"]["BILLING_DATABASE_MODE"] == "ingress"
-    assert "BILLING_INGRESS_WORKER_DATABASE_USER" in worker_ingresso["environment"]["DATABASE_USER"]
-    assert "BILLING_INGRESS_WORKER_DATABASE_PASSWORD" in worker_ingresso["environment"]["DATABASE_PASSWORD"]
+    assert worker_ingresso["environment"]["DATABASE_BILLING_MODE"] == "ingress"
+    assert "DATABASE_BILLING_INGRESS_WORKER_USER" in worker_ingresso["environment"]["DATABASE_USER"]
+    assert "DATABASE_BILLING_INGRESS_WORKER_PASSWORD" in worker_ingresso["environment"]["DATABASE_PASSWORD"]
     assert "billing_ingress" in str(worker_ingresso["command"])
 
     if compose_path == ".devcontainer/docker-compose.yml":
@@ -79,14 +79,14 @@ def test_compose_isola_http_e_workers_de_ingresso(compose_path, web_service, ing
     else:
         for service_name in (web_service, "mcp", "celery_worker", "billing_ingress", "billing_ingress_worker", "celery_beat"):
             environment = services[service_name]["environment"]
-            assert environment["POSTGRES_ADMIN_USER"] == ""
-            assert environment["POSTGRES_ADMIN_PASSWORD"] == ""
+            assert environment["DATABASE_ADMIN_USER"] == ""
+            assert environment["DATABASE_ADMIN_PASSWORD"] == ""
 
 
 def test_bootstrap_local_cria_login_web_sem_roles_financeiras():
     script = (REPOSITORY_ROOT / "docker" / "postgres" / "init-billing-roles.sh").read_text(encoding="utf-8")
 
-    assert "BILLING_WEB_DATABASE_USER" in script
+    assert "DATABASE_BILLING_WEB_USER" in script
     assert "CREATE ROLE %I LOGIN" in script
     assert "GRANT billing_ingress_runtime" in script
     assert "GRANT billing_functions_owner" in script
@@ -112,9 +112,9 @@ def test_script_bootstrap_transporta_segredos_por_ambiente_sem_expor_no_argv(tmp
     )
     psql_falso.chmod(0o755)
     segredos = {
-        "BILLING_WEB_DATABASE_PASSWORD": "segredo-web-unico",
-        "BILLING_INGRESS_DATABASE_PASSWORD": "segredo-http-unico",
-        "BILLING_INGRESS_WORKER_DATABASE_PASSWORD": "segredo-worker-unico",
+        "DATABASE_BILLING_WEB_PASSWORD": "segredo-web-unico",
+        "DATABASE_BILLING_INGRESS_PASSWORD": "segredo-http-unico",
+        "DATABASE_BILLING_INGRESS_WORKER_PASSWORD": "segredo-worker-unico",
     }
     ambiente = {
         **os.environ,
@@ -123,9 +123,9 @@ def test_script_bootstrap_transporta_segredos_por_ambiente_sem_expor_no_argv(tmp
         "CAPTURA_STDIN": str(captura_stdin),
         "POSTGRES_USER": "postgres",
         "POSTGRES_DB": "base",
-        "BILLING_WEB_DATABASE_USER": "app_web",
-        "BILLING_INGRESS_DATABASE_USER": "billing_http",
-        "BILLING_INGRESS_WORKER_DATABASE_USER": "billing_worker",
+        "DATABASE_BILLING_WEB_USER": "app_web",
+        "DATABASE_BILLING_INGRESS_USER": "billing_http",
+        "DATABASE_BILLING_INGRESS_WORKER_USER": "billing_worker",
         **segredos,
     }
 
@@ -140,9 +140,9 @@ def test_script_bootstrap_transporta_segredos_por_ambiente_sem_expor_no_argv(tmp
     assert all(segredo not in argumentos for segredo in segredos.values())
     assert all(segredo not in entrada for segredo in segredos.values())
     assert "--set=" not in argumentos
-    assert "\\getenv web_password BILLING_WEB_DATABASE_PASSWORD" in entrada
-    assert "\\getenv ingress_password BILLING_INGRESS_DATABASE_PASSWORD" in entrada
-    assert "\\getenv ingress_worker_password BILLING_INGRESS_WORKER_DATABASE_PASSWORD" in entrada
+    assert "\\getenv web_password DATABASE_BILLING_WEB_PASSWORD" in entrada
+    assert "\\getenv ingress_password DATABASE_BILLING_INGRESS_PASSWORD" in entrada
+    assert "\\getenv ingress_worker_password DATABASE_BILLING_INGRESS_WORKER_PASSWORD" in entrada
 
 
 def test_billing_bootstrap_reaplica_roles_no_volume_existente_sem_expor_senhas_na_cli():
@@ -163,11 +163,11 @@ def test_billing_bootstrap_reaplica_roles_no_volume_existente_sem_expor_senhas_n
 def test_make_aplica_defaults_locais_mesmo_quando_credenciais_chegam_vazias():
     makefile = (REPOSITORY_ROOT / "Makefile").read_text(encoding="utf-8")
 
-    assert "POSTGRES_ADMIN_USER := $(or $(POSTGRES_ADMIN_USER),postgres)" in makefile
-    assert "POSTGRES_ADMIN_PASSWORD := $(or $(POSTGRES_ADMIN_PASSWORD),postgres)" in makefile
-    assert "BILLING_MIGRATION_DATABASE_USER := $(or $(BILLING_MIGRATION_DATABASE_USER),$(POSTGRES_ADMIN_USER))" in makefile
-    assert "BILLING_MIGRATION_DATABASE_PASSWORD := $(or $(BILLING_MIGRATION_DATABASE_PASSWORD),$(POSTGRES_ADMIN_PASSWORD))" in makefile
-    assert makefile.index("BILLING_MIGRATION_DATABASE_USER :=") < makefile.index("billing-migrate: export")
+    assert "DATABASE_ADMIN_USER := $(or $(DATABASE_ADMIN_USER),postgres)" in makefile
+    assert "DATABASE_ADMIN_PASSWORD := $(or $(DATABASE_ADMIN_PASSWORD),postgres)" in makefile
+    assert "DATABASE_BILLING_MIGRATION_USER := $(or $(DATABASE_BILLING_MIGRATION_USER),$(DATABASE_ADMIN_USER))" in makefile
+    assert "DATABASE_BILLING_MIGRATION_PASSWORD := $(or $(DATABASE_BILLING_MIGRATION_PASSWORD),$(DATABASE_ADMIN_PASSWORD))" in makefile
+    assert makefile.index("DATABASE_BILLING_MIGRATION_USER :=") < makefile.index("billing-migrate: export")
 
 
 @pytest.mark.parametrize("ambiente", ["production", "development"])

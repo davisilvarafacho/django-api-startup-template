@@ -40,7 +40,7 @@ class CoreConfig(AppConfig):
 
         posthog.api_key = settings.POSTHOG_PROJECT_TOKEN
         posthog.host = settings.POSTHOG_HOST
-        posthog.disabled = settings.POSTHOG_DISABLED or settings.TESTING or not settings.POSTHOG_PROJECT_TOKEN
+        posthog.disabled = not settings.POSTHOG_ENABLED or settings.TESTING or not settings.POSTHOG_PROJECT_TOKEN
 
         if posthog.disabled:
             return

@@ -40,13 +40,13 @@ def _carregar_colaboradores_comerciais() -> tuple[type[CatalogoPlanosOnboarding]
 
 
 def _configuracao_onboarding() -> tuple[str, str, str]:
-    modo = settings.ASSINATURAS_ONBOARDING_MODO
-    periodicidade = settings.ASSINATURAS_ONBOARDING_PERIODICIDADE
+    modo = settings.SUBSCRIPTION_ONBOARDING_MODE
+    periodicidade = settings.SUBSCRIPTION_ONBOARDING_BILLING_PERIOD
     if modo not in {"gratuito", "trial"}:
-        raise ImproperlyConfigured("ASSINATURAS_ONBOARDING_MODO precisa ser 'gratuito' ou 'trial'.")
+        raise ImproperlyConfigured("SUBSCRIPTION_ONBOARDING_MODE precisa ser 'gratuito' ou 'trial'.")
     if periodicidade not in {"mensal", "anual"}:
-        raise ImproperlyConfigured("ASSINATURAS_ONBOARDING_PERIODICIDADE precisa ser 'mensal' ou 'anual'.")
-    return modo, settings.ASSINATURAS_ONBOARDING_PLANO, periodicidade
+        raise ImproperlyConfigured("SUBSCRIPTION_ONBOARDING_BILLING_PERIOD precisa ser 'mensal' ou 'anual'.")
+    return modo, settings.SUBSCRIPTION_ONBOARDING_PLAN, periodicidade
 
 
 class OrganizationOnboarding:

@@ -14,7 +14,7 @@ def configuracao_faturamento_check(app_configs, **kwargs):
     erros = []
     if not formato_valido or credenciais_parciais or (settings.IN_PRODUCTION and not all(credenciais)):
         erros.append(Error("Credenciais Stripe não configuradas.", id="faturamento.E001"))
-    urls = (settings.BILLING_CHECKOUT_SUCCESS_URL, settings.BILLING_CHECKOUT_CANCEL_URL)
+    urls = (settings.FRONTEND_PAYMENT_SUCCESS_URL, settings.FRONTEND_PAYMENT_CANCEL_URL)
     if settings.IN_PRODUCTION and not all(url.startswith("https://") for url in urls):
         erros.append(Error("URLs de retorno do checkout devem usar HTTPS em produção.", id="faturamento.E006"))
     return erros
@@ -28,9 +28,9 @@ def _erro(message, error_id, hint):
 def role_ingresso_check(app_configs, **kwargs):
     """Prova o grafo owner/migration/web/worker e o catálogo SECURITY DEFINER."""
     del app_configs
-    runtime = settings.BILLING_INGRESS_DATABASE_ROLE
-    owner = settings.BILLING_DATABASE_OWNER_ROLE
-    modo = settings.BILLING_DATABASE_MODE
+    runtime = settings.DATABASE_BILLING_INGRESS_ROLE
+    owner = settings.DATABASE_BILLING_OWNER_ROLE
+    modo = settings.DATABASE_BILLING_MODE
     if runtime != "billing_ingress_runtime" or owner != "billing_functions_owner" or runtime == owner:
         return _erro(
             "As roles de faturamento não correspondem ao contrato operacional.",
@@ -38,7 +38,7 @@ def role_ingresso_check(app_configs, **kwargs):
             "Use roles fixas e distintas para runtime e owner.",
         )
     if modo not in {"web", "ingress", "migration"}:
-        return _erro("BILLING_DATABASE_MODE inválido.", "faturamento.E005", "Use web, ingress ou migration.")
+        return _erro("DATABASE_BILLING_MODE inválido.", "faturamento.E005", "Use web, ingress ou migration.")
     aliases = kwargs.get("databases") or ("default",)
     conexao = connections[aliases[0]] if aliases[0] != "default" else connection
     if conexao.vendor != "postgresql":

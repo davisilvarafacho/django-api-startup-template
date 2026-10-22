@@ -31,7 +31,7 @@ class PwnedPasswordsClient:
     """Consulta o range da API do HaveIBeenPwned para um prefixo de SHA-1."""
 
     def __init__(self, base_url=None, timeout=None):
-        self.base_url = (base_url or settings.HIBP_PASSWORDS_URL).rstrip("/")
+        self.base_url = (base_url or settings.HIBP_PASSWORD_URL).rstrip("/")
         self.timeout = timeout if timeout is not None else settings.HIBP_TIMEOUT_SECONDS
 
     def is_pwned(self, password: str) -> bool:

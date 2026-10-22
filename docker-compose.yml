@@ -6,35 +6,35 @@ x-web-database-environment: &web-database-environment
   DATABASE_PASSWORD: ${DATABASE_PASSWORD:-app-web-dev-only}
   DATABASE_HOST: db
   DATABASE_PORT: "5432"
-  BILLING_INGRESS_DATABASE_USER: ""
-  BILLING_INGRESS_DATABASE_PASSWORD: ""
-  BILLING_INGRESS_WORKER_DATABASE_USER: ""
-  BILLING_INGRESS_WORKER_DATABASE_PASSWORD: ""
-  BILLING_MIGRATION_DATABASE_USER: ""
-  BILLING_MIGRATION_DATABASE_PASSWORD: ""
-  POSTGRES_ADMIN_USER: ""
-  POSTGRES_ADMIN_PASSWORD: ""
+  DATABASE_BILLING_INGRESS_USER: ""
+  DATABASE_BILLING_INGRESS_PASSWORD: ""
+  DATABASE_BILLING_INGRESS_WORKER_USER: ""
+  DATABASE_BILLING_INGRESS_WORKER_PASSWORD: ""
+  DATABASE_BILLING_MIGRATION_USER: ""
+  DATABASE_BILLING_MIGRATION_PASSWORD: ""
+  DATABASE_ADMIN_USER: ""
+  DATABASE_ADMIN_PASSWORD: ""
 
 services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: ${POSTGRES_ADMIN_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-postgres}
+      POSTGRES_USER: ${DATABASE_ADMIN_USER:-postgres}
+      POSTGRES_PASSWORD: ${DATABASE_ADMIN_PASSWORD:-postgres}
       POSTGRES_DB: ${DATABASE_NAME:-base}
-      BILLING_WEB_DATABASE_USER: ${DATABASE_USER:-app_web}
-      BILLING_WEB_DATABASE_PASSWORD: ${DATABASE_PASSWORD:-app-web-dev-only}
-      BILLING_INGRESS_DATABASE_USER: ${BILLING_INGRESS_DATABASE_USER:-billing_ingress_app}
-      BILLING_INGRESS_DATABASE_PASSWORD: ${BILLING_INGRESS_DATABASE_PASSWORD:-billing-ingress-dev-only}
-      BILLING_INGRESS_WORKER_DATABASE_USER: ${BILLING_INGRESS_WORKER_DATABASE_USER:-billing_ingress_worker}
-      BILLING_INGRESS_WORKER_DATABASE_PASSWORD: ${BILLING_INGRESS_WORKER_DATABASE_PASSWORD:-billing-ingress-worker-dev-only}
+      DATABASE_BILLING_WEB_USER: ${DATABASE_USER:-app_web}
+      DATABASE_BILLING_WEB_PASSWORD: ${DATABASE_PASSWORD:-app-web-dev-only}
+      DATABASE_BILLING_INGRESS_USER: ${DATABASE_BILLING_INGRESS_USER:-billing_ingress_app}
+      DATABASE_BILLING_INGRESS_PASSWORD: ${DATABASE_BILLING_INGRESS_PASSWORD:-billing-ingress-dev-only}
+      DATABASE_BILLING_INGRESS_WORKER_USER: ${DATABASE_BILLING_INGRESS_WORKER_USER:-billing_ingress_worker}
+      DATABASE_BILLING_INGRESS_WORKER_PASSWORD: ${DATABASE_BILLING_INGRESS_WORKER_PASSWORD:-billing-ingress-worker-dev-only}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init-billing-roles.sh:/docker-entrypoint-initdb.d/10-billing-roles.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_ADMIN_USER:-postgres}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_ADMIN_USER:-postgres}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -58,7 +58,7 @@ services:
     # Dentro da rede do compose, os serviços resolvem por nome.
     environment:
       <<: *web-database-environment
-      BILLING_DATABASE_MODE: web
+      DATABASE_BILLING_MODE: web
       REDIS_HOST: redis
     # Sem `ports`: quem publica a API é o nginx. Expor o gunicorn direto
     # contornaria o proxy — e com ele os headers X-Forwarded-*, a ACL do
@@ -80,18 +80,18 @@ services:
     build: .
     env_file: .env
     environment:
-      BILLING_DATABASE_MODE: ingress
+      DATABASE_BILLING_MODE: ingress
       DATABASE_NAME: ${DATABASE_NAME:-base}
       DATABASE_HOST: db
       DATABASE_PORT: "5432"
-      DATABASE_USER: ${BILLING_INGRESS_DATABASE_USER:-billing_ingress_app}
-      DATABASE_PASSWORD: ${BILLING_INGRESS_DATABASE_PASSWORD:-billing-ingress-dev-only}
-      BILLING_MIGRATION_DATABASE_USER: ""
-      BILLING_MIGRATION_DATABASE_PASSWORD: ""
-      BILLING_INGRESS_WORKER_DATABASE_USER: ""
-      BILLING_INGRESS_WORKER_DATABASE_PASSWORD: ""
-      POSTGRES_ADMIN_USER: ""
-      POSTGRES_ADMIN_PASSWORD: ""
+      DATABASE_USER: ${DATABASE_BILLING_INGRESS_USER:-billing_ingress_app}
+      DATABASE_PASSWORD: ${DATABASE_BILLING_INGRESS_PASSWORD:-billing-ingress-dev-only}
+      DATABASE_BILLING_MIGRATION_USER: ""
+      DATABASE_BILLING_MIGRATION_PASSWORD: ""
+      DATABASE_BILLING_INGRESS_WORKER_USER: ""
+      DATABASE_BILLING_INGRESS_WORKER_PASSWORD: ""
+      DATABASE_ADMIN_USER: ""
+      DATABASE_ADMIN_PASSWORD: ""
       REDIS_HOST: redis
     expose:
       - "80"
@@ -118,7 +118,7 @@ services:
     env_file: .env
     environment:
       <<: *web-database-environment
-      BILLING_DATABASE_MODE: web
+      DATABASE_BILLING_MODE: web
       REDIS_HOST: redis
     expose:
       - "8001"
@@ -137,7 +137,7 @@ services:
   nginx:
     image: nginx:1.29-alpine
     ports:
-      - "${NGINX_PORT:-8000}:80"
+      - "${NGINX_HOST_PORT:-8000}:80"
     volumes:
       - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./docker/nginx/snippets:/etc/nginx/snippets:ro
@@ -160,7 +160,7 @@ services:
     # publique-a atrás de HTTPS/VPN se precisar acessá-la remotamente.
     image: louislam/uptime-kuma:2
     ports:
-      - "127.0.0.1:${UPTIME_KUMA_PORT:-3002}:3001"
+      - "127.0.0.1:${UPTIME_KUMA_HOST_PORT:-3002}:3001"
     volumes:
       - uptime_kuma_data:/app/data
     depends_on:
@@ -174,7 +174,7 @@ services:
     env_file: .env
     environment:
       <<: *web-database-environment
-      BILLING_DATABASE_MODE: web
+      DATABASE_BILLING_MODE: web
       REDIS_HOST: redis
     depends_on:
       db:
@@ -190,18 +190,18 @@ services:
     command: celery -A api worker -l info -Q billing_ingress
     env_file: .env
     environment:
-      BILLING_DATABASE_MODE: ingress
+      DATABASE_BILLING_MODE: ingress
       DATABASE_NAME: ${DATABASE_NAME:-base}
       DATABASE_HOST: db
       DATABASE_PORT: "5432"
-      DATABASE_USER: ${BILLING_INGRESS_WORKER_DATABASE_USER:-billing_ingress_worker}
-      DATABASE_PASSWORD: ${BILLING_INGRESS_WORKER_DATABASE_PASSWORD:-billing-ingress-worker-dev-only}
-      BILLING_INGRESS_DATABASE_USER: ""
-      BILLING_INGRESS_DATABASE_PASSWORD: ""
-      BILLING_MIGRATION_DATABASE_USER: ""
-      BILLING_MIGRATION_DATABASE_PASSWORD: ""
-      POSTGRES_ADMIN_USER: ""
-      POSTGRES_ADMIN_PASSWORD: ""
+      DATABASE_USER: ${DATABASE_BILLING_INGRESS_WORKER_USER:-billing_ingress_worker}
+      DATABASE_PASSWORD: ${DATABASE_BILLING_INGRESS_WORKER_PASSWORD:-billing-ingress-worker-dev-only}
+      DATABASE_BILLING_INGRESS_USER: ""
+      DATABASE_BILLING_INGRESS_PASSWORD: ""
+      DATABASE_BILLING_MIGRATION_USER: ""
+      DATABASE_BILLING_MIGRATION_PASSWORD: ""
+      DATABASE_ADMIN_USER: ""
+      DATABASE_ADMIN_PASSWORD: ""
       REDIS_HOST: redis
     depends_on:
       db:
@@ -218,7 +218,7 @@ services:
     env_file: .env
     environment:
       <<: *web-database-environment
-      BILLING_DATABASE_MODE: web
+      DATABASE_BILLING_MODE: web
       REDIS_HOST: redis
     depends_on:
       db:

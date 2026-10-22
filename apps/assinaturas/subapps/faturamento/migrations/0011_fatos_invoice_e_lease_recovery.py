@@ -62,7 +62,7 @@ GRANT EXECUTE ON FUNCTION public.faturamento_claim_recovery(integer,timestamptz)
 
 
 def _owner_financeiro() -> str:
-    owner = settings.BILLING_DATABASE_OWNER_ROLE
+    owner = settings.DATABASE_BILLING_OWNER_ROLE
     if owner != "billing_functions_owner":
         raise RuntimeError("Owner financeiro incompatível com o contrato operacional.")
     return owner

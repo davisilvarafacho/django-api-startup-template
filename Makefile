@@ -5,18 +5,18 @@ DATABASE_USER := $(or $(DATABASE_USER),app_web)
 DATABASE_PASSWORD := $(or $(DATABASE_PASSWORD),app-web-dev-only)
 DATABASE_HOST := $(or $(DATABASE_HOST),127.0.0.1)
 DATABASE_PORT := $(or $(DATABASE_PORT),5432)
-TEST_DATABASE_NAME := $(or $(TEST_DATABASE_NAME),base_test)
-POSTGRES_ADMIN_USER := $(or $(POSTGRES_ADMIN_USER),postgres)
-POSTGRES_ADMIN_PASSWORD := $(or $(POSTGRES_ADMIN_PASSWORD),postgres)
-BILLING_MIGRATION_DATABASE_USER := $(or $(BILLING_MIGRATION_DATABASE_USER),$(POSTGRES_ADMIN_USER))
-BILLING_MIGRATION_DATABASE_PASSWORD := $(or $(BILLING_MIGRATION_DATABASE_PASSWORD),$(POSTGRES_ADMIN_PASSWORD))
-BILLING_INGRESS_DATABASE_USER := $(or $(BILLING_INGRESS_DATABASE_USER),billing_ingress_app)
-BILLING_INGRESS_DATABASE_PASSWORD := $(or $(BILLING_INGRESS_DATABASE_PASSWORD),billing-ingress-dev-only)
-BILLING_INGRESS_WORKER_DATABASE_USER := $(or $(BILLING_INGRESS_WORKER_DATABASE_USER),billing_ingress_worker)
-BILLING_INGRESS_WORKER_DATABASE_PASSWORD := $(or $(BILLING_INGRESS_WORKER_DATABASE_PASSWORD),billing-ingress-worker-dev-only)
+DATABASE_TEST_NAME := $(or $(DATABASE_TEST_NAME),base_test)
+DATABASE_ADMIN_USER := $(or $(DATABASE_ADMIN_USER),postgres)
+DATABASE_ADMIN_PASSWORD := $(or $(DATABASE_ADMIN_PASSWORD),postgres)
+DATABASE_BILLING_MIGRATION_USER := $(or $(DATABASE_BILLING_MIGRATION_USER),$(DATABASE_ADMIN_USER))
+DATABASE_BILLING_MIGRATION_PASSWORD := $(or $(DATABASE_BILLING_MIGRATION_PASSWORD),$(DATABASE_ADMIN_PASSWORD))
+DATABASE_BILLING_INGRESS_USER := $(or $(DATABASE_BILLING_INGRESS_USER),billing_ingress_app)
+DATABASE_BILLING_INGRESS_PASSWORD := $(or $(DATABASE_BILLING_INGRESS_PASSWORD),billing-ingress-dev-only)
+DATABASE_BILLING_INGRESS_WORKER_USER := $(or $(DATABASE_BILLING_INGRESS_WORKER_USER),billing_ingress_worker)
+DATABASE_BILLING_INGRESS_WORKER_PASSWORD := $(or $(DATABASE_BILLING_INGRESS_WORKER_PASSWORD),billing-ingress-worker-dev-only)
 BILLING_COMPOSE_FILE := $(or $(BILLING_COMPOSE_FILE),docker-compose.yml)
 
-export DATABASE_NAME DATABASE_USER DATABASE_PASSWORD DATABASE_HOST DATABASE_PORT TEST_DATABASE_NAME
+export DATABASE_NAME DATABASE_USER DATABASE_PASSWORD DATABASE_HOST DATABASE_PORT DATABASE_TEST_NAME
 
 help: ## Lista os comandos disponíveis
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "\033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -80,12 +80,12 @@ dev-obs-down: ## Derruba a observabilidade conectada ao devcontainer
 
 migrate: billing-migrate ## Aplica as migrações com a credencial DDL dedicada
 
-billing-migrate: export BILLING_MIGRATION_DATABASE_USER := $(BILLING_MIGRATION_DATABASE_USER)
-billing-migrate: export BILLING_MIGRATION_DATABASE_PASSWORD := $(BILLING_MIGRATION_DATABASE_PASSWORD)
+billing-migrate: export DATABASE_BILLING_MIGRATION_USER := $(DATABASE_BILLING_MIGRATION_USER)
+billing-migrate: export DATABASE_BILLING_MIGRATION_PASSWORD := $(DATABASE_BILLING_MIGRATION_PASSWORD)
 billing-migrate: ## Aplica migrations com a credencial DDL dedicada
-	@test -n "$$BILLING_MIGRATION_DATABASE_USER" -a -n "$$BILLING_MIGRATION_DATABASE_PASSWORD" || \
+	@test -n "$$DATABASE_BILLING_MIGRATION_USER" -a -n "$$DATABASE_BILLING_MIGRATION_PASSWORD" || \
 		{ echo "Configure a credencial dedicada de migration." >&2; exit 2; }
-	BILLING_DATABASE_MODE=migration uv run python manage.py migrate --database=billing_migration
+	DATABASE_BILLING_MODE=migration uv run python manage.py migrate --database=billing_migration
 
 reset-migrations: ## Planeja o reset; use RESET_MIGRATIONS_ARGS='--apply --confirm-database base' para executar
 	uv run python manage.py reset_migrations $(RESET_MIGRATIONS_ARGS)
@@ -107,28 +107,28 @@ worker: ## Sobe o worker do Celery
 worker-observed: ## Sobe o worker com traces OpenTelemetry habilitados
 	OTEL_ENABLED=True uv run celery -A api worker -l info -Q celery
 
-billing-ingress-worker: export BILLING_INGRESS_WORKER_DATABASE_USER := $(BILLING_INGRESS_WORKER_DATABASE_USER)
-billing-ingress-worker: export BILLING_INGRESS_WORKER_DATABASE_PASSWORD := $(BILLING_INGRESS_WORKER_DATABASE_PASSWORD)
+billing-ingress-worker: export DATABASE_BILLING_INGRESS_WORKER_USER := $(DATABASE_BILLING_INGRESS_WORKER_USER)
+billing-ingress-worker: export DATABASE_BILLING_INGRESS_WORKER_PASSWORD := $(DATABASE_BILLING_INGRESS_WORKER_PASSWORD)
 billing-ingress-worker: ## Sobe o worker global com a credencial dedicada de ingresso
-	BILLING_DATABASE_MODE=ingress \
-	DATABASE_USER="$${BILLING_INGRESS_WORKER_DATABASE_USER}" \
-	DATABASE_PASSWORD="$${BILLING_INGRESS_WORKER_DATABASE_PASSWORD}" \
+	DATABASE_BILLING_MODE=ingress \
+	DATABASE_USER="$${DATABASE_BILLING_INGRESS_WORKER_USER}" \
+	DATABASE_PASSWORD="$${DATABASE_BILLING_INGRESS_WORKER_PASSWORD}" \
 	uv run celery -A api worker -l info -Q billing_ingress
 
 beat: ## Sobe o beat do Celery (agendador via banco)
 	uv run celery -A api beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
 
 test: ## Roda a suíte com cobertura e migrations reais
-	DATABASE_USER="$(POSTGRES_ADMIN_USER)" DATABASE_PASSWORD="$(POSTGRES_ADMIN_PASSWORD)" uv run --group test pytest
+	DATABASE_USER="$(DATABASE_ADMIN_USER)" DATABASE_PASSWORD="$(DATABASE_ADMIN_PASSWORD)" uv run --group test pytest
 
 test-fast: ## Roda a suíte sem testes de integração
-	DATABASE_USER="$(POSTGRES_ADMIN_USER)" DATABASE_PASSWORD="$(POSTGRES_ADMIN_PASSWORD)" uv run --group test pytest -m "not integration"
+	DATABASE_USER="$(DATABASE_ADMIN_USER)" DATABASE_PASSWORD="$(DATABASE_ADMIN_PASSWORD)" uv run --group test pytest -m "not integration"
 
 test-integration: ## Roda somente testes de integração
-	DATABASE_USER="$(POSTGRES_ADMIN_USER)" DATABASE_PASSWORD="$(POSTGRES_ADMIN_PASSWORD)" uv run --group test pytest -m integration
+	DATABASE_USER="$(DATABASE_ADMIN_USER)" DATABASE_PASSWORD="$(DATABASE_ADMIN_PASSWORD)" uv run --group test pytest -m integration
 
 test-redis: ## Roda testes que exigem Redis real
-	DATABASE_USER="$(POSTGRES_ADMIN_USER)" DATABASE_PASSWORD="$(POSTGRES_ADMIN_PASSWORD)" uv run --group test pytest -m redis
+	DATABASE_USER="$(DATABASE_ADMIN_USER)" DATABASE_PASSWORD="$(DATABASE_ADMIN_PASSWORD)" uv run --group test pytest -m redis
 
 lint: ## Checa lint (ruff)
 	uv run ruff check .

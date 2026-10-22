@@ -62,7 +62,7 @@ jobs:
       DATABASE_PASSWORD: postgres
       DATABASE_HOST: 127.0.0.1
       DATABASE_PORT: 5432
-      TEST_DATABASE_NAME: base_test
+      DATABASE_TEST_NAME: base_test
       REDIS_HOST: 127.0.0.1
       REDIS_PORT: 6379
       AUTHORIZATION_REDIS_URL: redis://127.0.0.1:6379/4

@@ -419,8 +419,36 @@ Todo ViewSet herda, de graça:
 
 ## 8. Configuração e ambiente
 
-- Leitura de ambiente **sempre** pelos helpers do projeto: `get_env_var` (com default
-  opcional) e `get_list_from_env` — nunca `os.environ` cru.
+- Leitura de ambiente **sempre** pelos helpers do projeto (`get_env_var`,
+  `get_bool_from_env`, `get_int_from_env`, `get_list_from_env`) — nunca `os.environ`
+  cru. Toda variável lida entra em `EnviromentVar` (`utils/env.py`) e no
+  `.env.example`; um teste falha se as três fontes divergirem.
+- Booleanos aceitam apenas `true`/`false` e usam o sufixo `_ENABLED` com polaridade
+  positiva (exceções: nomes do próprio framework ou fornecedor, como `DJANGO_DEBUG` e
+  `STRIPE_SANDBOX`).
+
+### Nomes de variáveis de ambiente
+
+Nomes em **inglês**, em `MAIÚSCULAS_COM_SUBLINHADO`. O **primeiro termo diz quem é o
+dono** da variável; o que vem depois especifica:
+
+| Primeiro termo | Quando usar | Exemplos |
+|---|---|---|
+| `FRONTEND_` | tudo que aponta para o frontend: `FRONTEND_<DOMÍNIO>_<O QUE É>_URL` | `FRONTEND_AUTH_PASSWORD_RESET_URL`, `FRONTEND_PAYMENT_SUCCESS_URL` |
+| Fornecedor | serviço de terceiro ou ferramenta | `STRIPE_`, `RESEND_`, `BACKBLAZE_`, `SENTRY_`, `POSTHOG_`, `OTEL_` |
+| Tecnologia de infra | conexão, papéis e logins de banco, cache, fila | `DATABASE_<PAPEL>_<CAMPO>` (`DATABASE_BILLING_INGRESS_USER`), `REDIS_`, `CELERY_` |
+| Domínio de negócio | regra ou fluxo da aplicação | `AUTH_`, `ACCOUNT_`, `SUBSCRIPTION_`, `ORGANIZATION_` |
+| Framework | configuração do framework | `DJANGO_`, `MCP_` |
+
+Sufixos: `_URL` para endereço, `_BATCH_SIZE` para lote e **unidade obrigatória** em
+prazo (`_SECONDS`, `_MINUTES`, `_DAYS`); links com token usam
+`<FLUXO>_TOKEN_MAX_AGE_SECONDS`. Porta publicada no host termina em `_HOST_PORT`,
+para não se confundir com porta de conexão (`DATABASE_PORT`).
+
+Ao renomear uma variável, registre o nome antigo em `LEGACY_ENV_VARS`
+(`utils/env.py`): o settings recusa o boot enquanto o ambiente ainda a definir, em vez
+de ignorá-la e cair nos defaults.
+
 - Em settings/configuração, prefira **tuplas** para coleções imutáveis (ex.:
   `ordering = ("-id",)`). Listas de campos mutáveis nos models (ex.:
   `extra_read_only_fields`) permanecem listas.

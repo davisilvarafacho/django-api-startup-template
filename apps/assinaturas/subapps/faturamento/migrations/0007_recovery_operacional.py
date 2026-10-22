@@ -18,7 +18,7 @@ def instalar(apps, schema_editor):
     del apps
     if schema_editor.connection.vendor != "postgresql":
         return
-    owner = settings.BILLING_DATABASE_OWNER_ROLE
+    owner = settings.DATABASE_BILLING_OWNER_ROLE
     if owner != "billing_functions_owner":
         raise RuntimeError("A role operacional de billing não corresponde ao contrato instalado.")
     schema_editor.execute(SQL.replace("__BILLING_OWNER__", owner))
@@ -27,7 +27,7 @@ def instalar(apps, schema_editor):
 def remover(apps, schema_editor):
     del apps
     if schema_editor.connection.vendor == "postgresql":
-        schema_editor.execute(REVERSE_SQL.replace("__BILLING_OWNER__", settings.BILLING_DATABASE_OWNER_ROLE))
+        schema_editor.execute(REVERSE_SQL.replace("__BILLING_OWNER__", settings.DATABASE_BILLING_OWNER_ROLE))
 
 
 class Migration(migrations.Migration):

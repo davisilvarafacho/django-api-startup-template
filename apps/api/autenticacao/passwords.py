@@ -29,7 +29,7 @@ SESSION_TOKEN_TYPES = (TokenType.TOKEN, TokenType.PRE_AUTH, TokenType.RESET_PASS
 
 
 def password_reset_lifetime() -> timedelta:
-    return timedelta(minutes=settings.PASSWORD_RESET_TIMEOUT_MINUTES)
+    return timedelta(seconds=settings.AUTH_PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS)
 
 
 def _reset_token_digest(plain_token):

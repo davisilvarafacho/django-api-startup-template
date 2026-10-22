@@ -151,7 +151,7 @@ class RepositorioEventosPostgres:
     @contextmanager
     def contexto_ingresso(self):
         """Abre a fronteira global antes de qualquer leitura de roteamento."""
-        papel = settings.BILLING_INGRESS_DATABASE_ROLE
+        papel = settings.DATABASE_BILLING_INGRESS_ROLE
         if papel != "billing_ingress_runtime":
             raise RuntimeError("O papel operacional de ingresso não corresponde ao contrato instalado.")
         with transaction.atomic(), connection.cursor() as cursor:

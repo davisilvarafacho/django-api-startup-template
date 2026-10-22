@@ -81,7 +81,7 @@ def test_rotas_autenticadas_desativam_e_agendam_exclusao():
 
 
 @override_settings(
-    ACCOUNT_REACTIVATION_FRONTEND_URL="https://example.com/reativar",
+    FRONTEND_ACCOUNT_REACTIVATION_URL="https://example.com/reativar",
     ACCOUNT_REACTIVATION_TOKEN_MAX_AGE_SECONDS=3600,
 )
 def test_pedido_publico_nao_enumera_e_confirmacao_reativa_sem_restaurar_vinculo(django_capture_on_commit_callbacks):
@@ -112,7 +112,7 @@ def test_pedido_publico_nao_enumera_e_confirmacao_reativa_sem_restaurar_vinculo(
 
 
 @override_settings(
-    ACCOUNT_REACTIVATION_FRONTEND_URL="https://example.com/reativar",
+    FRONTEND_ACCOUNT_REACTIVATION_URL="https://example.com/reativar",
     ACCOUNT_REACTIVATION_TOKEN_MAX_AGE_SECONDS=3600,
     CELERY_BROKER_URL="memory://",
     CELERY_TASK_ALWAYS_EAGER=False,

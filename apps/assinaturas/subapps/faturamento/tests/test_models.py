@@ -130,7 +130,7 @@ def test_modelos_respeitam_fronteira_global_e_tenantizada():
 def test_migration_0009_recusa_owner_security_definer_divergente():
     migration = import_module("apps.assinaturas.subapps.faturamento.migrations.0009_reconcile_first_conclusivo")
     editor = SimpleNamespace(connection=SimpleNamespace(vendor="postgresql"), execute=Mock())
-    with override_settings(BILLING_DATABASE_OWNER_ROLE="owner_incorreto"), pytest.raises(RuntimeError, match="Owner financeiro incompatível"):
+    with override_settings(DATABASE_BILLING_OWNER_ROLE="owner_incorreto"), pytest.raises(RuntimeError, match="Owner financeiro incompatível"):
         migration.instalar(None, editor)
     editor.execute.assert_not_called()
 
@@ -139,7 +139,7 @@ def test_migration_0011_recusa_owner_security_definer_divergente_no_reverse():
     migration = import_module("apps.assinaturas.subapps.faturamento.migrations.0011_fatos_invoice_e_lease_recovery")
     editor = SimpleNamespace(connection=SimpleNamespace(vendor="postgresql"), execute=Mock())
 
-    with override_settings(BILLING_DATABASE_OWNER_ROLE="owner_incorreto"), pytest.raises(RuntimeError, match="Owner financeiro incompatível"):
+    with override_settings(DATABASE_BILLING_OWNER_ROLE="owner_incorreto"), pytest.raises(RuntimeError, match="Owner financeiro incompatível"):
         migration.remover(None, editor)
 
     editor.execute.assert_not_called()
@@ -200,9 +200,9 @@ def test_configuracao_stripe_vem_do_ambiente_e_contexto_ingresso_e_registrado():
 
 
 def test_configuracao_separa_roles_e_credencial_de_migration():
-    assert settings.BILLING_DATABASE_OWNER_ROLE == "billing_functions_owner"
-    assert settings.BILLING_INGRESS_DATABASE_ROLE == "billing_ingress_runtime"
-    assert settings.BILLING_DATABASE_OWNER_ROLE != settings.DATABASES["default"]["USER"]
+    assert settings.DATABASE_BILLING_OWNER_ROLE == "billing_functions_owner"
+    assert settings.DATABASE_BILLING_INGRESS_ROLE == "billing_ingress_runtime"
+    assert settings.DATABASE_BILLING_OWNER_ROLE != settings.DATABASES["default"]["USER"]
 
 
 @pytest.mark.parametrize(
@@ -345,8 +345,8 @@ def test_check_de_credenciais_continua_fail_closed_em_producao():
     with override_settings(
         IN_PRODUCTION=True,
         CHECKOUT_VARIANTS={"stripe": ("gateway", {"api_key": "", "webhook_secret": ""})},
-        BILLING_CHECKOUT_SUCCESS_URL="https://app.example.com/sucesso",
-        BILLING_CHECKOUT_CANCEL_URL="https://app.example.com/cancelado",
+        FRONTEND_PAYMENT_SUCCESS_URL="https://app.example.com/sucesso",
+        FRONTEND_PAYMENT_CANCEL_URL="https://app.example.com/cancelado",
     ):
         resultado = configuracao_faturamento_check(None)
 
@@ -370,7 +370,7 @@ def _mock_role_check(modo, owner_set, runtime_set, *, owner_outbound=False, runt
         ("billing_ingress_runtime", False, False, False, False, False, False, runtime_replication, runtime_set, False, "app_user"),
     ]
     cursor.fetchone.return_value = catalogo
-    settings_patch = override_settings(BILLING_DATABASE_MODE=modo)
+    settings_patch = override_settings(DATABASE_BILLING_MODE=modo)
     settings_patch.enable()
     return cursor_patch, settings_patch
 
@@ -416,7 +416,7 @@ def test_check_migration_permite_catalogo_zero_no_preflight():
 
 
 def test_check_deploy_aceita_catalogo_real_instalado():
-    with override_settings(BILLING_DATABASE_MODE="migration"):
+    with override_settings(DATABASE_BILLING_MODE="migration"):
         assert role_ingresso_check(None) == []
 
 
@@ -458,9 +458,9 @@ def test_paginacao_financeira_aceita_lotes_menores_mas_nunca_ultrapassa_cinquent
 
 
 def test_check_deploy_rejeita_nomes_e_modo_arbitrarios():
-    with override_settings(BILLING_INGRESS_DATABASE_ROLE="role-arbitraria"):
+    with override_settings(DATABASE_BILLING_INGRESS_ROLE="role-arbitraria"):
         assert [erro.id for erro in role_ingresso_check(None)] == ["faturamento.E002"]
-    with override_settings(BILLING_DATABASE_MODE="arbitrario"):
+    with override_settings(DATABASE_BILLING_MODE="arbitrario"):
         assert [erro.id for erro in role_ingresso_check(None)] == ["faturamento.E005"]
 
 
@@ -569,12 +569,12 @@ def test_check_deploy_detecta_drift_real_de_privilegios(aplicar, restaurar):
     with connection.cursor() as cursor:
         cursor.execute(aplicar)
     try:
-        with override_settings(BILLING_DATABASE_MODE="migration"):
+        with override_settings(DATABASE_BILLING_MODE="migration"):
             assert [erro.id for erro in role_ingresso_check(None)] == ["faturamento.E006"]
     finally:
         with connection.cursor() as cursor:
             cursor.execute(restaurar)
-        with override_settings(BILLING_DATABASE_MODE="migration"):
+        with override_settings(DATABASE_BILLING_MODE="migration"):
             assert role_ingresso_check(None) == []
 
 
@@ -676,7 +676,7 @@ def test_processo_http_ingresso_recebe_webhook_assinado_com_login_minimo(papel_h
         "DATABASE_PASSWORD": SENHA_HTTP_INGRESSO,
         "DATABASE_HOST": str(database["HOST"]),
         "DATABASE_PORT": str(database["PORT"]),
-        "BILLING_DATABASE_MODE": "ingress",
+        "DATABASE_BILLING_MODE": "ingress",
         "STRIPE_API_KEY": "sk_test_http_ingress",
         "STRIPE_WEBHOOK_SECRET": webhook_secret,
         "STRIPE_SANDBOX": "True",
@@ -884,7 +884,7 @@ def test_rls_real_ingresso_roteia_uma_vez_e_tenant_isola(papel_ingresso):
             ("faturamento_ingress_evento", True, (False, True)),
             ("faturamento_rotear_evento_destino", True, (False, True)),
         ]
-        assert all(linha[3] == settings.BILLING_DATABASE_OWNER_ROLE for linha in funcoes)
+        assert all(linha[3] == settings.DATABASE_BILLING_OWNER_ROLE for linha in funcoes)
         cursor.execute(
             """SELECT polname, polcmd,
                       ARRAY(SELECT rolname FROM pg_roles WHERE oid=ANY(polroles) ORDER BY rolname)
@@ -894,9 +894,9 @@ def test_rls_real_ingresso_roteia_uma_vez_e_tenant_isola(papel_ingresso):
                ORDER BY polname"""
         )
         assert cursor.fetchall() == [
-            ("evento_interface_definidor_insert", "a", [settings.BILLING_DATABASE_OWNER_ROLE]),
-            ("evento_interface_definidor_select", "r", [settings.BILLING_DATABASE_OWNER_ROLE]),
-            ("evento_interface_definidor_update", "w", [settings.BILLING_DATABASE_OWNER_ROLE]),
+            ("evento_interface_definidor_insert", "a", [settings.DATABASE_BILLING_OWNER_ROLE]),
+            ("evento_interface_definidor_select", "r", [settings.DATABASE_BILLING_OWNER_ROLE]),
+            ("evento_interface_definidor_update", "w", [settings.DATABASE_BILLING_OWNER_ROLE]),
         ]
     conexao = psycopg2.connect(
         dbname=database["NAME"],
@@ -1568,8 +1568,8 @@ def test_migration_initial_zero_aplica_reverte_reaplica_atomicamente(papel_ingre
         executor.migrate([("faturamento", "0001_initial")])
         estado = catalogo()
         assert [(nome, definer, owner, publico) for nome, definer, owner, publico in estado[0] if definer] == [
-            ("faturamento_receber_evento", True, settings.BILLING_DATABASE_OWNER_ROLE, False),
-            ("faturamento_rotear_evento", True, settings.BILLING_DATABASE_OWNER_ROLE, False),
+            ("faturamento_receber_evento", True, settings.DATABASE_BILLING_OWNER_ROLE, False),
+            ("faturamento_rotear_evento", True, settings.DATABASE_BILLING_OWNER_ROLE, False),
         ]
         assert estado[2:] == ([], [])
         executor = MigrationExecutor(connection)
@@ -1613,7 +1613,7 @@ def test_migrations_0009_0011_revertem_com_auditoria_automatica_e_fatos_nulos(pa
     public_tinha_create = False
     try:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT has_schema_privilege(%s,'public','CREATE')", [settings.BILLING_DATABASE_OWNER_ROLE])
+            cursor.execute("SELECT has_schema_privilege(%s,'public','CREATE')", [settings.DATABASE_BILLING_OWNER_ROLE])
             owner_tinha_create = cursor.fetchone()[0]
             cursor.execute("SELECT has_schema_privilege(%s,'public','CREATE')", [PAPEL_MIGRATION])
             migration_tinha_create = cursor.fetchone()[0]
@@ -1626,7 +1626,7 @@ def test_migrations_0009_0011_revertem_com_auditoria_automatica_e_fatos_nulos(pa
             )
             public_tinha_create = cursor.fetchone()[0]
             cursor.execute("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
-            cursor.execute(f"REVOKE CREATE ON SCHEMA public FROM {settings.BILLING_DATABASE_OWNER_ROLE}")
+            cursor.execute(f"REVOKE CREATE ON SCHEMA public FROM {settings.DATABASE_BILLING_OWNER_ROLE}")
             cursor.execute(f"GRANT USAGE,CREATE ON SCHEMA public TO {PAPEL_MIGRATION} WITH GRANT OPTION")
             cursor.execute(f"GRANT SELECT,INSERT,DELETE ON django_migrations TO {PAPEL_MIGRATION}")
             cursor.execute(f"GRANT USAGE,SELECT ON django_migrations_id_seq TO {PAPEL_MIGRATION}")
@@ -1635,7 +1635,7 @@ def test_migrations_0009_0011_revertem_com_auditoria_automatica_e_fatos_nulos(pa
                 cursor.execute("SELECT relowner::regrole::text FROM pg_class WHERE oid=%s::regclass", [tabela])
                 owners_originais[tabela] = cursor.fetchone()[0]
                 cursor.execute(f"ALTER TABLE public.{tabela} OWNER TO {PAPEL_MIGRATION}")
-            cursor.execute("SELECT has_schema_privilege(%s,'public','CREATE')", [settings.BILLING_DATABASE_OWNER_ROLE])
+            cursor.execute("SELECT has_schema_privilege(%s,'public','CREATE')", [settings.DATABASE_BILLING_OWNER_ROLE])
             assert cursor.fetchone() == (False,)
         conexao_migration.settings_dict["NAME"] = connection.settings_dict["NAME"]
 
@@ -1730,7 +1730,7 @@ def test_migrations_0009_0011_revertem_com_auditoria_automatica_e_fatos_nulos(pa
                 "SELECT tgenabled FROM pg_trigger WHERE tgrelid='public.fatura_assinatura'::regclass AND tgname='fatura_assinatura_coerencia'"
             )
             assert cursor.fetchone() == ("O",)
-            cursor.execute("SELECT has_schema_privilege(%s,'public','CREATE')", [settings.BILLING_DATABASE_OWNER_ROLE])
+            cursor.execute("SELECT has_schema_privilege(%s,'public','CREATE')", [settings.DATABASE_BILLING_OWNER_ROLE])
             assert cursor.fetchone() == (False,)
     finally:
         conexao_migration.close()
@@ -1739,10 +1739,10 @@ def test_migrations_0009_0011_revertem_com_auditoria_automatica_e_fatos_nulos(pa
             for tabela, owner in owners_originais.items():
                 cursor.execute(f"ALTER TABLE public.{connection.ops.quote_name(tabela)} OWNER TO {connection.ops.quote_name(owner)}")
             if not owner_tinha_create:
-                cursor.execute(f"REVOKE CREATE ON SCHEMA public FROM {settings.BILLING_DATABASE_OWNER_ROLE}")
+                cursor.execute(f"REVOKE CREATE ON SCHEMA public FROM {settings.DATABASE_BILLING_OWNER_ROLE}")
             if not migration_tinha_create:
                 cursor.execute(f"REVOKE CREATE ON SCHEMA public FROM {PAPEL_MIGRATION}")
             if public_tinha_create:
                 cursor.execute("GRANT CREATE ON SCHEMA public TO PUBLIC")
             if owner_tinha_create:
-                cursor.execute(f"GRANT CREATE ON SCHEMA public TO {settings.BILLING_DATABASE_OWNER_ROLE}")
+                cursor.execute(f"GRANT CREATE ON SCHEMA public TO {settings.DATABASE_BILLING_OWNER_ROLE}")

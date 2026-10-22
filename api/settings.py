@@ -13,9 +13,14 @@ from celery.schedules import crontab
 
 from api.configure_enviroment import configure_enviroment
 from api.logging_config import build_logging
-from utils.env import get_bool_from_env, get_env_var, get_int_from_env, get_list_from_env
+from utils.env import get_bool_from_env, get_env_var, get_int_from_env, get_legacy_env_vars, get_list_from_env
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
+
+if _legacy_env_vars := get_legacy_env_vars():
+    raise ImproperlyConfigured(
+        "Variáveis de ambiente renomeadas; atualize o .env/deploy: " + "; ".join(f"{antigo} -> {novo}" for antigo, novo in _legacy_env_vars.items())
+    )
 
 SECRET_KEY = get_env_var("DJANGO_SECRET_KEY")
 
@@ -29,9 +34,9 @@ IN_TEST = ENVIROMENT == "test"
 
 EXECUTION = get_env_var("DJANGO_EXECUTION_MODE")
 
-BILLING_DATABASE_MODE = get_env_var("BILLING_DATABASE_MODE", "web")
-if BILLING_DATABASE_MODE not in {"web", "ingress", "migration"}:
-    raise ImproperlyConfigured("BILLING_DATABASE_MODE deve ser 'web', 'ingress' ou 'migration'.")
+DATABASE_BILLING_MODE = get_env_var("DATABASE_BILLING_MODE", "web")
+if DATABASE_BILLING_MODE not in {"web", "ingress", "migration"}:
+    raise ImproperlyConfigured("DATABASE_BILLING_MODE deve ser 'web', 'ingress' ou 'migration'.")
 
 # ambiente efetivo usado para carregar apps/middlewares/storages específicos.
 # sempre resolve para um valor suportado por `configure_enviroment`.
@@ -54,7 +59,7 @@ else:
     CONFIG_ENVIRONMENT = "development"
 
 ENV_MIDDLEWARES, ENV_APPS, ENV_STORAGES = configure_enviroment(CONFIG_ENVIRONMENT)
-if BILLING_DATABASE_MODE == "ingress":
+if DATABASE_BILLING_MODE == "ingress":
     # O ingresso público não carrega ferramentas de debug/profiling/log de
     # request, que poderiam persistir o corpo e a assinatura do webhook.
     ENV_MIDDLEWARES = []
@@ -263,7 +268,7 @@ DATABASES = {
         "PASSWORD": get_env_var("DATABASE_PASSWORD"),
         "PORT": get_env_var("DATABASE_PORT"),
         "TEST": {
-            "NAME": get_env_var("TEST_DATABASE_NAME", "base_test"),
+            "NAME": get_env_var("DATABASE_TEST_NAME", "base_test"),
         },
         "CONN_MAX_AGE": 60 * 60 * 3,  # 3 horas
         "CONN_HEALTH_CHECKS": True,
@@ -277,9 +282,9 @@ DATABASES = {
 # As migrations de faturamento transferem funções SECURITY DEFINER para uma
 # role NOLOGIN dedicada. O alias só existe no processo de migration, impedindo
 # que web/worker sequer tenham a credencial DDL disponível.
-_billing_migration_user = get_env_var("BILLING_MIGRATION_DATABASE_USER")
-_billing_migration_password = get_env_var("BILLING_MIGRATION_DATABASE_PASSWORD")
-if BILLING_DATABASE_MODE == "migration" and _billing_migration_user and _billing_migration_password:
+_billing_migration_user = get_env_var("DATABASE_BILLING_MIGRATION_USER")
+_billing_migration_password = get_env_var("DATABASE_BILLING_MIGRATION_PASSWORD")
+if DATABASE_BILLING_MODE == "migration" and _billing_migration_user and _billing_migration_password:
     DATABASES["billing_migration"] = {
         **DATABASES["default"],
         "USER": _billing_migration_user,
@@ -319,34 +324,34 @@ AUTH_PASSWORD_VALIDATORS = [
 # caracteres do SHA-1 sai da aplicação — e falha aberta: indisponibilidade da API
 # não pode impedir alguém de trocar a própria senha.
 HIBP_PASSWORD_CHECK_ENABLED = get_bool_from_env("HIBP_PASSWORD_CHECK_ENABLED", CONFIG_ENVIRONMENT != "test")
-HIBP_PASSWORDS_URL = get_env_var("HIBP_PASSWORDS_URL", "https://api.pwnedpasswords.com/range")
+HIBP_PASSWORD_URL = get_env_var("HIBP_PASSWORD_URL", "https://api.pwnedpasswords.com/range")
 HIBP_TIMEOUT_SECONDS = float(get_env_var("HIBP_TIMEOUT_SECONDS", 2))
 
 # Redefinição de senha. O TTL é curto de propósito: o link chega por e-mail, um
 # canal que a aplicação não controla, então a janela em que uma caixa de entrada
 # comprometida ainda serve precisa ser pequena.
-PASSWORD_RESET_TIMEOUT_MINUTES = int(get_env_var("PASSWORD_RESET_TIMEOUT_MINUTES", 30))
-PASSWORD_RESET_FRONTEND_URL = get_env_var("PASSWORD_RESET_FRONTEND_URL", "http://localhost:3000/redefinir-senha")
+AUTH_PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS = get_int_from_env("AUTH_PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS", 1800)
+FRONTEND_AUTH_PASSWORD_RESET_URL = get_env_var("FRONTEND_AUTH_PASSWORD_RESET_URL", "http://localhost:3000/redefinir-senha")
 
 # Verificação e troca de e-mail usam tokens assinados, sem tabela ou e-mail
 # pendente persistido. Os dois propósitos têm salts e tempos de vida distintos.
-EMAIL_VERIFICATION_TOKEN_MAX_AGE_SECONDS = int(get_env_var("EMAIL_VERIFICATION_TOKEN_MAX_AGE_SECONDS", 60 * 60))
-EMAIL_CHANGE_TOKEN_MAX_AGE_SECONDS = int(get_env_var("EMAIL_CHANGE_TOKEN_MAX_AGE_SECONDS", 60 * 60))
-EMAIL_VERIFICATION_FRONTEND_URL = get_env_var("EMAIL_VERIFICATION_FRONTEND_URL", "http://localhost:3000/verificar-email")
-EMAIL_CHANGE_FRONTEND_URL = get_env_var("EMAIL_CHANGE_FRONTEND_URL", "http://localhost:3000/confirmar-troca-email")
+AUTH_EMAIL_VERIFICATION_TOKEN_MAX_AGE_SECONDS = int(get_env_var("AUTH_EMAIL_VERIFICATION_TOKEN_MAX_AGE_SECONDS", 60 * 60))
+AUTH_EMAIL_CHANGE_TOKEN_MAX_AGE_SECONDS = int(get_env_var("AUTH_EMAIL_CHANGE_TOKEN_MAX_AGE_SECONDS", 60 * 60))
+FRONTEND_AUTH_EMAIL_VERIFICATION_URL = get_env_var("FRONTEND_AUTH_EMAIL_VERIFICATION_URL", "http://localhost:3000/verificar-email")
+FRONTEND_AUTH_EMAIL_CHANGE_URL = get_env_var("FRONTEND_AUTH_EMAIL_CHANGE_URL", "http://localhost:3000/confirmar-troca-email")
 
 # Ciclo da conta: o pedido permanece reversível durante a carência; só a task
 # periódica torna a exclusão definitiva por anonimização.
 ACCOUNT_DELETION_GRACE_DAYS = get_int_from_env("ACCOUNT_DELETION_GRACE_DAYS", 7)
 ACCOUNT_DELETION_BATCH_SIZE = get_int_from_env("ACCOUNT_DELETION_BATCH_SIZE", 100)
 ACCOUNT_REACTIVATION_TOKEN_MAX_AGE_SECONDS = get_int_from_env("ACCOUNT_REACTIVATION_TOKEN_MAX_AGE_SECONDS", 60 * 60)
-ACCOUNT_REACTIVATION_FRONTEND_URL = get_env_var("ACCOUNT_REACTIVATION_FRONTEND_URL", "http://localhost:3000/reativar-conta")
+FRONTEND_ACCOUNT_REACTIVATION_URL = get_env_var("FRONTEND_ACCOUNT_REACTIVATION_URL", "http://localhost:3000/reativar-conta")
 
 # O catálogo e o contrato real são ligados ao orquestrador de onboarding na
 # Task 9. Até lá, estes valores alimentam apenas a seam tipada do caso de uso.
-ASSINATURAS_ONBOARDING_MODO = get_env_var("ASSINATURAS_ONBOARDING_MODO", "gratuito")
-ASSINATURAS_ONBOARDING_PLANO = get_env_var("ASSINATURAS_ONBOARDING_PLANO", "gratuito")
-ASSINATURAS_ONBOARDING_PERIODICIDADE = get_env_var("ASSINATURAS_ONBOARDING_PERIODICIDADE", "mensal")
+SUBSCRIPTION_ONBOARDING_MODE = get_env_var("SUBSCRIPTION_ONBOARDING_MODE", "gratuito")
+SUBSCRIPTION_ONBOARDING_PLAN = get_env_var("SUBSCRIPTION_ONBOARDING_PLAN", "gratuito")
+SUBSCRIPTION_ONBOARDING_BILLING_PERIOD = get_env_var("SUBSCRIPTION_ONBOARDING_BILLING_PERIOD", "mensal")
 ORGANIZATION_CLOSURE_BATCH_SIZE = get_int_from_env("ORGANIZATION_CLOSURE_BATCH_SIZE", 100)
 SUBSCRIPTION_TASK_BATCH_SIZE = get_int_from_env("SUBSCRIPTION_TASK_BATCH_SIZE", 100)
 
@@ -442,11 +447,11 @@ CHECKOUT_VARIANTS = {
     )
 }
 _BILLING_LOCAL_URL = "http://localhost:3000/assinatura/checkout"
-BILLING_CHECKOUT_SUCCESS_URL = get_env_var("BILLING_CHECKOUT_SUCCESS_URL", "" if IN_PRODUCTION else f"{_BILLING_LOCAL_URL}/sucesso")
-BILLING_CHECKOUT_CANCEL_URL = get_env_var("BILLING_CHECKOUT_CANCEL_URL", "" if IN_PRODUCTION else f"{_BILLING_LOCAL_URL}/cancelado")
-BILLING_INGRESS_DATABASE_ROLE = get_env_var("BILLING_INGRESS_DATABASE_ROLE", "billing_ingress_runtime")
-BILLING_DATABASE_OWNER_ROLE = get_env_var("BILLING_DATABASE_OWNER_ROLE", "billing_functions_owner")
-if BILLING_DATABASE_MODE == "ingress":
+FRONTEND_PAYMENT_SUCCESS_URL = get_env_var("FRONTEND_PAYMENT_SUCCESS_URL", "" if IN_PRODUCTION else f"{_BILLING_LOCAL_URL}/sucesso")
+FRONTEND_PAYMENT_CANCEL_URL = get_env_var("FRONTEND_PAYMENT_CANCEL_URL", "" if IN_PRODUCTION else f"{_BILLING_LOCAL_URL}/cancelado")
+DATABASE_BILLING_INGRESS_ROLE = get_env_var("DATABASE_BILLING_INGRESS_ROLE", "billing_ingress_runtime")
+DATABASE_BILLING_OWNER_ROLE = get_env_var("DATABASE_BILLING_OWNER_ROLE", "billing_functions_owner")
+if DATABASE_BILLING_MODE == "ingress":
     # O processo exposto apenas ao endpoint público de webhook não carrega o
     # restante da superfície HTTP, mesmo se o proxy for contornado na rede.
     ROOT_URLCONF = "api.billing_ingress_urls"
@@ -498,7 +503,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # PostHog
 POSTHOG_PROJECT_TOKEN = get_env_var("POSTHOG_PROJECT_TOKEN")
 POSTHOG_HOST = get_env_var("POSTHOG_HOST", "https://us.i.posthog.com")
-POSTHOG_DISABLED = get_bool_from_env("POSTHOG_DISABLED", False)
+POSTHOG_ENABLED = get_bool_from_env("POSTHOG_ENABLED", True)
 
 
 RESEND_API_KEY = get_env_var("RESEND_API_KEY")

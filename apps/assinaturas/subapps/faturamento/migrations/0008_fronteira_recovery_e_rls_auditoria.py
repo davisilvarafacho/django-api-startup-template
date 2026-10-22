@@ -70,7 +70,7 @@ ALTER TABLE public.reabertura_evento_cobranca DISABLE ROW LEVEL SECURITY;
 def instalar(apps, schema_editor):
     del apps
     if schema_editor.connection.vendor == "postgresql":
-        owner = settings.BILLING_DATABASE_OWNER_ROLE
+        owner = settings.DATABASE_BILLING_OWNER_ROLE
         if owner != "billing_functions_owner":
             raise RuntimeError("Owner financeiro incompatível com o contrato operacional.")
         schema_editor.execute(SQL.replace("__BILLING_OWNER__", owner))

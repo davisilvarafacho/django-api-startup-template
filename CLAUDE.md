@@ -37,7 +37,7 @@ prevalecem. O `.env` não supre isso sob pytest: `load_dotenv()` roda em
 
 Para executar testes, siga `docs/how-to/fluxo-de-desenvolvimento.md` e
 `CONTRIBUTING.md`. A suíte normal aplica migrations reais; use os defaults do
-Makefile ou declare `DATABASE_*` e `TEST_DATABASE_NAME` explicitamente quando
+Makefile ou declare `DATABASE_*` e `DATABASE_TEST_NAME` explicitamente quando
 rodar pytest fora dele.
 
 Dependências: `uv add <pacote>` / `uv remove <pacote>`; `pyproject.toml` e `uv.lock`

@@ -458,7 +458,7 @@ Indisponibilidade de um serviço externo não pode impedir alguém de trocar a
 própria senha; o risco de aceitar uma senha vazada nessa janela é menor que o de
 travar a recuperação de conta.
 
-Controle por `HIBP_PASSWORD_CHECK_ENABLED`, `HIBP_PASSWORDS_URL` e
+Controle por `HIBP_PASSWORD_CHECK_ENABLED`, `HIBP_PASSWORD_URL` e
 `HIBP_TIMEOUT_SECONDS`. Em teste a checagem vem desligada, para que a suíte
 nunca dependa de rede.
 
@@ -479,8 +479,8 @@ intercepte o e-mail depois.
 
 Só um reset fica válido por vez: emitir um novo revoga os anteriores, porque
 dois links ativos dobram a janela de exposição. O TTL padrão é de 30 minutos
-(`PASSWORD_RESET_TIMEOUT_MINUTES`) e o link aponta para
-`PASSWORD_RESET_FRONTEND_URL?token=<plain>`.
+(`AUTH_PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS`, 1800 s) e o link aponta para
+`FRONTEND_AUTH_PASSWORD_RESET_URL?token=<plain>`.
 
 O `confirm` **não exige MFA**. Quem perdeu a senha frequentemente perdeu o
 segundo fator junto, e exigir os dois transformaria o reset num beco sem saída
@@ -570,4 +570,4 @@ contagem: token, e-mail antigo, e-mail substituto e identificadores externos nã
 são registrados.
 
 Além do prazo, do lote e do TTL, configure
-`ACCOUNT_REACTIVATION_FRONTEND_URL` para a página que recebe `?token=`.
+`FRONTEND_ACCOUNT_REACTIVATION_URL` para a página que recebe `?token=`.

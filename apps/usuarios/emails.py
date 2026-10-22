@@ -55,8 +55,8 @@ def carregar_token_email(token: str, *, purpose: str) -> SignedEmailToken | None
     if purpose not in _SALTS:
         raise ValueError("Finalidade de token de e-mail inválida.")
     max_ages = {
-        EMAIL_VERIFICATION_PURPOSE: settings.EMAIL_VERIFICATION_TOKEN_MAX_AGE_SECONDS,
-        EMAIL_CHANGE_PURPOSE: settings.EMAIL_CHANGE_TOKEN_MAX_AGE_SECONDS,
+        EMAIL_VERIFICATION_PURPOSE: settings.AUTH_EMAIL_VERIFICATION_TOKEN_MAX_AGE_SECONDS,
+        EMAIL_CHANGE_PURPOSE: settings.AUTH_EMAIL_CHANGE_TOKEN_MAX_AGE_SECONDS,
         ACCOUNT_REACTIVATION_PURPOSE: settings.ACCOUNT_REACTIVATION_TOKEN_MAX_AGE_SECONDS,
     }
     max_age = max_ages[purpose]

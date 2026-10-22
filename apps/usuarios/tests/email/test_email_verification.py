@@ -67,7 +67,7 @@ def test_token_de_verificacao_nao_aceita_email_alterado(api_client, usuario):
 
 def test_token_de_verificacao_expirado_tem_erro_publico_uniforme(api_client, usuario, settings):
     token = emitir_token_verificacao(usuario)
-    settings.EMAIL_VERIFICATION_TOKEN_MAX_AGE_SECONDS = -1
+    settings.AUTH_EMAIL_VERIFICATION_TOKEN_MAX_AGE_SECONDS = -1
 
     response = api_client.post(VERIFY_URL, {"token": token}, format="json")
 

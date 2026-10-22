@@ -13,10 +13,10 @@ uv run python manage.py seed_demo
 
 O bootstrap de billing é idempotente e precisa ser executado mesmo quando o
 volume PostgreSQL já existia antes dos logins dedicados. Nesse caso, faça e
-teste um backup antes. Em `.env`, `POSTGRES_ADMIN_USER` deve identificar o
+teste um backup antes. Em `.env`, `DATABASE_ADMIN_USER` deve identificar o
 administrador que criou o volume; `DATABASE_USER`,
-`BILLING_INGRESS_DATABASE_USER` e
-`BILLING_INGRESS_WORKER_DATABASE_USER` devem continuar distintos entre si e do
+`DATABASE_BILLING_INGRESS_USER` e
+`DATABASE_BILLING_INGRESS_WORKER_USER` devem continuar distintos entre si e do
 administrador.
 
 O comando cria:

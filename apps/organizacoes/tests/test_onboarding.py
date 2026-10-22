@@ -110,9 +110,9 @@ def test_onboarding_copia_email_e_cria_proprietario_e_contrato_sob_rls(settings,
     from apps.organizacoes.onboarding import OrganizationOnboarding
     from apps.workspaces.models import VinculoWorkspace, Workspace
 
-    settings.ASSINATURAS_ONBOARDING_MODO = modo
-    settings.ASSINATURAS_ONBOARDING_PLANO = "inicial"
-    settings.ASSINATURAS_ONBOARDING_PERIODICIDADE = "mensal"
+    settings.SUBSCRIPTION_ONBOARDING_MODE = modo
+    settings.SUBSCRIPTION_ONBOARDING_PLAN = "inicial"
+    settings.SUBSCRIPTION_ONBOARDING_BILLING_PERIOD = "mensal"
     usuario = criar_usuario(email="owner@example.com", email_verificado_em=timezone.now())
 
     organizacao = OrganizationOnboarding.criar(
@@ -158,9 +158,9 @@ def test_onboarding_reverte_organizacao_e_vinculo_quando_colaborador_falha(monke
     from apps.organizacoes.memberships import Vinculos
     from apps.organizacoes.organizations import Organizacoes
 
-    settings.ASSINATURAS_ONBOARDING_MODO = "gratuito"
-    settings.ASSINATURAS_ONBOARDING_PLANO = "inicial"
-    settings.ASSINATURAS_ONBOARDING_PERIODICIDADE = "mensal"
+    settings.SUBSCRIPTION_ONBOARDING_MODE = "gratuito"
+    settings.SUBSCRIPTION_ONBOARDING_PLAN = "inicial"
+    settings.SUBSCRIPTION_ONBOARDING_BILLING_PERIOD = "mensal"
     usuario = criar_usuario(email_verificado_em=timezone.now())
 
     if colaborador == "contas":

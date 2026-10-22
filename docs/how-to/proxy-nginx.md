@@ -149,7 +149,7 @@ na validação da configuração e falharia fora da rede do compose.
 Alterações em `nginx.conf` (mount de arquivo, não de diretório) podem exigir
 `docker compose up -d --force-recreate nginx` em vez de `make nginx-reload`.
 
-`NGINX_PORT` muda a porta publicada no host; ao alterá-la, ajuste também
+`NGINX_HOST_PORT` muda a porta publicada no host; ao alterá-la, ajuste também
 `DJANGO_CSRF_TRUSTED_ORIGINS`.
 
 No virtual host MCP, `Host` e `X-Forwarded-Host` usam `$http_host`, preservando

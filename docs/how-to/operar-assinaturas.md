@@ -26,9 +26,9 @@ executa `CREATE ROLE`, portanto o contrato funciona em PostgreSQL gerenciado.
 Separe quatro logins, todos distintos entre si e das duas roles `NOLOGIN`:
 
 - `DATABASE_USER` para web, MCP, Beat e o worker geral;
-- `BILLING_INGRESS_DATABASE_USER` somente para o processo HTTP de webhook;
-- `BILLING_INGRESS_WORKER_DATABASE_USER` para o worker da fila global;
-- `BILLING_MIGRATION_DATABASE_USER` somente para DDL.
+- `DATABASE_BILLING_INGRESS_USER` somente para o processo HTTP de webhook;
+- `DATABASE_BILLING_INGRESS_WORKER_USER` para o worker da fila global;
+- `DATABASE_BILLING_MIGRATION_USER` somente para DDL.
 
 O login de migration recebe `billing_functions_owner` com `SET OPTION`; os
 dois logins de ingresso recebem apenas `billing_ingress_runtime`. Em PostgreSQL
@@ -49,7 +49,7 @@ o segredo ao final.
 
 Não conceda `billing_functions_owner` ao web ou a workers, nem
 `billing_ingress_runtime` ao web. Trocar somente
-`BILLING_DATABASE_MODE=ingress` em um processo que ainda usa `DATABASE_USER`
+`DATABASE_BILLING_MODE=ingress` em um processo que ainda usa `DATABASE_USER`
 não cria isolamento e não é um procedimento de deploy válido. A role owner
 recebe apenas os privilégios internos necessários às quatro funções e às
 policies dedicadas. A role runtime recebe `USAGE` no schema, `EXECUTE` nas
@@ -69,7 +69,7 @@ Todas pertencem a `billing_functions_owner`, fixam
 `billing_functions_owner`. Os nomes antigos `faturamento_receber_evento` e
 `faturamento_rotear_evento` não pertencem ao catálogo atual.
 
-Configure `BILLING_DATABASE_MODE=web`, `ingress` ou `migration` em cada
+Configure `DATABASE_BILLING_MODE=web`, `ingress` ou `migration` em cada
 processo. O check de deploy prova atributos, memberships transitivas, owner das
 quatro funções e o conjunto exato de policies por tabela: web não pode assumir
 nenhuma role e ingresso pode assumir runtime, mas nunca owner. No modo
@@ -86,8 +86,8 @@ docker compose exec -T billing_ingress_worker python manage.py check --deploy --
 
 Na stack Compose, `web`, MCP, Beat e o worker da fila `celery` usam
 `DATABASE_USER`; o HTTP `billing_ingress` usa
-`BILLING_INGRESS_DATABASE_USER`, enquanto o worker da
-fila `billing_ingress` usa `BILLING_INGRESS_WORKER_DATABASE_USER`. O Nginx é o único
+`DATABASE_BILLING_INGRESS_USER`, enquanto o worker da
+fila `billing_ingress` usa `DATABASE_BILLING_INGRESS_WORKER_USER`. O Nginx é o único
 serviço publicado e envia exclusivamente o prefixo
 `/faturamento/webhooks/` ao HTTP ingress. As variáveis da credencial ingress e
 da credencial DDL, assim como as credenciais administrativas locais, são
@@ -101,20 +101,20 @@ somente quando o PostgreSQL inicializa um volume vazio. Para reaplicá-lo com
 segurança em um volume local existente:
 
 1. faça um backup e teste sua restauração;
-2. em `.env`, configure `POSTGRES_ADMIN_USER` com o login administrativo que
+2. em `.env`, configure `DATABASE_ADMIN_USER` com o login administrativo que
    criou o volume e mantenha os três logins permanentes da aplicação distintos
    dele e entre si;
 3. execute `make billing-bootstrap` antes de `make billing-migrate`.
 
-Mudar `POSTGRES_ADMIN_USER` no Compose não renomeia o principal já gravado no
+Mudar `DATABASE_ADMIN_USER` no Compose não renomeia o principal já gravado no
 volume. O alvo reconcilia o container `db` com a configuração atual, aguarda o
 healthcheck e executa o script montado dentro dele; as senhas vêm do ambiente do
 container e não da linha de comando. Criações condicionais e grants repetíveis
 tornam segura a reexecução do bootstrap. Localmente, o administrador também é
 a credencial efêmera de migration e nunca é injetado nos processos web ou
 workers. O Compose carrega `.env`, mas o Make não o importa: se o administrador
-do volume não for o default local, exporte `POSTGRES_ADMIN_USER` e
-`POSTGRES_ADMIN_PASSWORD` no ambiente do `make` a partir do gerenciador de
+do volume não for o default local, exporte `DATABASE_ADMIN_USER` e
+`DATABASE_ADMIN_PASSWORD` no ambiente do `make` a partir do gerenciador de
 segredos antes de executar a migration. Para o volume do Dev Container, rode no
 host:
 
@@ -128,7 +128,7 @@ plataforma; não copie credenciais locais nem execute o container de bootstrap
 contra produção.
 
 Não coloque senhas na linha de comando; injete
-`BILLING_MIGRATION_DATABASE_PASSWORD` pelo gerenciador de segredos. O tipo
+`DATABASE_BILLING_MIGRATION_PASSWORD` pelo gerenciador de segredos. O tipo
 normalizado de evento segue a gramática
 `^[a-z][a-z0-9]*([._][a-z0-9]+)*$`, com no máximo 100 caracteres. E-mail,
 uppercase, whitespace, controles, hífen e segmentos vazios são rejeitados no
@@ -161,7 +161,7 @@ enquanto ele falhar. O middleware responde
 
 Injete `STRIPE_API_KEY` e `STRIPE_WEBHOOK_SECRET` pelo gerenciador de segredos.
 Use `STRIPE_SANDBOX=True` somente com chave de teste/sandbox; em produção use
-`False`. `BILLING_CHECKOUT_SUCCESS_URL` e `BILLING_CHECKOUT_CANCEL_URL` precisam
+`False`. `FRONTEND_PAYMENT_SUCCESS_URL` e `FRONTEND_PAYMENT_CANCEL_URL` precisam
 ser HTTPS em produção. Não registre os valores dessas variáveis em arquivos,
 logs, tickets ou relatórios.
 
@@ -345,7 +345,7 @@ restauração e inspecione o grafo efetivamente aplicado com
 e registre cada alvo como `app_label.nome_completo`, obtido do artefato exato
 que será restaurado. Não copie um número isolado nem presuma que a migration
 folha é igual entre releases. Execute qualquer reversão somente com
-`BILLING_DATABASE_MODE=migration`, `--database=billing_migration`, o app label
+`DATABASE_BILLING_MODE=migration`, `--database=billing_migration`, o app label
 e o nome completo aprovados no plano.
 
 Rollback de banco é uma manutenção separada e potencialmente destrutiva.

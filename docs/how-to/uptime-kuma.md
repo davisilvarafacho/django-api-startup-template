@@ -35,7 +35,7 @@ Docker `uptime_kuma_data`, portanto sobrevivem à recriação do container.
 Por padrão a interface só aceita conexões da própria máquina (`127.0.0.1`).
 Não a exponha diretamente na internet: se o acesso remoto for necessário,
 coloque-a atrás de HTTPS com autenticação adicional, ou acesse-a via VPN/túnel
-SSH. Para mudar a porta local, defina `UPTIME_KUMA_PORT` no `.env` e recrie o
+SSH. Para mudar a porta local, defina `UPTIME_KUMA_HOST_PORT` no `.env` e recrie o
 serviço:
 
 ```bash

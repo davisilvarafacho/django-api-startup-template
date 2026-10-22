@@ -62,9 +62,9 @@ class AssinaturasHTTP:
 def _colaboradores_comerciais(monkeypatch, settings):
     from apps.organizacoes import onboarding, views
 
-    settings.ASSINATURAS_ONBOARDING_MODO = "gratuito"
-    settings.ASSINATURAS_ONBOARDING_PLANO = "gratuito"
-    settings.ASSINATURAS_ONBOARDING_PERIODICIDADE = "mensal"
+    settings.SUBSCRIPTION_ONBOARDING_MODE = "gratuito"
+    settings.SUBSCRIPTION_ONBOARDING_PLAN = "gratuito"
+    settings.SUBSCRIPTION_ONBOARDING_BILLING_PERIOD = "mensal"
     AssinaturasHTTP.termo = TermoEncerramentoAgendado(agendado_para=timezone.now() + timedelta(days=30))
     AssinaturasHTTP.contratos_criados.clear()
     AssinaturasHTTP.encerramentos.clear()

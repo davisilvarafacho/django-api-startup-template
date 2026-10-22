@@ -46,7 +46,7 @@ def send_account_reactivation(user_id: int):
 
     try:
         token = emitir_token_reativacao(conta)
-        link = f"{settings.ACCOUNT_REACTIVATION_FRONTEND_URL}?token={token}"
+        link = f"{settings.FRONTEND_ACCOUNT_REACTIVATION_URL}?token={token}"
         send_mail(
             "Reative sua conta",
             f"Para reativar sua conta, acesse: {link}",

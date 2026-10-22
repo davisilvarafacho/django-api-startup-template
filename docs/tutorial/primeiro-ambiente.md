@@ -10,11 +10,11 @@
 
 `billing-bootstrap` pode ser repetido e também atualiza um volume criado por
 uma versão antiga do template. Se o volume já tiver dados, faça e teste um
-backup antes. Configure `POSTGRES_ADMIN_USER` com o administrador que criou
+backup antes. Configure `DATABASE_ADMIN_USER` com o administrador que criou
 esse volume e mantenha distintos os logins `DATABASE_USER`,
-`BILLING_INGRESS_DATABASE_USER` e
-`BILLING_INGRESS_WORKER_DATABASE_USER`; mudar apenas
-`BILLING_DATABASE_MODE` não troca a credencial do processo.
+`DATABASE_BILLING_INGRESS_USER` e
+`DATABASE_BILLING_INGRESS_WORKER_USER`; mudar apenas
+`DATABASE_BILLING_MODE` não troca a credencial do processo.
 
 Use `demo@example.com` / `demo123456` no login e envie
 `X-Organization: demo` nas rotas isoladas por tenant.

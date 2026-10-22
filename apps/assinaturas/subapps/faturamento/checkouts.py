@@ -245,7 +245,7 @@ class CheckoutsCobranca:
             if criacao.finalidade == FinalidadeCheckout.FORMA_PAGAMENTO:
                 if not client.capabilities.checkouts.supports_setup:
                     raise CheckoutIndisponivel("A variante não declara capability de setup de forma de pagamento.")
-                request = SetupCreate(success_url=settings.BILLING_CHECKOUT_SUCCESS_URL, cancel_url=settings.BILLING_CHECKOUT_CANCEL_URL)
+                request = SetupCreate(success_url=settings.FRONTEND_PAYMENT_SUCCESS_URL, cancel_url=settings.FRONTEND_PAYMENT_CANCEL_URL)
             else:
                 items = cls._itens(client, criacao.variante, preco, valores, moeda)
                 cycle = BillingCycle.MONTHLY if valores["periodicidade"] == Periodicidade.MENSAL else BillingCycle.YEARLY
@@ -253,8 +253,8 @@ class CheckoutsCobranca:
                     raise CheckoutIndisponivel("O gateway não suporta a periodicidade solicitada.")
                 request = CheckoutCreate(
                     items=items,
-                    success_url=settings.BILLING_CHECKOUT_SUCCESS_URL,
-                    cancel_url=settings.BILLING_CHECKOUT_CANCEL_URL,
+                    success_url=settings.FRONTEND_PAYMENT_SUCCESS_URL,
+                    cancel_url=settings.FRONTEND_PAYMENT_CANCEL_URL,
                     mode=CheckoutMode.SUBSCRIPTION,
                     recurrence=Recurrence(cycle=cycle),
                 )

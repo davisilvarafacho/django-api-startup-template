@@ -64,8 +64,8 @@ def send_password_reset(user_pk: int):
         # A conta foi excluída entre o pedido e a emissão: não há link a enviar.
         return
 
-    link = f"{settings.PASSWORD_RESET_FRONTEND_URL}?token={issued.plain_token}"
-    minutos = settings.PASSWORD_RESET_TIMEOUT_MINUTES
+    link = f"{settings.FRONTEND_AUTH_PASSWORD_RESET_URL}?token={issued.plain_token}"
+    minutos = settings.AUTH_PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS // 60
 
     corpo = (
         f"Para escolher uma nova senha, acesse: {link}\n\n"
@@ -115,7 +115,7 @@ def send_email_verification(token: str):
     if signed_token is None:
         return
     try:
-        link = f"{settings.EMAIL_VERIFICATION_FRONTEND_URL}?token={token}"
+        link = f"{settings.FRONTEND_AUTH_EMAIL_VERIFICATION_URL}?token={token}"
         send_mail("Verifique seu e-mail", f"Para verificar seu e-mail, acesse: {link}", settings.DEFAULT_FROM_EMAIL, [signed_token.email])
     except Exception:
         logger.exception("Falha ao enviar verificação de e-mail", extra={"user_id": signed_token.usuario_id})
@@ -130,7 +130,7 @@ def send_email_change_confirmation(token: str):
     if signed_token is None:
         return
     try:
-        link = f"{settings.EMAIL_CHANGE_FRONTEND_URL}?token={token}"
+        link = f"{settings.FRONTEND_AUTH_EMAIL_CHANGE_URL}?token={token}"
         send_mail("Confirme seu novo e-mail", f"Para confirmar seu novo e-mail, acesse: {link}", settings.DEFAULT_FROM_EMAIL, [signed_token.email])
     except Exception:
         logger.exception("Falha ao enviar confirmação de troca de e-mail", extra={"user_id": signed_token.usuario_id})

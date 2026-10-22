@@ -122,7 +122,7 @@ def test_request_emite_token_com_ttl_de_30_minutos(api_client, usuario, settings
     api_client.post(URL_REQUEST, {"email": usuario.email}, format="json")
 
     token = AuthToken.objects.get(responsavel=usuario, type=TokenType.RESET_PASSWORD)
-    esperado = timezone.now() + timedelta(minutes=settings.PASSWORD_RESET_TIMEOUT_MINUTES)
+    esperado = timezone.now() + timedelta(seconds=settings.AUTH_PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS)
     assert abs((token.expiry - esperado).total_seconds()) < 60
 
 

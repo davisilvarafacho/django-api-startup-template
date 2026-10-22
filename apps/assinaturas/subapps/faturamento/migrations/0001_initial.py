@@ -163,8 +163,8 @@ def preflight(apps, schema_editor):
     del apps
     if schema_editor.connection.vendor != "postgresql":
         return
-    owner = settings.BILLING_DATABASE_OWNER_ROLE
-    runtime = settings.BILLING_INGRESS_DATABASE_ROLE
+    owner = settings.DATABASE_BILLING_OWNER_ROLE
+    runtime = settings.DATABASE_BILLING_INGRESS_ROLE
     with schema_editor.connection.cursor() as cursor:
         cursor.execute(
             """SELECT rolname,rolcanlogin,rolsuper,rolbypassrls,rolcreaterole,rolcreatedb,rolinherit,rolreplication,
@@ -183,14 +183,14 @@ def preflight(apps, schema_editor):
 def instalar(apps, schema_editor):
     del apps
     if schema_editor.connection.vendor == "postgresql":
-        owner = schema_editor.connection.ops.quote_name(settings.BILLING_DATABASE_OWNER_ROLE)
+        owner = schema_editor.connection.ops.quote_name(settings.DATABASE_BILLING_OWNER_ROLE)
         schema_editor.execute(SQL.replace("__BILLING_OWNER__", owner))
 
 
 def remover(apps, schema_editor):
     del apps
     if schema_editor.connection.vendor == "postgresql":
-        owner = schema_editor.connection.ops.quote_name(settings.BILLING_DATABASE_OWNER_ROLE)
+        owner = schema_editor.connection.ops.quote_name(settings.DATABASE_BILLING_OWNER_ROLE)
         schema_editor.execute(REVERSE_SQL.replace("__BILLING_OWNER__", owner))
 
 

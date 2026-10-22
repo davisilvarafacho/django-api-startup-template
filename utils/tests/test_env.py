@@ -8,7 +8,15 @@ from typing import get_args
 
 import pytest
 
-from utils.env import EnviromentVar, get_bool_from_env, get_env_var, get_int_from_env, get_list_from_env
+from utils.env import (
+    LEGACY_ENV_VARS,
+    EnviromentVar,
+    get_bool_from_env,
+    get_env_var,
+    get_int_from_env,
+    get_legacy_env_vars,
+    get_list_from_env,
+)
 
 
 def test_get_list_from_env(monkeypatch):
@@ -108,3 +116,30 @@ def test_toda_variavel_declarada_esta_documentada_no_env_example():
     exemplo = (_RAIZ / ".env.example").read_text(encoding="utf-8")
     documentadas = set(re.findall(r"^#?\s*([A-Z][A-Z0-9_]+)=", exemplo, flags=re.MULTILINE))
     assert set(get_args(EnviromentVar)) - documentadas == set(), "declaradas mas ausentes de .env.example"
+
+
+def test_get_legacy_env_vars_aponta_o_novo_nome(monkeypatch):
+    monkeypatch.setenv("POSTGRES_ADMIN_USER", "postgres")
+    monkeypatch.setenv("PASSWORD_RESET_TIMEOUT_MINUTES", "30")
+    achadas = get_legacy_env_vars()
+    assert achadas["POSTGRES_ADMIN_USER"] == "DATABASE_ADMIN_USER"
+    assert achadas["PASSWORD_RESET_TIMEOUT_MINUTES"].startswith("AUTH_PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS (")
+
+
+def test_get_legacy_env_vars_vazio_quando_so_ha_nomes_novos(monkeypatch):
+    for antigo in LEGACY_ENV_VARS:
+        monkeypatch.delenv(antigo, raising=False)
+    assert get_legacy_env_vars() == {}
+
+
+def test_mapa_legado_aponta_para_nomes_documentados_e_nenhum_antigo_segue_declarado():
+    exemplo = (_RAIZ / ".env.example").read_text(encoding="utf-8")
+    documentadas = set(re.findall(r"^#?\s*([A-Z][A-Z0-9_]+)=", exemplo, flags=re.MULTILINE))
+    assert set(LEGACY_ENV_VARS.values()) - documentadas == set(), "novo nome ausente de .env.example"
+    assert set(LEGACY_ENV_VARS) & set(get_args(EnviromentVar)) == set(), "nome antigo ainda declarado em EnviromentVar"
+
+
+def test_env_example_nao_traz_nomes_antigos():
+    exemplo = (_RAIZ / ".env.example").read_text(encoding="utf-8")
+    documentadas = set(re.findall(r"^#?\s*([A-Z][A-Z0-9_]+)=", exemplo, flags=re.MULTILINE))
+    assert documentadas & set(LEGACY_ENV_VARS) == set()

@@ -11,7 +11,7 @@ No `.env`:
 ```bash
 POSTHOG_PROJECT_TOKEN=phc_...
 POSTHOG_HOST=https://us.i.posthog.com
-POSTHOG_DISABLED=False
+POSTHOG_ENABLED=True
 ```
 
 Sem `POSTHOG_PROJECT_TOKEN` o SDK é desligado explicitamente no

@@ -146,7 +146,7 @@ def instalar(apps, schema_editor):
     del apps
     if schema_editor.connection.vendor != "postgresql":
         return
-    owner = settings.BILLING_DATABASE_OWNER_ROLE
+    owner = settings.DATABASE_BILLING_OWNER_ROLE
     if owner != "billing_functions_owner":
         raise RuntimeError("O owner de faturamento deve corresponder ao contrato das funções instaladas.")
     schema_editor.execute(SQL.replace("__BILLING_OWNER__", owner))
@@ -156,8 +156,8 @@ def preflight(apps, schema_editor):
     del apps
     if schema_editor.connection.vendor != "postgresql":
         return
-    owner = settings.BILLING_DATABASE_OWNER_ROLE
-    runtime = settings.BILLING_INGRESS_DATABASE_ROLE
+    owner = settings.DATABASE_BILLING_OWNER_ROLE
+    runtime = settings.DATABASE_BILLING_INGRESS_ROLE
     if owner != "billing_functions_owner" or runtime != "billing_ingress_runtime" or owner == runtime:
         raise RuntimeError("As roles de faturamento não correspondem ao contrato instalado.")
     with schema_editor.connection.cursor() as cursor:
@@ -178,7 +178,7 @@ def preflight(apps, schema_editor):
 def remover(apps, schema_editor):
     del apps
     if schema_editor.connection.vendor == "postgresql":
-        owner = settings.BILLING_DATABASE_OWNER_ROLE
+        owner = settings.DATABASE_BILLING_OWNER_ROLE
         schema_editor.execute(REVERSE_SQL.replace("__BILLING_OWNER__", owner))
 
 

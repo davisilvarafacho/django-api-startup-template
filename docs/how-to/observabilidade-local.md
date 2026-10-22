@@ -13,7 +13,7 @@ make obs-up    # Grafana, Tempo, Loki, Prometheus e Alloy
 Grafana em <http://localhost:3001> — login desabilitado, entra direto. As
 datasources e o dashboard "DRF Base API — visão geral" já vêm provisionados.
 Se a porta estiver ocupada, escolha outra antes de subir a stack, por exemplo
-`GRAFANA_PORT=13001 make obs-up`.
+`GRAFANA_HOST_PORT=13001 make obs-up`.
 
 ### Com Dev Containers
 

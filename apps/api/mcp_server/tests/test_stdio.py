@@ -16,7 +16,7 @@ async def test_stdio_boots_django_and_calls_health():
     parameters = StdioServerParameters(
         command=sys.executable,
         args=["-m", "apps.api.mcp_server"],
-        env={"DJANGO_SETTINGS_MODULE": "apps.api.mcp_server.tests.settings"},
+        env={"DJANGO_SETTINGS_MODULE": "apps.api.mcp_server.tests.settings", "DJANGO_ENVIRONMENT": "development"},
     )
 
     with tempfile.TemporaryFile(mode="w+") as stderr:
