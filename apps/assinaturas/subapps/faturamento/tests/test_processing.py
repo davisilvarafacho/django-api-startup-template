@@ -48,7 +48,7 @@ from apps.assinaturas.subscriptions import Assinaturas
 from apps.assinaturas.tests.test_subscription_models import _criar_assinatura, _criar_versao
 from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.models import Organizacao
-from apps.usuarios.models import Usuario
+from apps.users.models import Usuario
 
 
 def _evento_mapeado(*, sufixo: str, tentativas_ciclo: int = 0):

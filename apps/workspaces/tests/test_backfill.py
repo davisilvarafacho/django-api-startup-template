@@ -18,7 +18,7 @@ def test_backfill_cria_workspace_e_acessos_sem_apagar_dados_ao_reverter():
         executor.migrate(alvo_anterior)
         state = executor.loader.project_state(alvo_anterior)
         Organizacao = state.apps.get_model("organizacoes", "Organizacao")
-        Usuario = state.apps.get_model("usuarios", "Usuario")
+        Usuario = state.apps.get_model("users", "Usuario")
         Vinculo = state.apps.get_model("organizacoes", "Vinculo")
 
         organizacao = Organizacao.objects.create(nome="Acme", slug="acme")

@@ -40,7 +40,7 @@ from apps.organizacoes.serializers import (
     VinculoSerializer,
 )
 from apps.organizacoes.teams import Times
-from apps.usuarios.policies import exigir_email_verificado
+from apps.users.policies import exigir_email_verificado
 
 
 def _carregar_assinaturas() -> type[AssinaturasCicloOrganizacao]:

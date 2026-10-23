@@ -3,7 +3,7 @@
 from itertools import count
 from typing import Any
 
-from apps.usuarios.models import Usuario
+from apps.users.models import Usuario
 
 _sequencia = count()
 

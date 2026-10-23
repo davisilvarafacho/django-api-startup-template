@@ -55,7 +55,7 @@ from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.models import Papel
 from apps.organizacoes.permissions import TenantPermission
-from apps.usuarios.policies import exigir_email_verificado
+from apps.users.policies import exigir_email_verificado
 
 
 def _exigir_papel(request, papel_minimo):

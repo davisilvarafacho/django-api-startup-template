@@ -6,7 +6,7 @@ import pytest
 
 from apps.api.base.serializers import BaseModelSerializer
 from apps.api.base.views import BaseModelViewSet, ClonarViewSetMixin
-from apps.usuarios.models import Usuario
+from apps.users.models import Usuario
 from tests.support.usuarios import criar_usuario
 
 

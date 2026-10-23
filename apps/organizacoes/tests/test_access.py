@@ -8,7 +8,7 @@ import pytest
 
 from apps.organizacoes.access import TenantAccessResolver
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
-from apps.usuarios.models import Usuario
+from apps.users.models import Usuario
 from internal_frameworks.permission_cache.epochs import EpochStore
 from internal_frameworks.permission_cache.store import PermissionCacheStore
 from internal_frameworks.permission_cache.types import TenantAccess

@@ -8,7 +8,7 @@ import pytest
 from apps.api.autenticacao.models import TokenMetaData
 from apps.api.autenticacao.permissions import require_token_scopes
 from apps.api.base.views import UtilsViewSetMixin
-from apps.usuarios.models import Usuario
+from apps.users.models import Usuario
 
 
 class _RecursoViewSet(UtilsViewSetMixin, GenericViewSet):

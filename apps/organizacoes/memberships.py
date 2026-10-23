@@ -14,9 +14,9 @@ from apps.api.autenticacao.services import lock_user_accounts
 from apps.api.core.errors import APIError
 from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.models import Convite, Organizacao, Papel, Vinculo
-from apps.usuarios.errors import AccountErrorCode
-from apps.usuarios.models import Usuario
-from apps.usuarios.policies import exigir_email_verificado
+from apps.users.errors import AccountErrorCode
+from apps.users.models import Usuario
+from apps.users.policies import exigir_email_verificado
 
 
 @dataclass(frozen=True)

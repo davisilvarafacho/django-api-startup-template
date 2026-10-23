@@ -8,7 +8,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.db import DEFAULT_DB_ALIAS
 from django.db.models.signals import m2m_changed, post_delete, post_migrate, post_save, pre_save
 
-from apps.usuarios.models import Usuario
+from apps.users.models import Usuario
 from internal_frameworks.permission_cache.invalidation import schedule_epoch_bumps
 from internal_frameworks.permission_cache.keys import layer_scope, user_scope
 

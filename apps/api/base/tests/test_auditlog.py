@@ -15,9 +15,9 @@ from apps.api.core.context import usuario_atual
 from apps.assinaturas.models import AlteracaoAssinatura, AssinaturaOrganizacao, Plano, PrecoPlano, PropostaComercial, VersaoPlano
 from apps.logs.models import LogAlteracao
 from apps.organizacoes.models import Convite, Organizacao, Time, Vinculo
-from apps.usuarios.accounts import Contas
-from apps.usuarios.emails import emitir_token_troca_email
-from apps.usuarios.models import Usuario
+from apps.users.accounts import Contas
+from apps.users.emails import emitir_token_troca_email
+from apps.users.models import Usuario
 from apps.workspaces.models import VinculoWorkspace, Workspace
 from internal_frameworks.context import ContextVariable
 from tests.support.usuarios import criar_usuario

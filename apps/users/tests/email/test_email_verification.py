@@ -5,7 +5,7 @@ from django.core.cache import cache
 
 import pytest
 
-from apps.usuarios.emails import emitir_token_troca_email, emitir_token_verificacao
+from apps.users.emails import emitir_token_troca_email, emitir_token_verificacao
 
 pytestmark = pytest.mark.django_db
 

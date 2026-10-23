@@ -118,7 +118,7 @@ _Atualizado em 2026-08-09._
 - ✅ **API keys por organização** (`/auth/api_keys/`): CRUD, rotação atômica, suspensão manual/automática (fail-closed quando o responsável perde o vínculo) e retomada; UUID como identificador público; plain token exibido só na criação/rotação.
 - ✅ **MFA/2FA** (TOTP, e-mail, SMS, recovery codes, token `PRE_AUTH` e trusted
   devices).
-- ✅ **Política de senha centralizada** (`apps/usuarios/passwords.py`) com
+- ✅ **Política de senha centralizada** (`apps/users/passwords.py`) com
   checagem de **senha vazada** (HaveIBeenPwned, k-anonymous e fail-open),
   redefinição deslogada sem enumeração de contas e alteração autenticada com
   step-up. Ambos revogam sessões, tokens efêmeros e dispositivos confiáveis,

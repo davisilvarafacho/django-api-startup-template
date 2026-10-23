@@ -6,7 +6,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from apps.organizacoes.models import Organizacao, Papel, Time, Vinculo
-from apps.usuarios.models import Usuario
+from apps.users.models import Usuario
 
 
 class Command(BaseCommand):

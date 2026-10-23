@@ -18,7 +18,7 @@ from posthog import capture, identify_context, new_context
 from apps.api.core.errors import APIError
 from apps.api.core.route_markers import no_tenancy, public
 from apps.organizacoes.permissions import TenantPermission
-from apps.usuarios.passwords import set_validated_password
+from apps.users.passwords import set_validated_password
 
 from .errors import AuthErrorCode
 from .identities import AutenticacaoGoogle
@@ -620,9 +620,9 @@ class MFAAdminResetView(APIView):
 
     @require_recent_auth()
     def post(self, request):
-        if not request.user.has_perm("usuarios.can_reset_mfa_usuario"):
+        if not request.user.has_perm("users.can_reset_mfa_usuario"):
             return Response(status=status.HTTP_403_FORBIDDEN)
-        from apps.usuarios.models import Usuario
+        from apps.users.models import Usuario
 
         try:
             target = Usuario.objects.get(pk=request.data.get("user_id"))
@@ -663,7 +663,7 @@ class PasswordResetRequestView(APIView):
         serializer = PasswordResetRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        from apps.usuarios.models import Usuario
+        from apps.users.models import Usuario
 
         user = Usuario.objects.filter(email__iexact=serializer.validated_data["email"], is_active=True).first()
         if user is not None:

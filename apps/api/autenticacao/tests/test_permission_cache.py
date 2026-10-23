@@ -166,7 +166,7 @@ def test_has_perms_and_module_permissions_use_cached_backend():
     assert user.has_perms(["organizacoes.add_organizacao", "organizacoes.view_organizacao"]) is True
     assert user.has_perms(["organizacoes.add_organizacao", "organizacoes.delete_organizacao"]) is False
     assert backend.has_module_perms(user, "organizacoes") is True
-    assert backend.has_module_perms(user, "usuarios") is False
+    assert backend.has_module_perms(user, "users") is False
 
 
 def test_authentication_and_with_perm_remain_modelbackend_compatible():
@@ -250,7 +250,7 @@ def test_user_has_module_perms_preserves_django_admin_behavior():
     user.user_permissions.add(permission("view_organizacao"))
 
     assert user.has_module_perms("organizacoes") is True
-    assert user.has_module_perms("usuarios") is False
+    assert user.has_module_perms("users") is False
 
 
 def test_celery_eager_task_reloads_user_and_preserves_permission_result():

@@ -11,10 +11,10 @@ from apps.api.autenticacao.services import lock_user_accounts
 from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.memberships import Vinculos
 from apps.organizacoes.models import Convite, Organizacao, Papel, Vinculo
-from apps.usuarios.policies import exigir_email_verificado
+from apps.users.policies import exigir_email_verificado
 
 if TYPE_CHECKING:
-    from apps.usuarios.models import Usuario
+    from apps.users.models import Usuario
 
 
 @dataclass(frozen=True)

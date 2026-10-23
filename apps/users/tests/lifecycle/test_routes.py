@@ -18,7 +18,7 @@ from apps.api.autenticacao.mfa import confirm_enrollment, start_enrollment
 from apps.api.autenticacao.models import AuthToken, MFAFactor, MFAFactorType, TokenMetaData, TokenType
 from apps.api.autenticacao.services import issue_token
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
-from apps.usuarios.accounts import Contas
+from apps.users.accounts import Contas
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
@@ -118,7 +118,7 @@ def test_pedido_publico_nao_enumera_e_confirmacao_reativa_sem_restaurar_vinculo(
     CELERY_TASK_ALWAYS_EAGER=False,
 )
 def test_pedido_publica_somente_id_tecnico_e_task_entrega_link_valido(django_capture_on_commit_callbacks, monkeypatch):
-    from apps.usuarios import accounts, tasks
+    from apps.users import accounts, tasks
 
     usuario = criar_usuario(email="segredo-no-broker@example.com")
     Contas.desativar(usuario)
@@ -160,7 +160,7 @@ def test_confirmacao_publica_invalida_usa_erro_generico(api_client):
 
 @override_settings(ACCOUNT_REACTIVATION_TOKEN_MAX_AGE_SECONDS=3600)
 def test_falha_de_entrega_nao_registra_token_ou_email(monkeypatch, caplog):
-    from apps.usuarios import tasks
+    from apps.users import tasks
 
     usuario = criar_usuario(email="nao-logar@example.com")
     Contas.desativar(usuario)
@@ -172,7 +172,7 @@ def test_falha_de_entrega_nao_registra_token_ou_email(monkeypatch, caplog):
         raise RuntimeError(f"backend incluiu {usuario.email} e {token}")
 
     monkeypatch.setattr(tasks, "send_mail", falhar_envio)
-    caplog.set_level("ERROR", logger="apps.usuarios.tasks")
+    caplog.set_level("ERROR", logger="apps.users.tasks")
 
     tasks.send_account_reactivation.run(usuario.pk)
 

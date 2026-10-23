@@ -273,7 +273,7 @@ class ReaberturaEventoCobranca(Base):
 
     evento = models.ForeignKey(EventoCobranca, on_delete=models.PROTECT, related_name="reaberturas")
     motivo = models.CharField(max_length=500)
-    ator = models.ForeignKey("usuarios.Usuario", on_delete=models.PROTECT, null=True, blank=True, related_name="reaberturas_eventos_cobranca")
+    ator = models.ForeignKey("users.Usuario", on_delete=models.PROTECT, null=True, blank=True, related_name="reaberturas_eventos_cobranca")
     automatica = models.BooleanField(default=False)
     chave_idempotencia = models.CharField(max_length=120)
     tentativas_anteriores = models.PositiveSmallIntegerField()
@@ -289,7 +289,7 @@ class SolicitacaoReconciliacaoCobranca(Base):
     """Auditoria tenant-scoped de uma reconciliação operacional."""
 
     variante = models.CharField(max_length=50)
-    ator = models.ForeignKey("usuarios.Usuario", on_delete=models.PROTECT, related_name="reconciliacoes_cobranca_solicitadas")
+    ator = models.ForeignKey("users.Usuario", on_delete=models.PROTECT, related_name="reconciliacoes_cobranca_solicitadas")
     motivo = models.CharField(max_length=500)
     chave_idempotencia = models.CharField(max_length=160)
     janela_inicio = models.DateTimeField()

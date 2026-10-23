@@ -30,8 +30,8 @@ from apps.organizacoes.memberships import OcupacaoSeats, Vinculos
 from apps.organizacoes.models import Convite, Organizacao, Papel, Vinculo
 from apps.organizacoes.onboarding import OrganizationOnboarding
 from apps.organizacoes.organizations import EncerramentoAgendado, EncerramentoEfetivado, Organizacoes, TermoEncerramentoImediato
-from apps.usuarios.accounts import Contas
-from apps.usuarios.models import Usuario
+from apps.users.accounts import Contas
+from apps.users.models import Usuario
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db

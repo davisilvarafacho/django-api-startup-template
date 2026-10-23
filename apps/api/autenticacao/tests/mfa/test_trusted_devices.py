@@ -8,7 +8,7 @@ from apps.api.autenticacao.errors import AuthErrorCode
 from apps.api.autenticacao.mfa import confirm_enrollment, consume_trusted_device, create_trusted_device, start_enrollment
 from apps.api.autenticacao.models import MFAFactorType, TrustedDevice
 from apps.api.core.errors import APIError
-from apps.usuarios.models import Usuario
+from apps.users.models import Usuario
 
 
 @pytest.mark.django_db

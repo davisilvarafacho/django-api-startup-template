@@ -17,7 +17,7 @@ SETTINGS_STUB = """BUSINESS_APPS = [
     "apps.api.base",
     "apps.api.core",
     "apps.organizacoes",
-    "apps.usuarios",
+    "apps.users",
 ]
 """
 
@@ -41,7 +41,7 @@ def test_insere_na_posicao_alfabetica():
     "apps.api.core",
     "apps.faturamento",
     "apps.organizacoes",
-    "apps.usuarios",
+    "apps.users",
 ]
 """
     )
@@ -50,14 +50,14 @@ def test_insere_na_posicao_alfabetica():
 def test_insere_no_fim_quando_e_o_ultimo_alfabeticamente():
     resultado = insert_business_app(SETTINGS_STUB, "apps.vendas")
 
-    assert resultado.endswith("""    "apps.usuarios",
+    assert resultado.endswith("""    "apps.users",
     "apps.vendas",
 ]
 """)
 
 
 def test_app_ja_registrado_devolve_none():
-    assert insert_business_app(SETTINGS_STUB, "apps.usuarios") is None
+    assert insert_business_app(SETTINGS_STUB, "apps.users") is None
 
 
 def test_preserva_o_resto_do_arquivo():
@@ -86,25 +86,25 @@ def test_bloco_vazio_em_uma_linha_nao_e_confundido_com_bloco_ausente():
 def test_entrada_sem_virgula_final_falha_em_vez_de_corromper():
     # Reprodução exata do bug relatado: sem a validação, a última entrada sem
     # vírgula vira concatenação implícita de string com a entrada nova.
-    source = 'BUSINESS_APPS = [\n    "apps.usuarios"\n]\n'
+    source = 'BUSINESS_APPS = [\n    "apps.users"\n]\n'
 
     with pytest.raises(CommandError, match="BUSINESS_APPS"):
         insert_business_app(source, "apps.zebra")
 
 
 def test_entrada_com_aspas_simples_falha_em_vez_de_duplicar():
-    source = "BUSINESS_APPS = [\n    'apps.usuarios',\n]\n"
+    source = "BUSINESS_APPS = [\n    'apps.users',\n]\n"
 
     with pytest.raises(CommandError, match="BUSINESS_APPS"):
-        insert_business_app(source, "apps.usuarios")
+        insert_business_app(source, "apps.users")
 
 
 def test_entrada_com_comentario_final_e_aceita_e_ordenada_corretamente():
-    source = 'BUSINESS_APPS = [\n    "apps.organizacoes",  # legado\n    "apps.usuarios",\n]\n'
+    source = 'BUSINESS_APPS = [\n    "apps.organizacoes",  # legado\n    "apps.users",\n]\n'
 
     resultado = insert_business_app(source, "apps.faturamento")
 
-    assert resultado == ('BUSINESS_APPS = [\n    "apps.faturamento",\n    "apps.organizacoes",  # legado\n    "apps.usuarios",\n]\n')
+    assert resultado == ('BUSINESS_APPS = [\n    "apps.faturamento",\n    "apps.organizacoes",  # legado\n    "apps.users",\n]\n')
 
 
 def test_business_app_labels_mapeia_label_ao_dotted_path():
@@ -113,7 +113,7 @@ def test_business_app_labels_mapeia_label_ao_dotted_path():
         "base": "apps.api.base",
         "core": "apps.api.core",
         "organizacoes": "apps.organizacoes",
-        "usuarios": "apps.usuarios",
+        "users": "apps.users",
     }
 
 
@@ -370,7 +370,7 @@ def test_bloco_business_apps_ausente_via_call_command_nao_cria_nada(projeto):
 
 
 def test_business_apps_malformado_via_call_command_nao_cria_nada(projeto):
-    original = 'BUSINESS_APPS = [\n    "apps.usuarios"\n]\n'
+    original = 'BUSINESS_APPS = [\n    "apps.users"\n]\n'
     (projeto / "api_settings.py").write_text(original, encoding="utf-8")
 
     with pytest.raises(CommandError, match="BUSINESS_APPS"):
@@ -382,8 +382,8 @@ def test_business_apps_malformado_via_call_command_nao_cria_nada(projeto):
 
 def test_registro_ja_existente_apenas_avisa_e_cria_o_app(projeto, capsys):
     settings_com_vendas = SETTINGS_STUB.replace(
-        '    "apps.usuarios",\n',
-        '    "apps.usuarios",\n    "apps.vendas",\n',
+        '    "apps.users",\n',
+        '    "apps.users",\n    "apps.vendas",\n',
     )
     (projeto / "api_settings.py").write_text(settings_com_vendas, encoding="utf-8")
 

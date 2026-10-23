@@ -35,13 +35,13 @@ from apps.assinaturas.models import (
 )
 from apps.organizacoes.memberships import Vinculos
 from apps.organizacoes.models import Papel
-from apps.usuarios.policies import exigir_email_verificado
+from apps.users.policies import exigir_email_verificado
 
 if TYPE_CHECKING:
     from apps.organizacoes.memberships import OcupacaoSeats
     from apps.organizacoes.models import Organizacao
     from apps.organizacoes.organizations import TermoEncerramento
-    from apps.usuarios.models import Usuario
+    from apps.users.models import Usuario
 
 MAIOR_BIGINT = 2**63 - 1
 MAIOR_SMALLINT = 2**15 - 1

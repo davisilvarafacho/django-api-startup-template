@@ -19,7 +19,7 @@ from apps.assinaturas.serializers import (
     UtilizacaoSeatsResponseSerializer,
 )
 from apps.organizacoes.errors import OrganizationErrorCode
-from apps.usuarios.errors import AccountErrorCode
+from apps.users.errors import AccountErrorCode
 
 AUTH_401 = document_error_codes(
     AuthErrorCode.TOKEN_NOT_PROVIDED,

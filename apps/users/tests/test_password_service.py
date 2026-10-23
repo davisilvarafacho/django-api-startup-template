@@ -1,6 +1,6 @@
 """Testes do ponto único de definição de senha.
 
-Toda senha que entra no sistema passa por `apps.usuarios.passwords`; a única
+Toda senha que entra no sistema passa por `apps.users.passwords`; a única
 exceção deliberada é `create_superuser()`, que precisa funcionar em bootstrap e
 CI sem depender de rede nem de política de senha.
 """
@@ -9,15 +9,15 @@ from django.core.exceptions import ValidationError
 
 import pytest
 
-from apps.usuarios.models import Usuario
-from apps.usuarios.passwords import set_validated_password
+from apps.users.models import Usuario
+from apps.users.passwords import set_validated_password
 
 
 @pytest.mark.django_db
 def test_create_user_executa_validadores(monkeypatch):
     chamados = []
     monkeypatch.setattr(
-        "apps.usuarios.passwords.validate_password",
+        "apps.users.passwords.validate_password",
         lambda password, user: chamados.append(user),
     )
 
@@ -37,7 +37,7 @@ def test_create_user_recusa_senha_fraca():
 @pytest.mark.django_db
 def test_create_superuser_ignora_validadores(monkeypatch):
     monkeypatch.setattr(
-        "apps.usuarios.passwords.validate_password",
+        "apps.users.passwords.validate_password",
         lambda password, user: pytest.fail("não deve validar"),
     )
 
@@ -103,7 +103,7 @@ def test_set_validated_password_recebe_o_usuario_no_validator(monkeypatch, usuar
     """O validator precisa do usuário para comparar senha com e-mail/nome."""
     chamados = []
     monkeypatch.setattr(
-        "apps.usuarios.passwords.validate_password",
+        "apps.users.passwords.validate_password",
         lambda password, user: chamados.append((password, user)),
     )
 

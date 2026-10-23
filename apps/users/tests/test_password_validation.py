@@ -10,7 +10,7 @@ from django.core.exceptions import ValidationError
 import httpx
 import pytest
 
-from apps.usuarios.password_validation import PwnedPasswordsClient, PwnedPasswordValidator
+from apps.users.password_validation import PwnedPasswordsClient, PwnedPasswordValidator
 
 SENHA = "senha-de-teste"
 DIGEST = hashlib.sha1(SENHA.encode("utf-8"), usedforsecurity=False).hexdigest().upper()

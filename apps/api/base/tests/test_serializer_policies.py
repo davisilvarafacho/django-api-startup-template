@@ -10,7 +10,7 @@ from apps.api.base.serializers import (
     ReadOnlyFieldsSerializerMixin,
     WriteOnlyFieldsSerializerMixin,
 )
-from apps.usuarios.models import Usuario
+from apps.users.models import Usuario
 from tests.support.usuarios import criar_usuario
 
 

@@ -33,11 +33,11 @@ from apps.assinaturas.subscriptions import (
     TermosAssinatura,
     _criar_assinatura_enterprise_de_proposta,
 )
-from apps.usuarios.policies import exigir_email_verificado
+from apps.users.policies import exigir_email_verificado
 
 if TYPE_CHECKING:
     from apps.organizacoes.models import Organizacao
-    from apps.usuarios.models import Usuario
+    from apps.users.models import Usuario
 
 
 class ConflitoPropostaComercial(ValueError):

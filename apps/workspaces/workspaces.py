@@ -3,7 +3,7 @@ from django.db import transaction
 from apps.api.core.errors import APIError
 from apps.organizacoes.memberships import Vinculos
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
-from apps.usuarios.models import Usuario
+from apps.users.models import Usuario
 from apps.workspaces.accesses import AcessosWorkspace
 from apps.workspaces.errors import WorkspaceErrorCode
 from apps.workspaces.models import Workspace

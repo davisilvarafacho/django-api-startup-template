@@ -10,8 +10,8 @@ from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.memberships import Vinculos
 from apps.organizacoes.models import Organizacao
 from apps.organizacoes.organizations import Organizacoes
-from apps.usuarios.accounts import Contas
-from apps.usuarios.models import Usuario
+from apps.users.accounts import Contas
+from apps.users.models import Usuario
 
 
 class CatalogoPlanosOnboarding(Protocol):

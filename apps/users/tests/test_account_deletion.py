@@ -17,7 +17,7 @@ from apps.api.autenticacao.models import AuthToken, TokenMetaData, TokenType
 from apps.api.autenticacao.passwords import issue_password_reset
 from apps.api.core.errors import APIError
 from apps.organizacoes.models import Organizacao, Vinculo
-from apps.usuarios.models import Usuario, UsuarioQuerySet
+from apps.users.models import Usuario, UsuarioQuerySet
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db(transaction=True)

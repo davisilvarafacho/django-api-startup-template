@@ -4,7 +4,7 @@ from django.db.models.functions import Lower
 from django.utils.translation import gettext_lazy as _
 
 from apps.api.base.models import ActiveManagerMixin, BaseQuerySet, BaseTenantless, DeferredFieldsManagerMixin, ExcludeDeletedManagerMixin
-from apps.usuarios import passwords
+from apps.users import passwords
 from internal_frameworks.sensitive_fields.fields import encrypt
 from utils.logs import register
 
@@ -29,7 +29,7 @@ def revogar_acesso_da_conta(user_id, database_alias, *, actor=None):
     Returns:
         A conta já marcada como excluída, ou `None` se ela já estivesse.
     """
-    # Imports locais: `autenticacao` importa `usuarios` no carregamento dos
+    # Imports locais: `autenticacao` importa `users` no carregamento dos
     # models, e `mfa`/`services` são resolvidos aqui como módulo (e não como
     # nome) para que a exclusão sempre chame a função vigente.
     from apps.api.autenticacao import mfa, services

@@ -7,7 +7,7 @@ from apps.api.autenticacao.scope_delegation import validate_scope_delegation
 from apps.api.core.errors import APIError
 from apps.api.core.scope_registry import ScopeRegistry
 from apps.organizacoes.models import Convite, Time
-from apps.usuarios.models import Usuario
+from apps.users.models import Usuario
 from tests.support.usuarios import criar_usuario
 
 

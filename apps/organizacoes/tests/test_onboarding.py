@@ -7,8 +7,8 @@ from django_rls.context import get_active_rls_context
 
 from apps.api.core.errors import APIError
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
-from apps.usuarios.accounts import Contas
-from apps.usuarios.models import Usuario
+from apps.users.accounts import Contas
+from apps.users.models import Usuario
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db

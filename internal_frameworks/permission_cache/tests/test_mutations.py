@@ -11,7 +11,7 @@ from guardian.ctypes import get_content_type
 from guardian.utils import get_user_obj_perms_model
 
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
-from apps.usuarios.models import Usuario
+from apps.users.models import Usuario
 from internal_frameworks.permission_cache.mutations import (
     bulk_create_memberships,
     bulk_create_permissions,

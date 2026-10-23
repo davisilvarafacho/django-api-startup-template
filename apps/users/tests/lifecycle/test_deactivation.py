@@ -12,7 +12,7 @@ from apps.api.autenticacao.mfa import create_trusted_device
 from apps.api.autenticacao.models import AuthToken, TokenMetaData, TokenType
 from apps.api.core.errors import APIError
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
-from apps.usuarios.accounts import Contas
+from apps.users.accounts import Contas
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db

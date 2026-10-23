@@ -7,7 +7,7 @@ from rest_framework.test import APIClient
 import pytest
 
 from apps.api.autenticacao.models import AuthToken, IdentidadeExterna, ProvedorIdentidade, TokenType
-from apps.usuarios.models import Usuario
+from apps.users.models import Usuario
 from tests.support.usuarios import criar_usuario
 
 from .helpers import CLIENT_ID, claims_google, substituir_verificador

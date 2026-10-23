@@ -16,7 +16,7 @@ import pytest
 from drf_spectacular.generators import SchemaGenerator
 
 from apps.api.core.pagination import CustomPagination
-from apps.usuarios.models import Usuario
+from apps.users.models import Usuario
 from tests.support.usuarios import criar_usuario
 
 

@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from django.http import HttpRequest  # noqa: F401
 
     from apps.api.autenticacao.models import AuthToken  # noqa: F401
-    from apps.usuarios.models import Usuario  # noqa: F401
+    from apps.users.models import Usuario  # noqa: F401
 
 request_atual = ContextVariable["HttpRequest"].from_var("request_atual")
 usuario_atual = ContextVariable["Usuario"].from_var("usuario_atual")

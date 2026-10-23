@@ -416,7 +416,7 @@ revogados em `/auth/trusted-devices/`.
 
 Para SMS, configure `MFA_SMS_ENABLED=true` e um `MFA_SMS_BACKEND` de produção.
 O deploy falha se Console/InMemory estiverem habilitados fora de DEBUG. Em perda
-total de fatores, um operador com `usuarios.can_reset_mfa_usuario` usa
+total de fatores, um operador com `users.can_reset_mfa_usuario` usa
 `POST /auth/mfa/admin-reset/`, reautenticado e com justificativa; a operação
 revoga fatores, recovery codes, sessões e dispositivos confiáveis, preservando
 a senha.
@@ -424,7 +424,7 @@ a senha.
 
 ## Política de senha
 
-Toda senha que entra no sistema passa por `apps/usuarios/passwords.py`. Isso é
+Toda senha que entra no sistema passa por `apps/users/passwords.py`. Isso é
 uma decisão de projeto, não uma conveniência: com a validação espalhada pelos
 chamadores, basta um caminho novo esquecer de chamá-la para abrir um buraco
 silencioso na política.
@@ -551,7 +551,7 @@ durante a carência. `ACCOUNT_DELETION_GRACE_DAYS` controla o prazo e vale 7 por
 padrão. Um segundo pedido informa a data existente sem deslocá-la.
 
 Às 00:30 no fuso do projeto, a task Celery
-`usuarios.anonimizar_contas_vencidas` processa no máximo
+`users.anonimizar_contas_vencidas` processa no máximo
 `ACCOUNT_DELETION_BATCH_SIZE` contas vencidas por execução. Cada conta é
 revalidada sob `select_for_update()`, o que torna a task segura para repetição.
 Ela anonimiza também identidades externas já soft-deleted, revoga credenciais,

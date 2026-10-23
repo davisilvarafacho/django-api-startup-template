@@ -44,7 +44,7 @@ def test_campo_identifica_token_da_chave_ativa(monkeypatch):
 
 
 def test_campo_cifrado_no_estado_do_django_pode_ser_desconstruido_para_migrations():
-    field = ProjectState.from_apps(apps).models[("usuarios", "usuario")].fields["phone_number"]
+    field = ProjectState.from_apps(apps).models[("users", "usuario")].fields["phone_number"]
 
     name, path, args, kwargs = field.deconstruct()
 

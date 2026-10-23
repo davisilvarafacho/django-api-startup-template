@@ -10,7 +10,7 @@ from drf_spectacular.utils import extend_schema
 
 from apps.api.core.schema import document_error_codes
 from apps.organizacoes.errors import OrganizationErrorCode
-from apps.usuarios.errors import AccountErrorCode
+from apps.users.errors import AccountErrorCode
 
 from .errors import AuthErrorCode
 from .serializers import APIKeySerializer, GoogleIdentitySerializer, GoogleLoginSerializer, LoginResponseSerializer

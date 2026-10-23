@@ -8,7 +8,7 @@ from django.core.management.base import CommandError
 import pytest
 
 from apps.organizacoes.models import Organizacao, Papel, Time, Vinculo
-from apps.usuarios.models import Usuario
+from apps.users.models import Usuario
 
 pytestmark = pytest.mark.django_db
 

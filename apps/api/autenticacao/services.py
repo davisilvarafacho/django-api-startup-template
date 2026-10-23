@@ -47,7 +47,7 @@ def lock_user_account(user, *, using=None):
     `all_objects` de propósito: uma conta já excluída precisa ser lida (e não
     sumir) para que quem emite credencial saiba que deve desistir.
     """
-    from apps.usuarios.models import Usuario
+    from apps.users.models import Usuario
 
     user_id = getattr(user, "pk", user)
     database_alias = resolve_database_alias(user, using)
@@ -76,7 +76,7 @@ def lock_eligible_responsible(responsavel, database_alias: str):
 
 def lock_user_accounts(user_ids, *, using):
     """Bloqueia várias contas em ordem de PK e devolve-as indexadas por id."""
-    from apps.usuarios.models import Usuario
+    from apps.users.models import Usuario
 
     ids = sorted({getattr(user_id, "pk", user_id) for user_id in user_ids if user_id is not None})
     contas = list(Usuario.all_objects.using(using).select_for_update().filter(pk__in=ids).order_by("pk"))

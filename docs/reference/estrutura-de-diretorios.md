@@ -77,7 +77,7 @@ Código de produção nunca importa `tests`. Fixture específica de um app fica 
 - **Infraestrutura da API** (`apps/api/*`) — `base` (models, serializers e views
   base), `core` (registries, cache, erros, health, management commands),
   `autenticacao`, `mcp_server` e `metadata`. É o que o template entrega pronto.
-- **Identidade, tenancy e domínio** (`apps/organizacoes/`, `apps/usuarios/`,
+- **Identidade, tenancy e domínio** (`apps/organizacoes/`, `apps/users/`,
   `apps/workspaces/`, `apps/logs/`) — os apps que herdam de `BaseGlobal` por
   serem lidos antes de existir contexto RLS, o app de subtenancy de Workspaces
   e o app de trilha de auditoria. Workspaces usa models tenantless para
@@ -85,7 +85,7 @@ Código de produção nunca importa `tests`. Fixture específica de um app fica 
   `Base`.
 
 Apps de negócio novos nascem no primeiro nível de `apps/`, ao lado de
-`organizacoes/` e `usuarios/`.
+`organizacoes/` e `users/`.
 
 ### `apps/api/` é um agrupador, não um app
 
@@ -103,7 +103,7 @@ BUSINESS_APPS = [
     "apps.api.metadata",
     "apps.logs",
     "apps.organizacoes",
-    "apps.usuarios",
+    "apps.users",
     "apps.workspaces",
 ]
 ```
@@ -219,7 +219,7 @@ Configuração de ambiente nunca entra nessa árvore: vai para
 `api/configure_enviroment.py`.
 
 `apps/workspaces/` é um app de domínio de primeiro nível, ao lado de
-`organizacoes/` e `usuarios/`. Ele concentra os models `Workspace` e
+`organizacoes/` e `users/`. Ele concentra os models `Workspace` e
 `VinculoWorkspace`, o contexto RLS, os serviços de ciclo de vida, serializers e
 rotas de subtenancy. Não deve ser colocado em `apps/organizacoes/subapps/`:
 Workspace é uma fronteira compartilhada por vários domínios, embora pertença a

@@ -51,7 +51,7 @@ def send_password_reset(user_pk: int):
     A emissão acontece aqui, e não na view, para que o token puro exista apenas
     dentro desta task: o payload que trafega pelo broker é só o ID do usuário.
     """
-    from apps.usuarios.models import Usuario
+    from apps.users.models import Usuario
 
     from .passwords import issue_password_reset
 
@@ -89,7 +89,7 @@ def notify_password_changed(user_pk: int):
 
     É o único sinal que chega a quem teve a conta invadida e não fez a troca.
     """
-    from apps.usuarios.models import Usuario
+    from apps.users.models import Usuario
 
     user = Usuario.objects.filter(pk=user_pk).first()
     if user is None:
@@ -109,7 +109,7 @@ def notify_password_changed(user_pk: int):
 @shared_task(name="autenticacao.send_email_verification", ignore_result=True)
 def send_email_verification(token: str):
     """Entrega o link assinado de confirmação do endereço atual."""
-    from apps.usuarios.emails import EMAIL_VERIFICATION_PURPOSE, carregar_token_email
+    from apps.users.emails import EMAIL_VERIFICATION_PURPOSE, carregar_token_email
 
     signed_token = carregar_token_email(token, purpose=EMAIL_VERIFICATION_PURPOSE)
     if signed_token is None:
@@ -124,7 +124,7 @@ def send_email_verification(token: str):
 @shared_task(name="autenticacao.send_email_change_confirmation", ignore_result=True)
 def send_email_change_confirmation(token: str):
     """Entrega a confirmação assinada para o novo endereço, sem persistir pendência."""
-    from apps.usuarios.emails import EMAIL_CHANGE_PURPOSE, carregar_token_email
+    from apps.users.emails import EMAIL_CHANGE_PURPOSE, carregar_token_email
 
     signed_token = carregar_token_email(token, purpose=EMAIL_CHANGE_PURPOSE)
     if signed_token is None:

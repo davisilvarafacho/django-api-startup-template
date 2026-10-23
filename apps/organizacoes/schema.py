@@ -14,7 +14,7 @@ from apps.organizacoes.serializers import (
     OrganizacaoEmailFaturamentoSerializer,
     VinculoSerializer,
 )
-from apps.usuarios.errors import AccountErrorCode
+from apps.users.errors import AccountErrorCode
 
 _AUTH_ERRORS = document_error_codes(
     AuthErrorCode.NOT_AUTHENTICATED,

@@ -32,13 +32,13 @@ from apps.assinaturas.subscriptions import Assinaturas
 from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.memberships import Vinculos
 from apps.organizacoes.models import Organizacao, Papel
-from apps.usuarios.policies import exigir_email_verificado
+from apps.users.policies import exigir_email_verificado
 
 if TYPE_CHECKING:
     from django_checkouts.client import CheckoutClient
 
     from apps.assinaturas.models import PropostaComercial
-    from apps.usuarios.models import Usuario
+    from apps.users.models import Usuario
 
 SALT_REFERENCIA = "faturamento.checkout.referencia.v1"
 VERSAO_REFERENCIA = 1

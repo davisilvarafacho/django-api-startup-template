@@ -17,7 +17,7 @@ from apps.assinaturas.subapps.faturamento.serializers import (
     FaturaResponseSerializer,
 )
 from apps.organizacoes.errors import OrganizationErrorCode
-from apps.usuarios.errors import AccountErrorCode
+from apps.users.errors import AccountErrorCode
 
 AUTH = document_error_codes(AuthErrorCode.TOKEN_NOT_PROVIDED, AuthErrorCode.INVALID_TOKEN, AuthErrorCode.REAUTHENTICATION_REQUIRED)
 TENANT = document_error_codes(

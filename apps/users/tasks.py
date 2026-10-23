@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task(
-    name="usuarios.anonimizar_contas_vencidas",
+    name="users.anonimizar_contas_vencidas",
     ignore_result=True,
     autoretry_for=(OperationalError,),
     retry_backoff=True,
@@ -37,7 +37,7 @@ def anonimizar_contas_vencidas():
     )
 
 
-@shared_task(name="usuarios.send_account_reactivation", ignore_result=True)
+@shared_task(name="users.send_account_reactivation", ignore_result=True)
 def send_account_reactivation(user_id: int):
     """Relê a conta e só então gera e entrega o segredo de reativação."""
     conta = Usuario.objects.filter(pk=user_id, is_active=False).first()

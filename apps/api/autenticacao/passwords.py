@@ -19,7 +19,7 @@ from django.utils import timezone
 from knox import crypto
 from knox.models import get_token_model
 
-from apps.usuarios.passwords import set_validated_password
+from apps.users.passwords import set_validated_password
 
 from .models import MFAChallenge, TokenType, TrustedDevice
 from .services import issue_token, lock_user_account, resolve_database_alias

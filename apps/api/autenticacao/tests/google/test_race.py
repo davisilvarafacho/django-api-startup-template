@@ -14,7 +14,7 @@ from apps.api.autenticacao.identities import AutenticacaoGoogle
 from apps.api.autenticacao.models import AuthToken, IdentidadeExterna, ProvedorIdentidade, TokenType
 from apps.api.autenticacao.services import issue_token
 from apps.api.core.errors import APIError
-from apps.usuarios.models import Usuario
+from apps.users.models import Usuario
 from tests.support.usuarios import criar_usuario
 
 from .helpers import CLIENT_ID, claims_google, substituir_verificador

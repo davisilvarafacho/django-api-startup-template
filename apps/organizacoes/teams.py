@@ -7,7 +7,7 @@ from apps.api.core.errors import APIError
 from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.memberships import Vinculos
 from apps.organizacoes.models import Organizacao, Papel, Time
-from apps.usuarios.models import Usuario
+from apps.users.models import Usuario
 
 
 class Times:

@@ -13,8 +13,8 @@ from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2 import id_token as google_id_token
 
 from apps.api.core.errors import APIError
-from apps.usuarios.errors import AccountErrorCode
-from apps.usuarios.models import Usuario
+from apps.users.errors import AccountErrorCode
+from apps.users.models import Usuario
 
 from .errors import AuthErrorCode
 from .models import IdentidadeExterna, ProvedorIdentidade

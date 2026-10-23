@@ -182,7 +182,7 @@ BUSINESS_APPS = [
     "apps.logs",
     "apps.organizacoes",
     # "apps.parametros",  # TODO: reativar depois de corrigir apps/parametros/models.py (Parametro.value)
-    "apps.usuarios",
+    "apps.users",
     "apps.workspaces",
 ]
 
@@ -315,7 +315,7 @@ AUTH_PASSWORD_VALIDATORS = [
         "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
     },
     {
-        "NAME": "apps.usuarios.password_validation.PwnedPasswordValidator",
+        "NAME": "apps.users.password_validation.PwnedPasswordValidator",
     },
 ]
 
@@ -355,7 +355,7 @@ SUBSCRIPTION_ONBOARDING_BILLING_PERIOD = get_env_var("SUBSCRIPTION_ONBOARDING_BI
 ORGANIZATION_CLOSURE_BATCH_SIZE = get_int_from_env("ORGANIZATION_CLOSURE_BATCH_SIZE", 100)
 SUBSCRIPTION_TASK_BATCH_SIZE = get_int_from_env("SUBSCRIPTION_TASK_BATCH_SIZE", 100)
 
-AUTH_USER_MODEL = "usuarios.Usuario"
+AUTH_USER_MODEL = "users.Usuario"
 
 
 # Autorização em camadas: `rules` (predicados por objeto, ex.: papel na
@@ -784,7 +784,7 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(hour=0, minute=0),
     },
     "anonymize-expired-accounts": {
-        "task": "usuarios.anonimizar_contas_vencidas",
+        "task": "users.anonimizar_contas_vencidas",
         "schedule": crontab(hour=0, minute=30),
     },
     "close-expired-organizations": {

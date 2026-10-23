@@ -26,9 +26,9 @@ from apps.api.core.errors import APIError
 from apps.logs.models import LogAlteracao
 from apps.logs.serializers import LogAlteracaoSerpySerializer
 from apps.organizacoes.models import Convite, Organizacao, Papel, Vinculo
-from apps.usuarios import accounts
-from apps.usuarios.accounts import Contas
-from apps.usuarios.models import Usuario
+from apps.users import accounts
+from apps.users.accounts import Contas
+from apps.users.models import Usuario
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
@@ -261,8 +261,8 @@ def test_task_anonimiza_no_maximo_o_lote_configurado_por_execucao(caplog):
         exclusao_agendada_para=agora - timedelta(seconds=1),
     )
 
-    caplog.set_level("INFO", logger="apps.usuarios.tasks")
-    tasks = importlib.import_module("apps.usuarios.tasks")
+    caplog.set_level("INFO", logger="apps.users.tasks")
+    tasks = importlib.import_module("apps.users.tasks")
     tasks.anonimizar_contas_vencidas()
 
     assert Usuario.all_objects.filter(pk__in=[conta.pk for conta in contas], is_deleted=True).count() == 1
@@ -272,10 +272,10 @@ def test_task_anonimiza_no_maximo_o_lote_configurado_por_execucao(caplog):
 
 
 def test_task_periodica_usa_lote_configuravel():
-    tasks = importlib.import_module("apps.usuarios.tasks")
+    tasks = importlib.import_module("apps.users.tasks")
     entry = settings.CELERY_BEAT_SCHEDULE["anonymize-expired-accounts"]
 
-    assert tasks.anonimizar_contas_vencidas.name == "usuarios.anonimizar_contas_vencidas"
+    assert tasks.anonimizar_contas_vencidas.name == "users.anonimizar_contas_vencidas"
     assert tasks.anonimizar_contas_vencidas.ignore_result is True
     assert tasks.anonimizar_contas_vencidas.autoretry_for
     assert entry["task"] == tasks.anonimizar_contas_vencidas.name

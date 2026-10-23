@@ -12,7 +12,7 @@ from drf_spectacular.generators import SchemaGenerator
 from apps.api.base.serializers import BaseModelSerializer
 from apps.api.base.views import BaseModelViewSet, PermissionsViewSetMixin
 from apps.logs.models import LogAlteracao
-from apps.usuarios.models import Usuario
+from apps.users.models import Usuario
 from tests.support.usuarios import criar_usuario
 
 
@@ -51,7 +51,7 @@ def test_logs_devolve_o_historico_do_registro_do_mais_recente_ao_mais_antigo():
         LogAlteracao.Action.CREATE,
     ]
     assert registros[0]["changes"]["first_name"] == ["Antes", "Depois"]
-    assert registros[0]["model"] == "usuarios.usuario"
+    assert registros[0]["model"] == "users.usuario"
 
 
 @pytest.mark.django_db

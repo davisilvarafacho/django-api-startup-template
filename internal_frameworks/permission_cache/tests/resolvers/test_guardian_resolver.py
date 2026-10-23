@@ -104,9 +104,9 @@ def test_guardian_backend_raises_wrong_app_error_like_upstream():
     cached = CachedObjectPermissionBackend()
 
     with pytest.raises(WrongAppError):
-        upstream.has_perm(user, "usuarios.view_organizacao", organization)
+        upstream.has_perm(user, "users.view_organizacao", organization)
     with pytest.raises(WrongAppError):
-        cached.has_perm(user, "usuarios.view_organizacao", organization)
+        cached.has_perm(user, "users.view_organizacao", organization)
 
 
 def test_guardian_async_methods_use_same_snapshot():
