@@ -172,6 +172,15 @@ def test_marcador_resolve_action_sem_liberar_action_vizinha():
 
 
 @override_settings(ROOT_URLCONF=__name__)
+def test_metodo_nao_mapeado_pela_action_nao_tem_marcador():
+    assert not route_markers.rota_tem_marcador(
+        "/_test/marcada/",
+        "DELETE",
+        route_markers.MARCADOR_SEM_WORKSPACE,
+    )
+
+
+@override_settings(ROOT_URLCONF=__name__)
 def test_marcador_resolve_metodo_da_api_view():
     assert route_markers.rota_tem_marcador(
         "/_test/metodo/",
