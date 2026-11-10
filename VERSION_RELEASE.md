@@ -41,7 +41,7 @@ O incremento é derivado dos commits desde a última tag:
 
 - [ ] `pre-commit` instalado (`uv run pre-commit install`) — habilita os hooks
       `pre-commit` **e** `commit-msg` (validação de Conventional Commits).
-- [ ] Você está na `main` atualizada (`git pull`) e a **working tree está limpa**.
+- [ ] Você está na `enterprise` atualizada (`git pull`) e a **working tree está limpa**.
 - [ ] Toda a história desde a última tag usa **Conventional Commits**.
 - [ ] Suíte verde, lint limpo e migrations conferidas:
   ```bash
@@ -79,7 +79,7 @@ git show           # confere o commit de bump (pyproject, settings, CHANGELOG)
 git log --oneline -3
 
 # 4. Publicar commit + tag:
-git push --follow-tags origin main
+git push --follow-tags origin enterprise
 ```
 
 5. **(Opcional)** Criar o release no GitHub a partir da tag `vX.Y.Z`, colando a
