@@ -1,6 +1,6 @@
 """Guarda da variante `internal`: assinaturas e faturamento não voltam por merge.
 
-Arquivos novos que a branch `enterprise` criar dentro de `apps/assinaturas/`
+Arquivos novos que a branch `startup` criar dentro de `apps/assinaturas/`
 entram no merge sem conflito. Estes testes falham se o billing reaparecer.
 """
 
