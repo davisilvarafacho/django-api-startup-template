@@ -113,4 +113,7 @@ def rota_tem_marcador(path, method, marcador):
 
     actions = getattr(callback, "actions", {})
     handler_name = actions.get(method.lower()) if actions else method.lower()
+    if handler_name is None:
+        # Método que a action não mapeia: o DRF responde 405 mais adiante.
+        return False
     return tem_marcador(getattr(view, handler_name, None), marcador)
