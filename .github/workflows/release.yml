@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    branches: [enterprise]
+    branches: [startup]
 
 permissions:
   contents: write
