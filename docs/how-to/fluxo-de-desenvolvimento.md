@@ -6,13 +6,13 @@ Estratégia de branches e ciclo de PR do projeto. Para preparar o ambiente veja
 
 ## Estratégia: trunk-based
 
-Uma única branch permanente: `main`. Todo trabalho acontece em branches curtas
-(idealmente com vida menor que dois dias) que nascem de `main` e são apagadas no
+Uma única branch permanente: `enterprise`. Todo trabalho acontece em branches curtas
+(idealmente com vida menor que dois dias) que nascem de `enterprise` e são apagadas no
 merge. Sem branches `develop`/`release`/`hotfix` — o projeto faz deploy contínuo
 e GitFlow só adicionaria cerimônia.
 
 !!! note "Proteção de branch"
-    Enquanto o projeto está no início, `main` aceita push direto. Quando
+    Enquanto o projeto está no início, `enterprise` aceita push direto. Quando
     estabilizar, ative a proteção (exigir PR + checks `commits`, `lint`, `test`)
     em **Settings → Branches**.
 
@@ -34,7 +34,7 @@ Exemplos: `feat/rls-org-scope`, `fix/permission-codename`.
 ## Ciclo de uma mudança
 
 ```bash
-git switch main && git pull            # parta sempre do topo
+git switch enterprise && git pull            # parta sempre do topo
 git switch -c feat/<slug>              # branch curta
 
 # ... commits seguindo Conventional Commits (o hook commit-msg valida) ...
@@ -57,7 +57,7 @@ continua vindo de `DATABASE_NAME`.
    `lint` (ruff, versões e docs) e `test` (gate de migrations, pytest com
    migrations reais e cobertura Codecov). Todos precisam passar.
 2. **Review**: pelo menos uma aprovação.
-3. **Squash merge**: cada PR vira um único commit na `main`. Mantém o histórico
+3. **Squash merge**: cada PR vira um único commit na `enterprise`. Mantém o histórico
    linear e o range de commits que o commitlint valida trivial. A branch é
    apagada no merge.
 
@@ -72,6 +72,6 @@ CI verde e merge por squash.
 
 ## Release
 
-Acúmulo de PRs na `main` até fechar uma versão. A partir daí, siga
+Acúmulo de PRs na `enterprise` até fechar uma versão. A partir daí, siga
 [Publicar uma versão](publicar-versao.md): bump de versão SemVer, mover o
 `CHANGELOG.md`, criar a tag `vX.Y.Z` e publicar a release.
