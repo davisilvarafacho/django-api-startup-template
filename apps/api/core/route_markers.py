@@ -20,7 +20,6 @@ from django.urls import Resolver404, resolve
 __all__ = [
     "MARCADOR_PUBLICA",
     "MARCADOR_IO_EXTERNO_SEM_TRANSACAO",
-    "MARCADOR_REGULARIZACAO_ASSINATURA",
     "MARCADOR_SEM_WORKSPACE",
     "MARCADOR_SEM_TENANCY",
     "no_workspace",
@@ -28,7 +27,6 @@ __all__ = [
     "no_tenancy",
     "io_externo_sem_transacao",
     "public",
-    "regularizacao_assinatura",
     "rota_tem_marcador",
     "tem_marcador",
     "view_do_path",
@@ -36,14 +34,12 @@ __all__ = [
 
 MARCADOR_PUBLICA = "_rota_publica"
 MARCADOR_SEM_TENANCY = "_rota_sem_tenancy"
-MARCADOR_REGULARIZACAO_ASSINATURA = "_rota_regularizacao_assinatura"
 MARCADOR_IO_EXTERNO_SEM_TRANSACAO = "_rota_io_externo_sem_transacao"
 MARCADOR_SEM_WORKSPACE = "_rota_sem_workspace"
 MARCADORES_ROTA = frozenset(
     {
         MARCADOR_PUBLICA,
         MARCADOR_SEM_TENANCY,
-        MARCADOR_REGULARIZACAO_ASSINATURA,
         MARCADOR_IO_EXTERNO_SEM_TRANSACAO,
         MARCADOR_SEM_WORKSPACE,
     }
@@ -68,13 +64,8 @@ def no_tenancy(view):
 
 
 def no_workspace(view):
-    """Dispensa Workspace atual, mas mantém Organização e acesso comercial."""
+    """Dispensa Workspace atual, mas mantém a Organização."""
     return _marcar(view, MARCADOR_SEM_WORKSPACE)
-
-
-def regularizacao_assinatura(view):
-    """Declara uma view/action apta a regularizar acesso comercial restrito."""
-    return _marcar(view, MARCADOR_REGULARIZACAO_ASSINATURA)
 
 
 def io_externo_sem_transacao(view):

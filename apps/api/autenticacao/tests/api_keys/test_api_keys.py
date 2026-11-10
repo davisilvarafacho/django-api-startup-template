@@ -19,7 +19,6 @@ from apps.api.core.errors import APIError
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
 from internal_frameworks.context import ContextVariable
-from tests.support.assinaturas import garantir_assinatura_corrente
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
@@ -38,9 +37,7 @@ def _limpar_thread_locals():
 
 @pytest.fixture
 def organizacao():
-    organizacao = Organizacao.objects.create(nome="Org", slug="org-api-keys")
-    garantir_assinatura_corrente(organizacao)
-    return organizacao
+    return Organizacao.objects.create(nome="Org", slug="org-api-keys")
 
 
 @pytest.fixture
@@ -204,7 +201,6 @@ def test_usuario_sem_permission_nao_cria_api_key(organizacao, responsavel):
 def test_lista_e_detalhe_sao_fixos_na_organizacao_do_header(ator, organizacao, responsavel):
     outra_organizacao = Organizacao.objects.create(nome="Outra", slug="org-api-keys-outra")
     Vinculo.objects.create(usuario=ator, organizacao=outra_organizacao, papel=Papel.ADMINISTRADOR)
-    garantir_assinatura_corrente(outra_organizacao)
     client = _com_header(_client_com_sessao(ator), organizacao)
 
     criada = client.post("/auth/api_keys/", {"name": "Integração", "responsavel": responsavel.pk}, format="json").data

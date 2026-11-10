@@ -94,10 +94,6 @@ class OrganizacaoEmailFaturamentoSerializer(serializers.ModelSerializer):
         )
 
 
-class EncerramentoAgendadoResponseSerializer(serializers.Serializer):
-    scheduled_for = serializers.DateTimeField()
-
-
 class TimeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Time

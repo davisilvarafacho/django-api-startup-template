@@ -23,17 +23,17 @@ from apps.api.core.route_markers import (
 )
 
 
-class ViewSetComRegularizacao(ViewSet):
-    @route_markers.regularizacao_assinatura
-    def regularizar(self, request):
+class ViewSetComMarcadorNaAction(ViewSet):
+    @route_markers.no_workspace
+    def marcada(self, request):
         return Response()
 
     def comum(self, request):
         return Response()
 
 
-class ViewComMetodoRegularizacao(APIView):
-    @route_markers.regularizacao_assinatura
+class ViewComMetodoMarcado(APIView):
+    @route_markers.no_workspace
     def post(self, request):
         return Response()
 
@@ -56,9 +56,9 @@ class ViewSemWorkspace(APIView):
 
 
 urlpatterns = [
-    path("_test/regularizar/", ViewSetComRegularizacao.as_view({"post": "regularizar"})),
-    path("_test/comum/", ViewSetComRegularizacao.as_view({"post": "comum"})),
-    path("_test/metodo/", ViewComMetodoRegularizacao.as_view()),
+    path("_test/marcada/", ViewSetComMarcadorNaAction.as_view({"post": "marcada"})),
+    path("_test/comum/", ViewSetComMarcadorNaAction.as_view({"post": "comum"})),
+    path("_test/metodo/", ViewComMetodoMarcado.as_view()),
     path("_test/io-externo/", ViewComIoExterno.as_view()),
     path("_test/tenant-comum/", ViewTenantComum.as_view()),
     path("_test/sem-workspace/", ViewSemWorkspace.as_view()),
@@ -119,15 +119,6 @@ def test_view_sem_decorator_nao_tem_marcador():
     assert not tem_marcador(None, MARCADOR_PUBLICA)
 
 
-def test_regularizacao_assinatura_e_um_marcador_declarativo_registrado():
-    @route_markers.regularizacao_assinatura
-    class Qualquer:
-        pass
-
-    assert route_markers.MARCADOR_REGULARIZACAO_ASSINATURA in route_markers.MARCADORES_ROTA
-    assert tem_marcador(Qualquer, route_markers.MARCADOR_REGULARIZACAO_ASSINATURA)
-
-
 def test_io_externo_sem_transacao_e_um_marcador_declarativo_registrado():
     @route_markers.io_externo_sem_transacao
     class Qualquer:
@@ -167,25 +158,25 @@ def test_middleware_encerra_atomic_somente_para_rota_marcada(rf):
 
 
 @override_settings(ROOT_URLCONF=__name__)
-def test_marcador_de_regularizacao_resolve_action_sem_liberar_action_vizinha():
+def test_marcador_resolve_action_sem_liberar_action_vizinha():
     assert route_markers.rota_tem_marcador(
-        "/_test/regularizar/",
+        "/_test/marcada/",
         "POST",
-        route_markers.MARCADOR_REGULARIZACAO_ASSINATURA,
+        route_markers.MARCADOR_SEM_WORKSPACE,
     )
     assert not route_markers.rota_tem_marcador(
         "/_test/comum/",
         "POST",
-        route_markers.MARCADOR_REGULARIZACAO_ASSINATURA,
+        route_markers.MARCADOR_SEM_WORKSPACE,
     )
 
 
 @override_settings(ROOT_URLCONF=__name__)
-def test_marcador_de_regularizacao_resolve_metodo_da_api_view():
+def test_marcador_resolve_metodo_da_api_view():
     assert route_markers.rota_tem_marcador(
         "/_test/metodo/",
         "POST",
-        route_markers.MARCADOR_REGULARIZACAO_ASSINATURA,
+        route_markers.MARCADOR_SEM_WORKSPACE,
     )
 
 

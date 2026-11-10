@@ -11,7 +11,6 @@ from apps.api.core.errors import APIError, error_response_for_api_error
 from apps.api.core.route_markers import (
     MARCADOR_IO_EXTERNO_SEM_TRANSACAO,
     MARCADOR_PUBLICA,
-    MARCADOR_REGULARIZACAO_ASSINATURA,
     MARCADOR_SEM_TENANCY,
     MARCADOR_SEM_WORKSPACE,
     rota_tem_marcador,
@@ -23,7 +22,6 @@ from apps.organizacoes.context import (
     CHAVE_TENANT,
     CHAVES_WORKSPACE,
     ContextoOrganizacao,
-    PoliticaComercialTenant,
     definir_organizacao_atual,
 )
 from apps.organizacoes.errors import OrganizationErrorCode
@@ -68,61 +66,9 @@ def resolve_token_organization(request, token):
     return organizacao.slug
 
 
-def resolver_contexto_comercial(
-    organizacao,
-    vinculo,
-    *,
-    regularizacao_assinatura: bool,
-) -> ContextoOrganizacao:
-    """Carrega o contrato e a ocupação uma vez e aplica a política pura."""
-    from django.utils import timezone
-
-    from apps.assinaturas.access_policies import PoliticaAcessoAssinatura, StatusAcesso
-    from apps.assinaturas.errors import BillingErrorCode
-    from apps.assinaturas.models import AssinaturaOrganizacao, StatusAssinatura
-    from apps.assinaturas.subscriptions import Assinaturas
-    from apps.organizacoes.memberships import Vinculos
-    from apps.organizacoes.models import Papel
-
-    assinatura = (
-        AssinaturaOrganizacao.objects.select_related("versao_plano", "proposta_comercial")
-        .filter(
-            organizacao_id=organizacao.pk,
-            status__in=(StatusAssinatura.PENDENTE, StatusAssinatura.EM_TRIAL, StatusAssinatura.ATIVA),
-        )
-        .first()
-    )
-    if assinatura is None:
-        raise APIError(BillingErrorCode.SUBSCRIPTION_REQUIRED, status_code=503)
-
-    ocupacao = Vinculos.calcular_ocupacao(organizacao, Assinaturas.papeis_isentos_seat(assinatura))
-    utilizacao = Assinaturas.calcular_utilizacao(assinatura, ocupacao)
-    situacao = PoliticaAcessoAssinatura.avaliar(assinatura, utilizacao, timezone.now())
-    contexto = ContextoOrganizacao(
-        organizacao=organizacao,
-        vinculo=vinculo,
-        assinatura=assinatura,
-        utilizacao_seats=utilizacao,
-        situacao_acesso=situacao,
-    )
-
-    pode_regularizar = regularizacao_assinatura and vinculo is not None and vinculo.papel >= Papel.ADMINISTRADOR
-    if situacao.status == StatusAcesso.RESTRITO and not pode_regularizar:
-        raise APIError(
-            BillingErrorCode.ORGANIZATION_RESTRICTED,
-            status_code=403,
-            context={
-                "reasons": [motivo.value for motivo in situacao.motivos],
-                "regularize_by": situacao.regularizar_ate.isoformat() if situacao.regularizar_ate is not None else None,
-            },
-        )
-    return contexto
-
-
 class OrganizacaoMiddleware:
-    def __init__(self, get_response, *, politica_comercial: PoliticaComercialTenant | None = None):
+    def __init__(self, get_response):
         self.get_response = get_response
-        self.politica_comercial = politica_comercial if politica_comercial is not None else resolver_contexto_comercial
 
     def __call__(self, request):
         request.tenant = None
@@ -232,21 +178,7 @@ class OrganizacaoMiddleware:
                 current_workspace_id=workspace_atual.pk if workspace_atual is not None else None,
             )
             request.current_workspace = workspace_atual
-        tenant_comercial = self.politica_comercial(
-            organizacao,
-            vinculo,
-            regularizacao_assinatura=rota_tem_marcador(
-                request.path_info,
-                request.method,
-                MARCADOR_REGULARIZACAO_ASSINATURA,
-            ),
-        )
-        if not isinstance(tenant_comercial, ContextoOrganizacao):
-            raise TypeError("PoliticaComercialTenant deve devolver ContextoOrganizacao.")
-        if tenant_comercial.organization_id != organizacao.pk:
-            raise ValueError("PoliticaComercialTenant não pode trocar a organização da request.")
-
-        tenant = tenant_comercial
+        tenant = ContextoOrganizacao(organizacao=organizacao, vinculo=vinculo)
         request.tenant = tenant
         request.organizacao = tenant.organizacao
         request.vinculo = tenant.vinculo

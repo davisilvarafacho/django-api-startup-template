@@ -11,7 +11,6 @@ x-app-environment: &app-environment
   DATABASE_PASSWORD: ${DATABASE_PASSWORD:-app-web-dev-only}
   DATABASE_HOST: db
   DATABASE_PORT: "5432"
-  DATABASE_BILLING_MODE: web
   REDIS_HOST: redis
   REDIS_PORT: "6379"
   POSTHOG_ENABLED: "False"
@@ -42,26 +41,6 @@ services:
       redis:
         condition: service_healthy
 
-  billing_ingress:
-    build: *app-build
-    command: uv run gunicorn api.wsgi:application --bind 0.0.0.0:8002 --workers 1 --reload --error-logfile - --access-logfile -
-    environment:
-      <<: *app-environment
-      DATABASE_BILLING_MODE: ingress
-      DATABASE_USER: ${DATABASE_BILLING_INGRESS_USER:-billing_ingress_dev}
-      DATABASE_PASSWORD: ${DATABASE_BILLING_INGRESS_PASSWORD:-billing-ingress-dev-only}
-      DATABASE_BILLING_MIGRATION_USER: ""
-      DATABASE_BILLING_MIGRATION_PASSWORD: ""
-    expose:
-      - "8002"
-    volumes:
-      - ..:/workspace:cached
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
   # Mesmo proxy do docker-compose.yml, com o server block de desenvolvimento:
   # a API é sempre acessada por http://localhost:8000 (via nginx), em qualquer
   # ambiente. Suba o runserver com `make run` dentro do container `app`.
@@ -75,7 +54,6 @@ services:
       - ../docker/nginx/sites/development:/etc/nginx/conf.d:ro
     depends_on:
       - app
-      - billing_ingress
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/nginx-health"]
       interval: 10s
@@ -88,15 +66,11 @@ services:
       POSTGRES_DB: base
       POSTGRES_USER: ${DATABASE_ADMIN_USER:-postgres}
       POSTGRES_PASSWORD: ${DATABASE_ADMIN_PASSWORD:-postgres}
-      DATABASE_BILLING_WEB_USER: ${DATABASE_USER:-app_web_dev}
-      DATABASE_BILLING_WEB_PASSWORD: ${DATABASE_PASSWORD:-app-web-dev-only}
-      DATABASE_BILLING_INGRESS_USER: ${DATABASE_BILLING_INGRESS_USER:-billing_ingress_dev}
-      DATABASE_BILLING_INGRESS_PASSWORD: ${DATABASE_BILLING_INGRESS_PASSWORD:-billing-ingress-dev-only}
-      DATABASE_BILLING_INGRESS_WORKER_USER: ${DATABASE_BILLING_INGRESS_WORKER_USER:-billing_ingress_worker_dev}
-      DATABASE_BILLING_INGRESS_WORKER_PASSWORD: ${DATABASE_BILLING_INGRESS_WORKER_PASSWORD:-billing-ingress-worker-dev-only}
+      DATABASE_WEB_USER: ${DATABASE_USER:-app_web_dev}
+      DATABASE_WEB_PASSWORD: ${DATABASE_PASSWORD:-app-web-dev-only}
     volumes:
       - devcontainer_postgres:/var/lib/postgresql/data
-      - ../docker/postgres/init-billing-roles.sh:/docker-entrypoint-initdb.d/10-billing-roles.sh:ro
+      - ../docker/postgres/init-app-roles.sh:/docker-entrypoint-initdb.d/10-app-roles.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DATABASE_ADMIN_USER:-postgres} -d base"]
       interval: 5s
@@ -117,26 +91,6 @@ services:
     build: *app-build
     command: uv run celery -A api worker -l info -Q celery
     environment: *app-environment
-    volumes:
-      - ..:/workspace:cached
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
-  billing_ingress_worker:
-    build: *app-build
-    command: uv run celery -A api worker -l info -Q billing_ingress
-    environment:
-      <<: *app-environment
-      DATABASE_BILLING_MODE: ingress
-      DATABASE_USER: ${DATABASE_BILLING_INGRESS_WORKER_USER:-billing_ingress_worker_dev}
-      DATABASE_PASSWORD: ${DATABASE_BILLING_INGRESS_WORKER_PASSWORD:-billing-ingress-worker-dev-only}
-      DATABASE_BILLING_INGRESS_USER: ""
-      DATABASE_BILLING_INGRESS_PASSWORD: ""
-      DATABASE_BILLING_MIGRATION_USER: ""
-      DATABASE_BILLING_MIGRATION_PASSWORD: ""
     volumes:
       - ..:/workspace:cached
     depends_on:

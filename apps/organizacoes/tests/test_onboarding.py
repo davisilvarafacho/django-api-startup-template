@@ -1,9 +1,8 @@
-"""Onboarding transacional de organizações sem implementação comercial provisória."""
+"""Onboarding transacional de organizações."""
 
 from django.utils import timezone
 
 import pytest
-from django_rls.context import get_active_rls_context
 
 from apps.api.core.errors import APIError
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
@@ -12,58 +11,6 @@ from apps.usuarios.models import Usuario
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
-
-
-class CatalogoPlanosTeste:
-    chamadas = []
-
-    @classmethod
-    def obter_versao_inicial(cls, *, codigo, periodicidade, moeda):
-        cls.chamadas.append(
-            {
-                "codigo": codigo,
-                "periodicidade": periodicidade,
-                "moeda": moeda,
-                "contexto_rls": dict(get_active_rls_context()),
-            }
-        )
-        return "versao-inicial", "preco-inicial"
-
-
-class AssinaturasTeste:
-    chamadas = []
-
-    @classmethod
-    def criar_gratuita(cls, *, organizacao, versao_plano, preco_plano):
-        cls.chamadas.append(
-            {
-                "modo": "gratuito",
-                "organizacao_id": organizacao.pk,
-                "versao_plano": versao_plano,
-                "preco_plano": preco_plano,
-                "contexto_rls": dict(get_active_rls_context()),
-            }
-        )
-        return object()
-
-    @classmethod
-    def criar_trial(cls, *, organizacao, versao_plano, preco_plano):
-        cls.chamadas.append(
-            {
-                "modo": "trial",
-                "organizacao_id": organizacao.pk,
-                "versao_plano": versao_plano,
-                "preco_plano": preco_plano,
-                "contexto_rls": dict(get_active_rls_context()),
-            }
-        )
-        return object()
-
-
-@pytest.fixture(autouse=True)
-def _limpar_colaboradores():
-    CatalogoPlanosTeste.chamadas.clear()
-    AssinaturasTeste.chamadas.clear()
 
 
 @pytest.mark.parametrize(
@@ -86,42 +33,25 @@ def test_conta_precisa_estar_ativa_sem_exclusao_e_com_email_verificado(campos, c
     assert excinfo.value.code == codigo
 
 
-def test_onboarding_inapto_falha_antes_de_carregar_modulos_comerciais(monkeypatch):
-    from apps.organizacoes import onboarding
+def test_onboarding_inapto_nao_cria_organizacao():
+    from apps.organizacoes.onboarding import OrganizationOnboarding
 
     usuario = criar_usuario(email_verificado_em=None)
-    monkeypatch.setattr(
-        onboarding,
-        "_carregar_colaboradores_comerciais",
-        lambda: (_ for _ in ()).throw(RuntimeError("comercial não deveria carregar")),
-    )
 
     with pytest.raises(APIError) as excinfo:
-        onboarding.OrganizationOnboarding.criar(usuario=usuario, nome="Inapta", slug="inapta")
+        OrganizationOnboarding.criar(usuario=usuario, nome="Inapta", slug="inapta")
 
     assert excinfo.value.code == "account.email_not_verified"
+    assert Organizacao.all_objects.filter(slug="inapta").exists() is False
 
 
-@pytest.mark.parametrize(
-    ("modo", "metodo_esperado"),
-    [("gratuito", "gratuito"), ("trial", "trial")],
-)
-def test_onboarding_copia_email_e_cria_proprietario_e_contrato_sob_rls(settings, modo, metodo_esperado):
+def test_onboarding_copia_email_e_cria_proprietario_e_workspace_inicial():
     from apps.organizacoes.onboarding import OrganizationOnboarding
     from apps.workspaces.models import VinculoWorkspace, Workspace
 
-    settings.SUBSCRIPTION_ONBOARDING_MODE = modo
-    settings.SUBSCRIPTION_ONBOARDING_PLAN = "inicial"
-    settings.SUBSCRIPTION_ONBOARDING_BILLING_PERIOD = "mensal"
     usuario = criar_usuario(email="owner@example.com", email_verificado_em=timezone.now())
 
-    organizacao = OrganizationOnboarding.criar(
-        usuario=usuario,
-        nome="Acme",
-        slug=f"acme-{modo}",
-        catalogo_planos=CatalogoPlanosTeste,
-        assinaturas=AssinaturasTeste,
-    )
+    organizacao = OrganizationOnboarding.criar(usuario=usuario, nome="Acme", slug="acme")
 
     organizacao.refresh_from_db()
     vinculo = Vinculo.objects.get(organizacao=organizacao, usuario=usuario)
@@ -130,37 +60,17 @@ def test_onboarding_copia_email_e_cria_proprietario_e_contrato_sob_rls(settings,
     assert vinculo.papel == Papel.PROPRIETARIO
     assert vinculo.current_workspace_id == workspace.pk
     assert VinculoWorkspace.objects.filter(vinculo=vinculo, workspace=workspace, selected_for_view=True).count() == 1
-    assert CatalogoPlanosTeste.chamadas == [
-        {
-            "codigo": "inicial",
-            "periodicidade": "mensal",
-            "moeda": "BRL",
-            "contexto_rls": {},
-        }
-    ]
-    assert AssinaturasTeste.chamadas == [
-        {
-            "modo": metodo_esperado,
-            "organizacao_id": organizacao.pk,
-            "versao_plano": "versao-inicial",
-            "preco_plano": "preco-inicial",
-            "contexto_rls": {"tenant_id": str(organizacao.pk), "workspace_mode": "system"},
-        }
-    ]
 
 
 @pytest.mark.parametrize(
     "colaborador",
-    ["contas", "organizacoes", "vinculos", "workspace", "catalogo", "assinaturas"],
+    ["contas", "organizacoes", "vinculos", "workspace"],
 )
-def test_onboarding_reverte_organizacao_e_vinculo_quando_colaborador_falha(monkeypatch, settings, colaborador):
+def test_onboarding_reverte_organizacao_e_vinculo_quando_colaborador_falha(monkeypatch, colaborador):
     from apps.organizacoes import onboarding
     from apps.organizacoes.memberships import Vinculos
     from apps.organizacoes.organizations import Organizacoes
 
-    settings.SUBSCRIPTION_ONBOARDING_MODE = "gratuito"
-    settings.SUBSCRIPTION_ONBOARDING_PLAN = "inicial"
-    settings.SUBSCRIPTION_ONBOARDING_BILLING_PERIOD = "mensal"
     usuario = criar_usuario(email_verificado_em=timezone.now())
 
     if colaborador == "contas":
@@ -181,7 +91,7 @@ def test_onboarding_reverte_organizacao_e_vinculo_quando_colaborador_falha(monke
             raise RuntimeError("vinculos")
 
         monkeypatch.setattr(Vinculos, "criar_proprietario", classmethod(vincular_e_falhar))
-    elif colaborador == "workspace":
+    else:
         from apps.workspaces.workspaces import Workspaces
 
         monkeypatch.setattr(
@@ -189,26 +99,12 @@ def test_onboarding_reverte_organizacao_e_vinculo_quando_colaborador_falha(monke
             "criar_inicial",
             classmethod(lambda cls, **kwargs: (_ for _ in ()).throw(RuntimeError("workspace"))),
         )
-    elif colaborador == "catalogo":
-        monkeypatch.setattr(
-            CatalogoPlanosTeste,
-            "obter_versao_inicial",
-            classmethod(lambda cls, **kwargs: (_ for _ in ()).throw(RuntimeError("catalogo"))),
-        )
-    else:
-        monkeypatch.setattr(
-            AssinaturasTeste,
-            "criar_gratuita",
-            classmethod(lambda cls, **kwargs: (_ for _ in ()).throw(RuntimeError("assinaturas"))),
-        )
 
     with pytest.raises(RuntimeError, match=colaborador):
         onboarding.OrganizationOnboarding.criar(
             usuario=usuario,
             nome="Rollback",
             slug=f"rollback-{colaborador}",
-            catalogo_planos=CatalogoPlanosTeste,
-            assinaturas=AssinaturasTeste,
         )
 
     assert Organizacao.all_objects.filter(slug=f"rollback-{colaborador}").exists() is False

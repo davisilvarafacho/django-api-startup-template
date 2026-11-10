@@ -1,4 +1,4 @@
-.PHONY: help install hooks up down stack kuma-up kuma-down billing-bootstrap migrate billing-migrate reset-migrations run run-observed worker worker-observed billing-ingress-worker beat test test-fast test-integration test-redis lint format check precommit shell docs docs-serve commitlint version-check obs-up obs-down dev-obs-up dev-obs-down nginx-test nginx-reload
+.PHONY: help install hooks up down stack kuma-up kuma-down db-roles migrate reset-migrations run run-observed worker worker-observed beat test test-fast test-integration test-redis lint format check precommit shell docs docs-serve commitlint version-check obs-up obs-down dev-obs-up dev-obs-down nginx-test nginx-reload
 
 DATABASE_NAME := $(or $(DATABASE_NAME),base)
 DATABASE_USER := $(or $(DATABASE_USER),app_web)
@@ -8,13 +8,6 @@ DATABASE_PORT := $(or $(DATABASE_PORT),5432)
 DATABASE_TEST_NAME := $(or $(DATABASE_TEST_NAME),base_test)
 DATABASE_ADMIN_USER := $(or $(DATABASE_ADMIN_USER),postgres)
 DATABASE_ADMIN_PASSWORD := $(or $(DATABASE_ADMIN_PASSWORD),postgres)
-DATABASE_BILLING_MIGRATION_USER := $(or $(DATABASE_BILLING_MIGRATION_USER),$(DATABASE_ADMIN_USER))
-DATABASE_BILLING_MIGRATION_PASSWORD := $(or $(DATABASE_BILLING_MIGRATION_PASSWORD),$(DATABASE_ADMIN_PASSWORD))
-DATABASE_BILLING_INGRESS_USER := $(or $(DATABASE_BILLING_INGRESS_USER),billing_ingress_app)
-DATABASE_BILLING_INGRESS_PASSWORD := $(or $(DATABASE_BILLING_INGRESS_PASSWORD),billing-ingress-dev-only)
-DATABASE_BILLING_INGRESS_WORKER_USER := $(or $(DATABASE_BILLING_INGRESS_WORKER_USER),billing_ingress_worker)
-DATABASE_BILLING_INGRESS_WORKER_PASSWORD := $(or $(DATABASE_BILLING_INGRESS_WORKER_PASSWORD),billing-ingress-worker-dev-only)
-BILLING_COMPOSE_FILE := $(or $(BILLING_COMPOSE_FILE),docker-compose.yml)
 
 export DATABASE_NAME DATABASE_USER DATABASE_PASSWORD DATABASE_HOST DATABASE_PORT DATABASE_TEST_NAME
 
@@ -31,9 +24,9 @@ hooks: ## Ativa os hooks de pre-commit
 up: ## Sobe Postgres + Redis (docker compose)
 	docker compose up -d db redis
 
-billing-bootstrap: ## Provisiona/reaplica os principals de billing no PostgreSQL local
-	docker compose -f "$(BILLING_COMPOSE_FILE)" up -d --wait db
-	docker compose -f "$(BILLING_COMPOSE_FILE)" exec -T db sh /docker-entrypoint-initdb.d/10-billing-roles.sh
+db-roles: ## Provisiona/reaplica o login web (sem BYPASSRLS) no PostgreSQL local
+	docker compose up -d --wait db
+	docker compose exec -T db sh /docker-entrypoint-initdb.d/10-app-roles.sh
 
 stack: ## Sobe a stack completa, com a API atrás do nginx (http://localhost:8000)
 	docker compose up -d --build
@@ -51,7 +44,7 @@ nginx-test: ## Valida a configuração do nginx (os dois ambientes) sem subir a 
 	@for ambiente in production development; do \
 		echo "==> $$ambiente"; \
 		docker run --rm \
-			--add-host web:127.0.0.1 --add-host app:127.0.0.1 --add-host billing_ingress:127.0.0.1 \
+			--add-host web:127.0.0.1 --add-host app:127.0.0.1 \
 			-v "$(CURDIR)/docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro" \
 			-v "$(CURDIR)/docker/nginx/snippets:/etc/nginx/snippets:ro" \
 			-v "$(CURDIR)/docker/nginx/sites/$$ambiente:/etc/nginx/conf.d:ro" \
@@ -78,14 +71,8 @@ dev-obs-down: ## Derruba a observabilidade conectada ao devcontainer
 	PROMETHEUS_CONFIG=./observability/prometheus-devcontainer.yml \
 	docker compose -f docker-compose.observability.yml down
 
-migrate: billing-migrate ## Aplica as migrações com a credencial DDL dedicada
-
-billing-migrate: export DATABASE_BILLING_MIGRATION_USER := $(DATABASE_BILLING_MIGRATION_USER)
-billing-migrate: export DATABASE_BILLING_MIGRATION_PASSWORD := $(DATABASE_BILLING_MIGRATION_PASSWORD)
-billing-migrate: ## Aplica migrations com a credencial DDL dedicada
-	@test -n "$$DATABASE_BILLING_MIGRATION_USER" -a -n "$$DATABASE_BILLING_MIGRATION_PASSWORD" || \
-		{ echo "Configure a credencial dedicada de migration." >&2; exit 2; }
-	DATABASE_BILLING_MODE=migration uv run python manage.py migrate --database=billing_migration
+migrate: ## Aplica as migrações com a credencial admin (o login web não tem DDL)
+	DATABASE_USER="$(DATABASE_ADMIN_USER)" DATABASE_PASSWORD="$(DATABASE_ADMIN_PASSWORD)" uv run python manage.py migrate
 
 reset-migrations: ## Planeja o reset; use RESET_MIGRATIONS_ARGS='--apply --confirm-database base' para executar
 	uv run python manage.py reset_migrations $(RESET_MIGRATIONS_ARGS)
@@ -106,14 +93,6 @@ worker: ## Sobe o worker do Celery
 
 worker-observed: ## Sobe o worker com traces OpenTelemetry habilitados
 	OTEL_ENABLED=True uv run celery -A api worker -l info -Q celery
-
-billing-ingress-worker: export DATABASE_BILLING_INGRESS_WORKER_USER := $(DATABASE_BILLING_INGRESS_WORKER_USER)
-billing-ingress-worker: export DATABASE_BILLING_INGRESS_WORKER_PASSWORD := $(DATABASE_BILLING_INGRESS_WORKER_PASSWORD)
-billing-ingress-worker: ## Sobe o worker global com a credencial dedicada de ingresso
-	DATABASE_BILLING_MODE=ingress \
-	DATABASE_USER="$${DATABASE_BILLING_INGRESS_WORKER_USER}" \
-	DATABASE_PASSWORD="$${DATABASE_BILLING_INGRESS_WORKER_PASSWORD}" \
-	uv run celery -A api worker -l info -Q billing_ingress
 
 beat: ## Sobe o beat do Celery (agendador via banco)
 	uv run celery -A api beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler

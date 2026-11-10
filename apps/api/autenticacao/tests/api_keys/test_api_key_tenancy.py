@@ -13,7 +13,6 @@ from apps.api.autenticacao.models import TokenMetaData, TokenType
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
 from apps.organizacoes.models import Convite, Organizacao, Papel, Vinculo
 from internal_frameworks.context import ContextVariable
-from tests.support.assinaturas import garantir_assinatura_corrente
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
@@ -50,9 +49,7 @@ def _vincular(usuario, organizacao, papel=Papel.MEMBRO):
 
 
 def _organizacao(slug="org-tenancy"):
-    organizacao = Organizacao.objects.create(nome="Org", slug=slug)
-    garantir_assinatura_corrente(organizacao)
-    return organizacao
+    return Organizacao.objects.create(nome="Org", slug=slug)
 
 
 def test_api_key_ativa_autentica_sem_precisar_do_header():
