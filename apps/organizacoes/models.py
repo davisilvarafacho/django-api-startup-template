@@ -133,6 +133,13 @@ class Vinculo(BaseTenantless):
         help_text=_("Workspace operacional atual deste vínculo."),
         db_comment="Workspace operacional atual deste vínculo.",
     )
+    plan_limit_suspended_at = models.DateTimeField(
+        _("suspenso por limite do plano em"),
+        blank=True,
+        null=True,
+        help_text=_("Momento em que a cobrança desativou o vínculo por limite do plano; vazio quando não suspenso pela cobrança."),
+        db_comment="Momento em que a cobrança desativou o vínculo por limite do plano; vazio quando não suspenso pela cobrança.",
+    )
 
     def tem_papel_minimo(self, papel):
         """Informa se este vínculo alcança o nível `papel`."""
