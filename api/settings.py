@@ -11,7 +11,7 @@ from django.utils.translation import gettext_lazy as _
 import sentry_sdk
 from celery.schedules import crontab
 
-from api.configure_enviroment import configure_enviroment
+from api.configure_enviroment import build_checkout_variants, configure_enviroment
 from api.logging_config import build_logging
 from utils.env import get_bool_from_env, get_env_var, get_int_from_env, get_legacy_env_vars, get_list_from_env
 
@@ -146,6 +146,7 @@ LIBS_APPS = [
     "axes",
     "corsheaders",
     "django_celery_beat",
+    "django_checkouts",
     "django_filters",
     "django_prometheus",
     "django_rls",
@@ -164,6 +165,7 @@ BUSINESS_APPS = [
     "apps.api.core",
     "apps.api.mcp_server",
     "apps.api.metadata",
+    "apps.billing",
     "apps.logs",
     "apps.organizacoes",
     # "apps.parametros",  # TODO: reativar depois de corrigir apps/parametros/models.py (Parametro.value)
@@ -318,6 +320,31 @@ ACCOUNT_DELETION_GRACE_DAYS = get_int_from_env("ACCOUNT_DELETION_GRACE_DAYS", 7)
 ACCOUNT_DELETION_BATCH_SIZE = get_int_from_env("ACCOUNT_DELETION_BATCH_SIZE", 100)
 ACCOUNT_REACTIVATION_TOKEN_MAX_AGE_SECONDS = get_int_from_env("ACCOUNT_REACTIVATION_TOKEN_MAX_AGE_SECONDS", 60 * 60)
 FRONTEND_ACCOUNT_REACTIVATION_URL = get_env_var("FRONTEND_ACCOUNT_REACTIVATION_URL", "http://localhost:3000/reativar-conta")
+
+# Cobrança: o gateway de pagamento é uma variante de `django-checkouts`. As chaves
+# ficam no ambiente; o nome do kwarg do gateway Stripe é `api_key`. Sem chave fora
+# de produção a variante não é registrada (ver `build_checkout_variants`).
+STRIPE_SECRET_KEY = get_env_var("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = get_env_var("STRIPE_WEBHOOK_SECRET", "")
+CHECKOUT_VARIANTS = build_checkout_variants(
+    api_key=STRIPE_SECRET_KEY,
+    webhook_secret=STRIPE_WEBHOOK_SECRET,
+    in_production=IN_PRODUCTION,
+)
+BILLING_GATEWAY_VARIANT = get_env_var("BILLING_GATEWAY_VARIANT", "stripe")
+# Para onde o checkout hospedado devolve o navegador. Em produção não há padrão:
+# uma URL de desenvolvimento não pode ir para o ar por engano.
+FRONTEND_BILLING_CHECKOUT_SUCCESS_URL = get_env_var(
+    "FRONTEND_BILLING_CHECKOUT_SUCCESS_URL",
+    "" if IN_PRODUCTION else "http://localhost:3000/cobranca/checkout/sucesso",
+)
+FRONTEND_BILLING_CHECKOUT_CANCEL_URL = get_env_var(
+    "FRONTEND_BILLING_CHECKOUT_CANCEL_URL",
+    "" if IN_PRODUCTION else "http://localhost:3000/cobranca/checkout/cancelado",
+)
+BILLING_FREE_PLAN_MEMBER_LIMIT = get_int_from_env("BILLING_FREE_PLAN_MEMBER_LIMIT", 3)
+BILLING_RECONCILE_WINDOW_HOURS = get_int_from_env("BILLING_RECONCILE_WINDOW_HOURS", 72)
+BILLING_EVENT_MAX_ATTEMPTS = get_int_from_env("BILLING_EVENT_MAX_ATTEMPTS", 10)
 
 
 AUTH_USER_MODEL = "usuarios.Usuario"
