@@ -14,19 +14,13 @@ from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.memberships import Vinculos
 from apps.organizacoes.models import Convite, Organizacao, Papel, Time, Vinculo
 from apps.organizacoes.onboarding import OrganizationOnboarding
-from apps.organizacoes.organizations import (
-    AssinaturasCicloOrganizacao,
-    EncerramentoAgendado,
-    EncerramentoSemAlteracao,
-    Organizacoes,
-)
+from apps.organizacoes.organizations import Organizacoes
 from apps.organizacoes.permissions import PapelMinimoPermission, TenantPermission
 from apps.organizacoes.schema import (
     document_invitation_accept,
     document_membership_delete,
     document_membership_update,
     document_organization_billing_email_update,
-    document_organization_closure_delete,
     document_organization_closure_post,
 )
 from apps.organizacoes.serializers import (
@@ -41,13 +35,6 @@ from apps.organizacoes.serializers import (
 )
 from apps.organizacoes.teams import Times
 from apps.usuarios.policies import exigir_email_verificado
-
-
-def _carregar_assinaturas() -> type[AssinaturasCicloOrganizacao]:
-    """Importa o ciclo comercial real somente quando a Task 9 estiver instalada."""
-    from apps.assinaturas.subscriptions import Assinaturas
-
-    return Assinaturas
 
 
 @extend_schema_view(
@@ -128,26 +115,12 @@ class OrganizacaoViewSet(
         return organizacao
 
     @document_organization_closure_post
-    @document_organization_closure_delete
-    @action(detail=True, methods=["post", "delete"], url_path="encerramento")
+    @action(detail=True, methods=["post"], url_path="encerramento")
     @require_recent_auth()
     def encerramento(self, request, *args, **kwargs):
         organizacao = self._organizacao_do_proprietario()
         exigir_email_verificado(request.user)
-        assinaturas = _carregar_assinaturas()
-        if request.method == "DELETE":
-            Organizacoes.cancelar_encerramento(organizacao, assinaturas=assinaturas, ator=request.user)
-            return Response(status=status.HTTP_204_NO_CONTENT)
-
-        resultado = Organizacoes.solicitar_encerramento(
-            organizacao,
-            assinaturas=assinaturas,
-            ator=request.user,
-        )
-        if isinstance(resultado, EncerramentoAgendado):
-            return Response({"scheduled_for": resultado.agendado_para.isoformat()}, status=status.HTTP_202_ACCEPTED)
-        if isinstance(resultado, EncerramentoSemAlteracao) and resultado.agendado_para is not None:
-            return Response({"scheduled_for": resultado.agendado_para.isoformat()}, status=status.HTTP_202_ACCEPTED)
+        Organizacoes.solicitar_encerramento(organizacao, ator=request.user)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

@@ -1,4 +1,4 @@
-"""Fatos de domínio de vínculos e ocupação de seats."""
+"""Casos de uso de vínculos e convites."""
 
 from datetime import timedelta
 
@@ -9,7 +9,7 @@ from django.utils import timezone
 import pytest
 
 from apps.api.core.errors import APIError
-from apps.organizacoes.memberships import OcupacaoSeats, Vinculos
+from apps.organizacoes.memberships import Vinculos
 from apps.organizacoes.models import Convite, Organizacao, Papel, Vinculo
 from apps.workspaces.models import VinculoWorkspace, Workspace
 from tests.support.usuarios import criar_usuario
@@ -44,44 +44,6 @@ def test_agendamento_de_encerramento_exige_solicitacao():
         )
 
 
-def test_calcular_ocupacao_conta_vinculos_ativos_e_suspensos_e_reserva_somente_convite_vivo(
-    django_assert_num_queries,
-):
-    organizacao = Organizacao.objects.create(nome="Acme", slug="acme-ocupacao")
-    Vinculo.objects.create(organizacao=organizacao, usuario=criar_usuario(email="ativo@example.com"), papel=Papel.MEMBRO)
-    Vinculo.objects.create(
-        organizacao=organizacao,
-        usuario=criar_usuario(email="suspenso@example.com"),
-        papel=Papel.MEMBRO,
-        is_active=False,
-    )
-    Vinculo.objects.create(organizacao=organizacao, usuario=criar_usuario(email="isento@example.com"), papel=Papel.PROPRIETARIO)
-    removido = Vinculo.objects.create(organizacao=organizacao, usuario=criar_usuario(email="removido@example.com"), papel=Papel.MEMBRO)
-    removido.delete()
-
-    Convite.objects.create(organizacao=organizacao, email="pendente@example.com", expira_em=timezone.now() + timedelta(days=1))
-    Convite.objects.create(
-        organizacao=organizacao,
-        email="inativo@example.com",
-        expira_em=timezone.now() + timedelta(days=1),
-        is_active=False,
-    )
-    Convite.objects.create(organizacao=organizacao, email="expirado@example.com", expira_em=timezone.now() - timedelta(seconds=1))
-    Convite.objects.create(
-        organizacao=organizacao,
-        email="aceito@example.com",
-        expira_em=timezone.now() + timedelta(days=1),
-        aceito_em=timezone.now(),
-    )
-    cancelado = Convite.objects.create(organizacao=organizacao, email="cancelado@example.com", expira_em=timezone.now() + timedelta(days=1))
-    cancelado.delete()
-
-    with django_assert_num_queries(1):
-        ocupacao = Vinculos.calcular_ocupacao(organizacao, frozenset({Papel.PROPRIETARIO}))
-
-    assert ocupacao == OcupacaoSeats(consumidos=2, reservados=1)
-
-
 def test_criar_proprietario_cria_vinculo_pelo_servico():
     organizacao = Organizacao.objects.create(nome="Acme", slug="acme-proprietario")
     usuario = criar_usuario()
@@ -108,7 +70,7 @@ def test_atualizar_vinculo_promovido_recebe_acessos_e_rebaixado_preserva_linhas(
     assert acesso.is_deleted is False
 
 
-def test_aceitar_convite_cria_vinculo_e_consumo_sem_manter_reserva():
+def test_aceitar_convite_cria_vinculo_e_marca_convite_aceito():
     organizacao = Organizacao.objects.create(nome="Acme", slug="acme-aceite")
     usuario = criar_usuario(email="aceite@example.com", email_verificado_em=timezone.now())
     convite = Convite.objects.create(organizacao=organizacao, email=usuario.email, papel=Papel.GESTOR)
@@ -118,7 +80,7 @@ def test_aceitar_convite_cria_vinculo_e_consumo_sem_manter_reserva():
     convite.refresh_from_db()
     assert vinculo.papel == Papel.GESTOR
     assert convite.aceito_em is not None
-    assert Vinculos.calcular_ocupacao(organizacao, frozenset()) == OcupacaoSeats(consumidos=1, reservados=0)
+    assert Vinculo.objects.filter(organizacao=organizacao, usuario=usuario).count() == 1
 
 
 def test_aceitar_convite_revalida_email_sob_lock():

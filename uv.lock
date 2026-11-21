@@ -1,11 +1,11 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.15'",
     "python_full_version == '3.14.*'",
     "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform == 'emscripten'",
-    "(python_full_version < '3.14' and sys_platform != 'emscripten') or (python_full_version < '3.12' and sys_platform == 'emscripten')",
+    "python_full_version < '3.12' or (python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform != 'emscripten')",
 ]
 
 [[package]]
@@ -804,7 +804,6 @@ dependencies = [
     { name = "django-axes" },
     { name = "django-cachalot" },
     { name = "django-celery-beat" },
-    { name = "django-checkouts", extra = ["stripe"] },
     { name = "django-cors-headers" },
     { name = "django-dbbackup" },
     { name = "django-filter" },
@@ -922,7 +921,6 @@ requires-dist = [
     { name = "django-axes", specifier = "==8.0.0" },
     { name = "django-cachalot", specifier = "==2.8.0" },
     { name = "django-celery-beat", specifier = ">=2.9.0" },
-    { name = "django-checkouts", extras = ["stripe"], specifier = "==1.0.1" },
     { name = "django-cors-headers", specifier = "==4.9.0" },
     { name = "django-dbbackup", specifier = "==5.0.1" },
     { name = "django-filter", specifier = "==25.2" },
@@ -1075,24 +1073,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/05/45/fc97bc1d9af8e7dc07f1e37044d9551a30e6793249864cef802341e2e3a8/django_celery_beat-2.9.0.tar.gz", hash = "sha256:92404650f52fcb44cf08e2b09635cb1558327c54b1a5d570f0e2d3a22130934c", size = 177667, upload-time = "2026-02-28T16:45:34.749Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/71/ae/9befa7ae37f5e5c41be636a254fcf47ff30dd5c88bd115070e252f6b9162/django_celery_beat-2.9.0-py3-none-any.whl", hash = "sha256:4a9e5ebe26d6f8d7215e1fc5c46e466016279dc102435a28141108649bdf2157", size = 105013, upload-time = "2026-02-28T16:45:32.822Z" },
-]
-
-[[package]]
-name = "django-checkouts"
-version = "1.0.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "django" },
-    { name = "requests" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/4f/bf/81f174304ec701fd59b3aca165a142aa4249cd2d6314632beaabbc8ecd3f/django_checkouts-1.0.1.tar.gz", hash = "sha256:ddbf1961f4de019e9f8277a5330760b8da9cf0dce7e3114b049c7705d3d9d6a5", size = 188663, upload-time = "2026-09-05T22:38:01.314Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/06/d8/fe4a2b05f6cde9e2e2771ab40acecdfe0e8b687b0b6b3f2cb45f937c7640/django_checkouts-1.0.1-py3-none-any.whl", hash = "sha256:3ab58fab905a794b1876dca44602b9e5ccce7bb68d8e1944dc3a49028cc797b8", size = 57348, upload-time = "2026-09-05T22:37:59.967Z" },
-]
-
-[package.optional-dependencies]
-stripe = [
-    { name = "stripe" },
 ]
 
 [[package]]
@@ -3436,19 +3416,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d7/dd/04d56c2a5232358df41f3d0f0e31833d378b6c8ed7803a6b1b7867b0eba6/stevedore-5.9.0.tar.gz", hash = "sha256:abbd0af7a38a8bbb1d6adea2e35b17609cf004eaac323e88a8d8963640dd2b3c", size = 514850, upload-time = "2026-07-02T11:38:08.509Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/62/8d/008761f6e1000600e5303db30d05724bdcf3d2d186cbb59fac79b52e39ed/stevedore-5.9.0-py3-none-any.whl", hash = "sha256:e520945d4c257700eddc1eb1d79df04b2ea578eef185e0e3fa5b442fc848d3f7", size = 54463, upload-time = "2026-07-02T11:38:07.43Z" },
-]
-
-[[package]]
-name = "stripe"
-version = "15.6.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "requests" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/1e/a6/02ea2b4e1b57913ae2e68801bf2168120bec97206782a781599339abfd64/stripe-15.6.1.tar.gz", hash = "sha256:9f3986aa960419041aba9c76191746bdf2c342c95892acfbf6edb500ab006d31", size = 1569005, upload-time = "2026-09-01T18:44:41.751Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a9/4b/cd2d7ad83a3f49300cb3cc69ae102de68de792035bf31b0383e1c6563ec3/stripe-15.6.1-py3-none-any.whl", hash = "sha256:b33e1ea76462d7289e5fe755a1132b82099151bfb31e961021655471e6d216bf", size = 2218765, upload-time = "2026-09-01T18:44:39.706Z" },
 ]
 
 [[package]]

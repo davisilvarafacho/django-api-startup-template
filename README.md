@@ -15,7 +15,7 @@ Comandos comuns:
 
 ```bash
 make test
-make billing-bootstrap
+make db-roles
 make migrate
 uv lock --upgrade
 ```
@@ -143,16 +143,16 @@ subir a infra local:
 ```bash
 cp .env.example .env   # e preencha DATABASE_* / REDIS_*
 make up
-make billing-bootstrap
+make db-roles
 make migrate
 make run
 ```
 
-Antes do bootstrap em um volume PostgreSQL que já contenha dados, faça e teste
-um backup. O alvo é idempotente e reaplica os principals dedicados sem colocar
-senhas na linha de comando; consulte o
-[runbook de assinaturas](docs/how-to/operar-assinaturas.md) para migrar volumes
-antigos e configurar os quatro logins distintos.
+`make db-roles` é idempotente: cria (ou reaplica os grants do) login web
+`DATABASE_USER`, que é NOSUPERUSER/NOBYPASSRLS para que as policies do RLS valham
+para a aplicação. `make migrate` roda com a credencial admin (`DATABASE_ADMIN_*`),
+porque o login web não tem permissão de DDL. Em um volume novo o container do
+PostgreSQL já executa o script na inicialização.
 
 Subir a stack completa (web + worker + beat) em containers:
 

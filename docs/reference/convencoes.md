@@ -23,13 +23,13 @@ qualquer profundidade da hierarquia.
 
 ```txt
 apps/
-└── assinaturas/
+└── vendas/
     └── subapps/
-        └── faturamento/
+        └── pedidos/
 ```
 
 O dotted path acompanha a estrutura física, por exemplo
-`apps.assinaturas.subapps.faturamento`.
+`apps.vendas.subapps.pedidos`.
 
 #### 1.1.1. Agrupadores
 
@@ -436,7 +436,7 @@ dono** da variável; o que vem depois especifica:
 |---|---|---|
 | `FRONTEND_` | tudo que aponta para o frontend: `FRONTEND_<DOMÍNIO>_<O QUE É>_URL` | `FRONTEND_AUTH_PASSWORD_RESET_URL`, `FRONTEND_PAYMENT_SUCCESS_URL` |
 | Fornecedor | serviço de terceiro ou ferramenta | `STRIPE_`, `RESEND_`, `BACKBLAZE_`, `SENTRY_`, `POSTHOG_`, `OTEL_` |
-| Tecnologia de infra | conexão, papéis e logins de banco, cache, fila | `DATABASE_<PAPEL>_<CAMPO>` (`DATABASE_BILLING_INGRESS_USER`), `REDIS_`, `CELERY_` |
+| Tecnologia de infra | conexão, papéis e logins de banco, cache, fila | `DATABASE_<PAPEL>_<CAMPO>` (`DATABASE_ADMIN_USER`), `REDIS_`, `CELERY_` |
 | Domínio de negócio | regra ou fluxo da aplicação | `AUTH_`, `ACCOUNT_`, `SUBSCRIPTION_`, `ORGANIZATION_` |
 | Framework | configuração do framework | `DJANGO_`, `MCP_` |
 

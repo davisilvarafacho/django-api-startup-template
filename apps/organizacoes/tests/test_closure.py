@@ -1,8 +1,7 @@
-"""Encerramento imediato, agendado e idempotente de organizações."""
+"""Encerramento imediato e idempotente de organizações."""
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
-from threading import Event, Lock
+from threading import Event
 from time import monotonic, sleep
 from unittest.mock import patch
 
@@ -10,59 +9,15 @@ from django.db import close_old_connections, connections
 from django.utils import timezone
 
 import pytest
-from django_rls.context import get_active_rls_context
 
 from apps.api.autenticacao.models import AuthToken, TokenMetaData, TokenType
 from apps.api.core.errors import APIError
 from apps.organizacoes.memberships import Vinculos
 from apps.organizacoes.models import Convite, Organizacao, Papel, Vinculo
-from apps.organizacoes.organizations import (
-    EncerramentoAgendado,
-    EncerramentoEfetivado,
-    EncerramentoSemAlteracao,
-    Organizacoes,
-    TermoEncerramentoAgendado,
-    TermoEncerramentoImediato,
-)
+from apps.organizacoes.organizations import Organizacoes
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
-
-
-class AssinaturasEncerramentoTeste:
-    termo = TermoEncerramentoImediato()
-    chamadas = []
-    lock = Lock()
-
-    @classmethod
-    def solicitar_encerramento(cls, organizacao, *, agora):
-        return cls.termo
-
-    @classmethod
-    def cancelar_encerramento(cls, organizacao):
-        return None
-
-    @classmethod
-    def encerrar(cls, organizacao, *, encerrada_em):
-        with cls.lock:
-            cls.chamadas.append(
-                {
-                    "organizacao_id": organizacao.pk,
-                    "encerrada_em": encerrada_em,
-                    "contexto_rls": dict(get_active_rls_context()),
-                }
-            )
-
-
-@pytest.fixture(autouse=True)
-def _limpar_chamadas():
-    AssinaturasEncerramentoTeste.termo = TermoEncerramentoImediato()
-    AssinaturasEncerramentoTeste.chamadas.clear()
-
-
-def _solicitar_encerramento(organizacao, termo, *, assinaturas=AssinaturasEncerramentoTeste, **kwargs):
-    assinaturas.termo = termo
-    return Organizacoes.solicitar_encerramento(organizacao, assinaturas=assinaturas, **kwargs)
 
 
 def _cenario_encerramento(slug="encerramento"):
@@ -86,23 +41,17 @@ def _cenario_encerramento(slug="encerramento"):
     return proprietario, organizacao, vinculos, convite, api_key, sessao
 
 
-def test_termo_imediato_encerra_contrato_e_revoga_acessos_sem_excluir_usuarios():
+def test_encerramento_revoga_acessos_sem_excluir_usuarios():
     agora = timezone.now()
     proprietario, organizacao, vinculos, convite, api_key, sessao = _cenario_encerramento("imediato")
 
-    resultado = _solicitar_encerramento(
-        organizacao,
-        TermoEncerramentoImediato(),
-        assinaturas=AssinaturasEncerramentoTeste,
-        ator=proprietario,
-        agora=agora,
-    )
+    encerrada = Organizacoes.solicitar_encerramento(organizacao, ator=proprietario, agora=agora)
 
     organizacao = Organizacao.all_objects.get(pk=organizacao.pk)
     api_key.refresh_from_db()
     sessao.refresh_from_db()
     convite.refresh_from_db()
-    assert isinstance(resultado, EncerramentoEfetivado)
+    assert encerrada is True
     assert organizacao.encerramento_solicitado_em == agora
     assert organizacao.encerramento_agendado_para is None
     assert organizacao.is_active is False
@@ -113,178 +62,36 @@ def test_termo_imediato_encerra_contrato_e_revoga_acessos_sem_excluir_usuarios()
     assert api_key.revoked_by == proprietario
     assert sessao.revoked_at is None
     assert type(proprietario).objects.filter(pk__in=[item.usuario_id for item in vinculos]).count() == 2
-    assert AssinaturasEncerramentoTeste.chamadas == [
-        {
-            "organizacao_id": organizacao.pk,
-            "encerrada_em": agora,
-            "contexto_rls": {"tenant_id": str(organizacao.pk), "workspace_mode": "system"},
-        }
-    ]
 
 
-def test_termo_agendado_preserva_acesso_ate_o_fim_do_periodo():
-    agora = timezone.now()
-    fim_periodo = agora + timedelta(days=20)
-    _, organizacao, vinculos, convite, api_key, _ = _cenario_encerramento("agendado")
-
-    resultado = _solicitar_encerramento(
-        organizacao,
-        TermoEncerramentoAgendado(agendado_para=fim_periodo),
-        assinaturas=AssinaturasEncerramentoTeste,
-        agora=agora,
-    )
-
-    organizacao.refresh_from_db()
-    api_key.refresh_from_db()
-    convite.refresh_from_db()
-    assert resultado == EncerramentoAgendado(agendado_para=fim_periodo)
-    assert organizacao.encerramento_solicitado_em == agora
-    assert organizacao.encerramento_agendado_para == fim_periodo
-    assert organizacao.is_active is True
-    assert organizacao.is_deleted is False
-    assert Vinculo.objects.filter(pk__in=[item.pk for item in vinculos], is_active=True).count() == 2
-    assert convite.is_deleted is False
-    assert api_key.revoked_at is None
-    assert AssinaturasEncerramentoTeste.chamadas == []
-
-
-def test_servico_revalida_proprietario_antes_de_solicitar_encerramento():
+def test_servico_revalida_proprietario_antes_de_encerrar():
     agora = timezone.now()
     _, organizacao, _, _, _, _ = _cenario_encerramento("ator-rebaixado")
     ator = criar_usuario(email="admin-ator-rebaixado@example.com", email_verificado_em=agora)
     Vinculo.objects.create(organizacao=organizacao, usuario=ator, papel=Papel.ADMINISTRADOR)
 
     with pytest.raises(APIError) as erro:
-        _solicitar_encerramento(
-            organizacao,
-            TermoEncerramentoAgendado(agendado_para=agora + timedelta(days=10)),
-            ator=ator,
-            agora=agora,
-        )
+        Organizacoes.solicitar_encerramento(organizacao, ator=ator, agora=agora)
 
     assert erro.value.code == "organizations.role_insufficient"
     organizacao.refresh_from_db()
     assert organizacao.encerramento_solicitado_em is None
-
-
-def test_repetir_agendamento_devolve_resultado_idempotente_com_a_data_existente():
-    agora = timezone.now()
-    fim_periodo = agora + timedelta(days=20)
-    _, organizacao, _, _, _, _ = _cenario_encerramento("agendamento-idempotente")
-
-    primeiro = _solicitar_encerramento(
-        organizacao,
-        TermoEncerramentoAgendado(agendado_para=fim_periodo),
-        assinaturas=AssinaturasEncerramentoTeste,
-        agora=agora,
-    )
-    segundo = _solicitar_encerramento(
-        organizacao,
-        TermoEncerramentoAgendado(agendado_para=fim_periodo + timedelta(days=10)),
-        assinaturas=AssinaturasEncerramentoTeste,
-        agora=agora + timedelta(minutes=1),
-    )
-
-    assert primeiro == EncerramentoAgendado(agendado_para=fim_periodo)
-    assert segundo == EncerramentoSemAlteracao(agendado_para=fim_periodo)
-
-
-def test_repetir_encerramento_imediato_devolve_resultado_idempotente_sem_data():
-    _, organizacao, _, _, _, _ = _cenario_encerramento("imediato-idempotente")
-
-    primeiro = _solicitar_encerramento(
-        organizacao,
-        TermoEncerramentoImediato(),
-        assinaturas=AssinaturasEncerramentoTeste,
-    )
-    segundo = _solicitar_encerramento(
-        organizacao,
-        TermoEncerramentoImediato(),
-        assinaturas=AssinaturasEncerramentoTeste,
-    )
-
-    assert isinstance(primeiro, EncerramentoEfetivado)
-    assert segundo == EncerramentoSemAlteracao(agendado_para=None)
-
-
-def test_termo_desconhecido_falha_fechado_sem_registrar_encerramento():
-    _, organizacao, _, _, _, _ = _cenario_encerramento("termo-desconhecido")
-
-    with pytest.raises(TypeError, match="TermoEncerramento"):
-        _solicitar_encerramento(
-            organizacao,
-            object(),
-            assinaturas=AssinaturasEncerramentoTeste,
-        )
-
-    organizacao.refresh_from_db()
-    assert organizacao.encerramento_solicitado_em is None
-    assert organizacao.encerramento_agendado_para is None
-    assert AssinaturasEncerramentoTeste.chamadas == []
-
-
-def test_cancelar_remove_agendamento_e_impede_efetivacao_posterior():
-    agora = timezone.now()
-    fim_periodo = agora + timedelta(days=20)
-    _, organizacao, _, _, api_key, _ = _cenario_encerramento("cancelado")
-    _solicitar_encerramento(
-        organizacao,
-        TermoEncerramentoAgendado(agendado_para=fim_periodo),
-        assinaturas=AssinaturasEncerramentoTeste,
-        agora=agora,
-    )
-
-    cancelado = Organizacoes.cancelar_encerramento(organizacao, assinaturas=AssinaturasEncerramentoTeste)
-    efetivado = Organizacoes.efetivar_encerramento(
-        organizacao.pk,
-        assinaturas=AssinaturasEncerramentoTeste,
-        agora=fim_periodo,
-    )
-
-    organizacao.refresh_from_db()
-    api_key.refresh_from_db()
-    assert cancelado is True
-    assert efetivado is False
-    assert organizacao.encerramento_solicitado_em is None
-    assert organizacao.encerramento_agendado_para is None
     assert organizacao.is_active is True
-    assert api_key.revoked_at is None
-    assert AssinaturasEncerramentoTeste.chamadas == []
 
 
-def test_falha_ao_encerrar_assinatura_reverte_toda_a_efetivacao():
-    agora = timezone.now()
-    proprietario, organizacao, vinculos, convite, api_key, _ = _cenario_encerramento("rollback")
+def test_repetir_encerramento_e_idempotente():
+    _, organizacao, _, _, _, _ = _cenario_encerramento("idempotente")
 
-    class AssinaturasComFalha(AssinaturasEncerramentoTeste):
-        @classmethod
-        def encerrar(cls, organizacao, *, encerrada_em):
-            raise RuntimeError("assinatura")
+    primeiro = Organizacoes.solicitar_encerramento(organizacao)
+    segundo = Organizacoes.solicitar_encerramento(organizacao)
 
-    with pytest.raises(RuntimeError, match="assinatura"):
-        _solicitar_encerramento(
-            organizacao,
-            TermoEncerramentoImediato(),
-            assinaturas=AssinaturasComFalha,
-            ator=proprietario,
-            agora=agora,
-        )
-
-    organizacao.refresh_from_db()
-    api_key.refresh_from_db()
-    convite.refresh_from_db()
-    assert organizacao.encerramento_solicitado_em is None
-    assert organizacao.encerramento_agendado_para is None
-    assert organizacao.is_active is True
-    assert organizacao.is_deleted is False
-    assert Vinculo.objects.filter(pk__in=[item.pk for item in vinculos], is_active=True).count() == 2
-    assert convite.is_deleted is False
-    assert api_key.revoked_at is None
+    assert primeiro is True
+    assert segundo is False
 
 
 def test_rollback_depois_da_revogacao_nao_publica_auditoria_de_api_key(monkeypatch, django_capture_on_commit_callbacks):
     agora = timezone.now()
-    proprietario, organizacao, _, _, api_key, _ = _cenario_encerramento("rollback-auditoria")
+    proprietario, organizacao, vinculos, _, api_key, _ = _cenario_encerramento("rollback-auditoria")
 
     def falhar_cancelamento(self, using=None, keep_parents=False):
         raise RuntimeError("convite")
@@ -292,29 +99,21 @@ def test_rollback_depois_da_revogacao_nao_publica_auditoria_de_api_key(monkeypat
     monkeypatch.setattr(Convite, "delete", falhar_cancelamento)
     with patch("apps.api.autenticacao.audit.capture") as capture_mock:
         with pytest.raises(RuntimeError, match="convite"), django_capture_on_commit_callbacks(execute=True):
-            _solicitar_encerramento(
-                organizacao,
-                TermoEncerramentoImediato(),
-                assinaturas=AssinaturasEncerramentoTeste,
-                ator=proprietario,
-                agora=agora,
-            )
+            Organizacoes.solicitar_encerramento(organizacao, ator=proprietario, agora=agora)
 
+    organizacao.refresh_from_db()
     api_key.refresh_from_db()
+    assert organizacao.encerramento_solicitado_em is None
+    assert organizacao.is_active is True
+    assert Vinculo.objects.filter(pk__in=[item.pk for item in vinculos], is_active=True).count() == 2
     assert api_key.revoked_at is None
     capture_mock.assert_not_called()
 
 
-def test_organizacao_pendente_nao_cria_nem_aceita_convite():
-    agora = timezone.now()
+def test_organizacao_com_encerramento_registrado_nao_cria_nem_aceita_convite():
     proprietario, organizacao, _, convite, _, _ = _cenario_encerramento("bloqueia-convite")
     convidado = criar_usuario(email=convite.email, email_verificado_em=timezone.now())
-    _solicitar_encerramento(
-        organizacao,
-        TermoEncerramentoAgendado(agendado_para=agora + timedelta(days=20)),
-        assinaturas=AssinaturasEncerramentoTeste,
-        agora=agora,
-    )
+    Organizacao.objects.filter(pk=organizacao.pk).update(encerramento_solicitado_em=timezone.now())
 
     with pytest.raises(APIError) as criacao:
         Vinculos.criar_convite(
@@ -333,33 +132,21 @@ def test_organizacao_pendente_nao_cria_nem_aceita_convite():
 
 
 @pytest.mark.django_db(transaction=True)
-def test_efetivacoes_concorrentes_encerram_uma_unica_vez():
-    agora = timezone.now()
+def test_encerramentos_concorrentes_efetivam_uma_unica_vez():
     _, organizacao, _, _, api_key, _ = _cenario_encerramento("concorrente")
-    _solicitar_encerramento(
-        organizacao,
-        TermoEncerramentoAgendado(agendado_para=agora),
-        assinaturas=AssinaturasEncerramentoTeste,
-        agora=agora - timedelta(days=1),
-    )
 
-    def efetivar():
+    def encerrar():
         close_old_connections()
         try:
-            return Organizacoes.efetivar_encerramento(
-                organizacao.pk,
-                assinaturas=AssinaturasEncerramentoTeste,
-                agora=agora,
-            )
+            return Organizacoes.solicitar_encerramento(organizacao)
         finally:
             connections.close_all()
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        resultados = list(executor.map(lambda _: efetivar(), range(2)))
+        resultados = list(executor.map(lambda _: encerrar(), range(2)))
 
     api_key.refresh_from_db()
     assert sorted(resultados) == [False, True]
-    assert len(AssinaturasEncerramentoTeste.chamadas) == 1
     assert Organizacao.all_objects.get(pk=organizacao.pk).is_deleted is True
     assert api_key.revoked_at is not None
 
@@ -395,12 +182,7 @@ def test_efetivacao_concorrente_com_criacao_nao_deixa_api_key_viva(monkeypatch):
     def efetivar():
         close_old_connections()
         try:
-            return _solicitar_encerramento(
-                organizacao,
-                TermoEncerramentoImediato(),
-                assinaturas=AssinaturasEncerramentoTeste,
-                agora=agora,
-            )
+            return Organizacoes.solicitar_encerramento(organizacao, agora=agora)
         finally:
             connections.close_all()
 
@@ -428,7 +210,7 @@ def test_efetivacao_concorrente_com_criacao_nao_deixa_api_key_viva(monkeypatch):
         permitir_criacao.set()
         permitir_encerramento.set()
         criacao.result(timeout=10)
-        assert isinstance(efetivacao.result(timeout=10), EncerramentoEfetivado)
+        assert efetivacao.result(timeout=10) is True
 
     assert (
         AuthToken.objects.filter(
@@ -495,12 +277,7 @@ def test_efetivacao_concorrente_com_rotacao_nao_deixa_api_key_viva_nem_deadlock(
     def efetivar():
         close_old_connections()
         try:
-            return _solicitar_encerramento(
-                organizacao,
-                TermoEncerramentoImediato(),
-                assinaturas=AssinaturasEncerramentoTeste,
-                agora=agora,
-            )
+            return Organizacoes.solicitar_encerramento(organizacao, agora=agora)
         finally:
             connections.close_all()
 
@@ -512,7 +289,7 @@ def test_efetivacao_concorrente_com_rotacao_nao_deixa_api_key_viva_nem_deadlock(
             _aguardar_query_bloqueada(encerramento_pid[0], trecho='"auth_token"')
         permitir_rotacao.set()
         rotacao.result(timeout=10)
-        assert isinstance(efetivacao.result(timeout=10), EncerramentoEfetivado)
+        assert efetivacao.result(timeout=10) is True
 
     assert (
         AuthToken.objects.filter(

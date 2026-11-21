@@ -6,18 +6,15 @@ dados genéricos:
 
 ```bash
 make up
-make billing-bootstrap
+make db-roles
 make migrate
 uv run python manage.py seed_demo
 ```
 
-O bootstrap de billing é idempotente e precisa ser executado mesmo quando o
-volume PostgreSQL já existia antes dos logins dedicados. Nesse caso, faça e
-teste um backup antes. Em `.env`, `DATABASE_ADMIN_USER` deve identificar o
-administrador que criou o volume; `DATABASE_USER`,
-`DATABASE_BILLING_INGRESS_USER` e
-`DATABASE_BILLING_INGRESS_WORKER_USER` devem continuar distintos entre si e do
-administrador.
+`make db-roles` é idempotente e provisiona o login web (sem `BYPASSRLS`)
+mesmo quando o volume PostgreSQL já existia. Em `.env`, `DATABASE_ADMIN_USER`
+deve identificar o administrador que criou o volume, e `DATABASE_USER` deve
+continuar distinto dele.
 
 O comando cria:
 
@@ -65,7 +62,6 @@ credenciais locais versionadas e não lê o `.env` do host.
 Depois da criação:
 
 ```bash
-make billing-bootstrap BILLING_COMPOSE_FILE=.devcontainer/docker-compose.yml  # no host
 make migrate
 uv run python manage.py seed_demo
 make run

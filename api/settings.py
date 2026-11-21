@@ -34,10 +34,6 @@ IN_TEST = ENVIROMENT == "test"
 
 EXECUTION = get_env_var("DJANGO_EXECUTION_MODE")
 
-DATABASE_BILLING_MODE = get_env_var("DATABASE_BILLING_MODE", "web")
-if DATABASE_BILLING_MODE not in {"web", "ingress", "migration"}:
-    raise ImproperlyConfigured("DATABASE_BILLING_MODE deve ser 'web', 'ingress' ou 'migration'.")
-
 # ambiente efetivo usado para carregar apps/middlewares/storages específicos.
 # sempre resolve para um valor suportado por `configure_enviroment`.
 TESTING = IN_TEST or "pytest" in sys.modules or "test" in sys.argv
@@ -59,11 +55,6 @@ else:
     CONFIG_ENVIRONMENT = "development"
 
 ENV_MIDDLEWARES, ENV_APPS, ENV_STORAGES = configure_enviroment(CONFIG_ENVIRONMENT)
-if DATABASE_BILLING_MODE == "ingress":
-    # O ingresso público não carrega ferramentas de debug/profiling/log de
-    # request, que poderiam persistir o corpo e a assinatura do webhook.
-    ENV_MIDDLEWARES = []
-    ENV_APPS = []
 
 
 if not SECRET_KEY and not IN_PRODUCTION:
@@ -72,15 +63,12 @@ if not SECRET_KEY and not IN_PRODUCTION:
 
 
 def SENTRY_BEFORE_SEND(event, hint):
-    """Descarta eventos de webhook e remove autenticação dos demais eventos."""
+    """Remove o header de autenticação dos eventos."""
     del hint
     request = event.get("request") or {}
-    url = str(request.get("url") or request.get("path") or "")
-    if "/faturamento/webhooks/" in url:
-        return None
     headers = request.get("headers") or {}
     for header in tuple(headers):
-        if header.casefold() in {"authorization", "stripe-signature"}:
+        if header.casefold() == "authorization":
             headers.pop(header, None)
     return event
 
@@ -161,7 +149,6 @@ LIBS_APPS = [
     "django_filters",
     "django_prometheus",
     "django_rls",
-    "django_checkouts",
     "drf_spectacular",
     "django_scalar",
     "guardian",
@@ -177,8 +164,6 @@ BUSINESS_APPS = [
     "apps.api.core",
     "apps.api.mcp_server",
     "apps.api.metadata",
-    "apps.assinaturas",
-    "apps.assinaturas.subapps.faturamento",
     "apps.logs",
     "apps.organizacoes",
     # "apps.parametros",  # TODO: reativar depois de corrigir apps/parametros/models.py (Parametro.value)
@@ -279,19 +264,6 @@ DATABASES = {
     },
 }
 
-# As migrations de faturamento transferem funções SECURITY DEFINER para uma
-# role NOLOGIN dedicada. O alias só existe no processo de migration, impedindo
-# que web/worker sequer tenham a credencial DDL disponível.
-_billing_migration_user = get_env_var("DATABASE_BILLING_MIGRATION_USER")
-_billing_migration_password = get_env_var("DATABASE_BILLING_MIGRATION_PASSWORD")
-if DATABASE_BILLING_MODE == "migration" and _billing_migration_user and _billing_migration_password:
-    DATABASES["billing_migration"] = {
-        **DATABASES["default"],
-        "USER": _billing_migration_user,
-        "PASSWORD": _billing_migration_password,
-        "TEST": {"MIRROR": "default"},
-    }
-
 
 STORAGES = {
     "staticfiles": {
@@ -347,13 +319,6 @@ ACCOUNT_DELETION_BATCH_SIZE = get_int_from_env("ACCOUNT_DELETION_BATCH_SIZE", 10
 ACCOUNT_REACTIVATION_TOKEN_MAX_AGE_SECONDS = get_int_from_env("ACCOUNT_REACTIVATION_TOKEN_MAX_AGE_SECONDS", 60 * 60)
 FRONTEND_ACCOUNT_REACTIVATION_URL = get_env_var("FRONTEND_ACCOUNT_REACTIVATION_URL", "http://localhost:3000/reativar-conta")
 
-# O catálogo e o contrato real são ligados ao orquestrador de onboarding na
-# Task 9. Até lá, estes valores alimentam apenas a seam tipada do caso de uso.
-SUBSCRIPTION_ONBOARDING_MODE = get_env_var("SUBSCRIPTION_ONBOARDING_MODE", "gratuito")
-SUBSCRIPTION_ONBOARDING_PLAN = get_env_var("SUBSCRIPTION_ONBOARDING_PLAN", "gratuito")
-SUBSCRIPTION_ONBOARDING_BILLING_PERIOD = get_env_var("SUBSCRIPTION_ONBOARDING_BILLING_PERIOD", "mensal")
-ORGANIZATION_CLOSURE_BATCH_SIZE = get_int_from_env("ORGANIZATION_CLOSURE_BATCH_SIZE", 100)
-SUBSCRIPTION_TASK_BATCH_SIZE = get_int_from_env("SUBSCRIPTION_TASK_BATCH_SIZE", 100)
 
 AUTH_USER_MODEL = "usuarios.Usuario"
 
@@ -377,14 +342,6 @@ AUTHENTICATION_BACKENDS = [
 # esconde os excluídos, `get_by_natural_key()` continua enxergando um único
 # registro por e-mail.
 SILENCED_SYSTEM_CHECKS = ["guardian.W001", "auth.W004"]
-if CONFIG_ENVIRONMENT in {"development", "test"}:
-    # O quickstart local pode subir antes de o Stripe ser configurado. A
-    # integração continua indisponível em runtime; produção nunca recebe esta
-    # exceção e permanece fail-closed.
-    SILENCED_SYSTEM_CHECKS.append("django_checkouts.E001")
-if CONFIG_ENVIRONMENT == "test":
-    # Os gates determinísticos não fazem I/O com o gateway.
-    SILENCED_SYSTEM_CHECKS.append("faturamento.E001")
 
 # Não criar o usuário anônimo do guardian (o modelo de usuário usa e-mail como
 # username e o isolamento por organização torna esse registro desnecessário).
@@ -429,32 +386,11 @@ DJANGO_RLS = {
     # Evita reabrir a conexão de teste durante o teardown; em produção permanece ativo.
     "RESET_CONTEXT_ON_CONNECT": not TESTING,
     "REGISTERED_CONTEXT_KEYS": (
-        "billing_ingress",
         "membership_id",
         "current_workspace_id",
         "workspace_mode",
     ),
 }
-
-CHECKOUT_VARIANTS = {
-    "stripe": (
-        "django_checkouts.gateways.stripe.StripeGateway",
-        {
-            "api_key": get_env_var("STRIPE_API_KEY"),
-            "webhook_secret": get_env_var("STRIPE_WEBHOOK_SECRET"),
-            "sandbox": get_bool_from_env("STRIPE_SANDBOX", not IN_PRODUCTION),
-        },
-    )
-}
-_BILLING_LOCAL_URL = "http://localhost:3000/assinatura/checkout"
-FRONTEND_PAYMENT_SUCCESS_URL = get_env_var("FRONTEND_PAYMENT_SUCCESS_URL", "" if IN_PRODUCTION else f"{_BILLING_LOCAL_URL}/sucesso")
-FRONTEND_PAYMENT_CANCEL_URL = get_env_var("FRONTEND_PAYMENT_CANCEL_URL", "" if IN_PRODUCTION else f"{_BILLING_LOCAL_URL}/cancelado")
-DATABASE_BILLING_INGRESS_ROLE = get_env_var("DATABASE_BILLING_INGRESS_ROLE", "billing_ingress_runtime")
-DATABASE_BILLING_OWNER_ROLE = get_env_var("DATABASE_BILLING_OWNER_ROLE", "billing_functions_owner")
-if DATABASE_BILLING_MODE == "ingress":
-    # O processo exposto apenas ao endpoint público de webhook não carrega o
-    # restante da superfície HTTP, mesmo se o proxy for contornado na rede.
-    ROOT_URLCONF = "api.billing_ingress_urls"
 
 
 LOGIN_REDIRECT_URL = "/admin/"
@@ -764,16 +700,6 @@ CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 
 CELERY_TASK_DEFAULT_QUEUE = "celery"
 
-CELERY_TASK_ROUTES = {
-    "faturamento.recuperar_eventos_cobranca": {"queue": "billing_ingress"},
-    "faturamento.reconciliar_eventos_stripe": {"queue": "billing_ingress"},
-    "faturamento.reconciliar_evento_cobranca": {"queue": "billing_ingress"},
-    "faturamento.executar_reconciliacao_operacional": {"queue": "billing_ingress"},
-    # O processador usa ORM sob um tenant conhecido e fica no worker web,
-    # deliberadamente sem membership na role operacional de ingresso.
-    "faturamento.processar_evento_cobranca": {"queue": "celery"},
-}
-
 AUTH_TOKEN_SESSION_RETENTION_DAYS = 90
 
 AUTH_TOKEN_CLEANUP_BATCH_SIZE = 500
@@ -787,32 +713,7 @@ CELERY_BEAT_SCHEDULE = {
         "task": "usuarios.anonimizar_contas_vencidas",
         "schedule": crontab(hour=0, minute=30),
     },
-    "close-expired-organizations": {
-        "task": "organizacoes.efetivar_encerramentos_vencidos",
-        "schedule": crontab(hour=1, minute=0),
-    },
-    "finish-expired-subscription-trials": {
-        "task": "assinaturas.encerrar_trials_vencidos",
-        "schedule": crontab(minute=5),
-    },
-    "reconcile-subscription-seat-graces": {
-        "task": "assinaturas.reconciliar_carencias_seats",
-        "schedule": crontab(minute="*/15"),
-    },
-    "recover-billing-events": {
-        "task": "faturamento.recuperar_eventos_cobranca",
-        "schedule": crontab(minute="*/5"),
-        "options": {"queue": "billing_ingress"},
-    },
-    "reconcile-stripe-events": {
-        "task": "faturamento.reconciliar_eventos_stripe",
-        "schedule": crontab(minute="*/15"),
-        "options": {"queue": "billing_ingress"},
-    },
 }
-
-BILLING_RECONCILIATION_WINDOW_MINUTES = 20
-BILLING_RECONCILIATION_OVERLAP_MINUTES = 5
 
 # sm testes, executa as tasks de forma síncrona e propaga exceções.
 CELERY_TASK_ALWAYS_EAGER = TESTING

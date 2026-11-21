@@ -2,7 +2,6 @@
 
 import json
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
 from threading import Barrier
 
 from django.db import close_old_connections, connections
@@ -18,58 +17,10 @@ from apps.api.autenticacao.models import AuthToken, MFAFactor, MFAFactorType, To
 from apps.api.autenticacao.services import issue_token
 from apps.logs.models import LogAlteracao
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
-from apps.organizacoes.organizations import Organizacoes, TermoEncerramentoAgendado, TermoEncerramentoImediato
+from apps.organizacoes.organizations import Organizacoes
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
-
-
-class CatalogoHTTP:
-    @classmethod
-    def obter_versao_inicial(cls, *, codigo, periodicidade, moeda):
-        return "versao", "preco"
-
-
-class AssinaturasHTTP:
-    termo = TermoEncerramentoAgendado(agendado_para=timezone.now() + timedelta(days=30))
-    contratos_criados = []
-    encerramentos = []
-
-    @classmethod
-    def criar_gratuita(cls, *, organizacao, versao_plano, preco_plano):
-        cls.contratos_criados.append(organizacao.pk)
-        return object()
-
-    @classmethod
-    def criar_trial(cls, *, organizacao, versao_plano, preco_plano):
-        cls.contratos_criados.append(organizacao.pk)
-        return object()
-
-    @classmethod
-    def solicitar_encerramento(cls, organizacao, *, agora):
-        return cls.termo
-
-    @classmethod
-    def cancelar_encerramento(cls, organizacao):
-        return None
-
-    @classmethod
-    def encerrar(cls, organizacao, *, encerrada_em):
-        cls.encerramentos.append(organizacao.pk)
-
-
-@pytest.fixture(autouse=True)
-def _colaboradores_comerciais(monkeypatch, settings):
-    from apps.organizacoes import onboarding, views
-
-    settings.SUBSCRIPTION_ONBOARDING_MODE = "gratuito"
-    settings.SUBSCRIPTION_ONBOARDING_PLAN = "gratuito"
-    settings.SUBSCRIPTION_ONBOARDING_BILLING_PERIOD = "mensal"
-    AssinaturasHTTP.termo = TermoEncerramentoAgendado(agendado_para=timezone.now() + timedelta(days=30))
-    AssinaturasHTTP.contratos_criados.clear()
-    AssinaturasHTTP.encerramentos.clear()
-    monkeypatch.setattr(onboarding, "_carregar_colaboradores_comerciais", lambda: (CatalogoHTTP, AssinaturasHTTP))
-    monkeypatch.setattr(views, "_carregar_assinaturas", lambda: AssinaturasHTTP)
 
 
 def _client_com_sessao(usuario, *, recente=True):
@@ -89,7 +40,7 @@ def _organizacao_do(usuario, *, slug="ciclo-http", papel=Papel.PROPRIETARIO, ema
     return organizacao
 
 
-def test_post_organizacoes_exige_email_verificado_antes_do_comercial():
+def test_post_organizacoes_exige_email_verificado():
     usuario = criar_usuario(email_verificado_em=None)
 
     response = _client_com_sessao(usuario).post(
@@ -101,7 +52,6 @@ def test_post_organizacoes_exige_email_verificado_antes_do_comercial():
     assert response.status_code == 403
     assert response.json()["errors"][0]["code"] == "account.email_not_verified"
     assert Organizacao.objects.filter(slug="sem-verificacao").exists() is False
-    assert AssinaturasHTTP.contratos_criados == []
 
 
 def test_post_organizacoes_executa_onboarding_e_devolve_organizacao():
@@ -118,7 +68,6 @@ def test_post_organizacoes_executa_onboarding_e_devolve_organizacao():
     assert response.json()["id"] == organizacao.pk
     assert organizacao.email_faturamento == usuario.email
     assert Vinculo.objects.get(organizacao=organizacao, usuario=usuario).papel == Papel.PROPRIETARIO
-    assert AssinaturasHTTP.contratos_criados == [organizacao.pk]
 
 
 @pytest.mark.parametrize("papel", [Papel.PROPRIETARIO, Papel.ADMINISTRADOR])
@@ -304,42 +253,33 @@ def test_organizacao_alheia_e_id_inexistente_tem_a_mesma_resposta():
     assert alheia_response.json()["errors"][0]["code"] == ausente_response.json()["errors"][0]["code"] == "core.not_found"
 
 
-def test_encerramento_agendado_e_cancelado_pelas_rotas():
+def test_encerramento_e_idempotente_e_nao_pode_ser_cancelado():
     proprietario = criar_usuario()
-    organizacao = _organizacao_do(proprietario, slug="agenda-http")
+    organizacao = _organizacao_do(proprietario, slug="repete-http")
     client = _client_com_sessao(proprietario)
 
-    solicitacao = client.post(f"/organizacoes/{organizacao.pk}/encerramento/")
-    repeticao = client.post(f"/organizacoes/{organizacao.pk}/encerramento/")
     cancelamento = client.delete(f"/organizacoes/{organizacao.pk}/encerramento/")
+    solicitacao = client.post(f"/organizacoes/{organizacao.pk}/encerramento/")
 
-    organizacao.refresh_from_db()
-    assert solicitacao.status_code == 202
-    assert solicitacao.json()["scheduled_for"] == AssinaturasHTTP.termo.agendado_para.isoformat()
-    assert repeticao.status_code == 202
-    assert repeticao.json() == solicitacao.json()
-    assert cancelamento.status_code == 204
-    assert organizacao.encerramento_solicitado_em is None
-    assert organizacao.encerramento_agendado_para is None
+    assert cancelamento.status_code == 405
+    assert solicitacao.status_code == 204
+    assert Organizacao.all_objects.get(pk=organizacao.pk).is_deleted is True
 
 
 def test_encerramento_imediato_retorna_sem_conteudo():
     proprietario = criar_usuario()
     organizacao = _organizacao_do(proprietario, slug="imediato-http")
-    AssinaturasHTTP.termo = TermoEncerramentoImediato()
 
     response = _client_com_sessao(proprietario).post(f"/organizacoes/{organizacao.pk}/encerramento/")
 
     assert response.status_code == 204
     assert Organizacao.all_objects.get(pk=organizacao.pk).is_deleted is True
-    assert AssinaturasHTTP.encerramentos == [organizacao.pk]
 
 
 @pytest.mark.django_db(transaction=True)
 def test_duas_solicitacoes_imediatas_concorrentes_retornam_sem_conteudo(monkeypatch):
     proprietario = criar_usuario()
     organizacao = _organizacao_do(proprietario, slug="imediato-http-concorrente")
-    AssinaturasHTTP.termo = TermoEncerramentoImediato()
     plain_tokens = []
     for _ in range(2):
         token, plain_token = AuthToken.objects.create(user=proprietario)
@@ -369,7 +309,6 @@ def test_duas_solicitacoes_imediatas_concorrentes_retornam_sem_conteudo(monkeypa
 
     assert status_codes == [204, 204]
     assert Organizacao.all_objects.get(pk=organizacao.pk).is_deleted is True
-    assert AssinaturasHTTP.encerramentos == [organizacao.pk]
 
 
 def test_encerramento_com_mfa_exige_reautenticacao_com_segundo_fator(django_capture_on_commit_callbacks):
@@ -399,4 +338,4 @@ def test_encerramento_com_mfa_exige_reautenticacao_com_segundo_fator(django_capt
         )
 
     assert confirmacao.status_code == 204
-    assert client.post(f"/organizacoes/{organizacao.pk}/encerramento/").status_code == 202
+    assert client.post(f"/organizacoes/{organizacao.pk}/encerramento/").status_code == 204

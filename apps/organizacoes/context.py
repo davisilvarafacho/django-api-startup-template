@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from django.db import transaction
 
@@ -22,21 +22,15 @@ from apps.workspaces.context import CHAVES_WORKSPACE, definir_contexto_workspace
 CHAVE_TENANT = "tenant_id"
 
 if TYPE_CHECKING:
-    from apps.assinaturas.access_policies import SituacaoAcesso
-    from apps.assinaturas.models import AssinaturaOrganizacao
-    from apps.assinaturas.subscriptions import UtilizacaoSeats
     from apps.organizacoes.models import Organizacao, Vinculo
 
 
 @dataclass(frozen=True, slots=True)
 class ContextoOrganizacao:
-    """Fatos de tenant e acesso comercial validados antes da view."""
+    """Fatos de tenant validados antes da view."""
 
     organizacao: Organizacao
     vinculo: Vinculo | None
-    assinatura: AssinaturaOrganizacao
-    utilizacao_seats: UtilizacaoSeats
-    situacao_acesso: SituacaoAcesso
 
     @property
     def organization_id(self) -> int:
@@ -56,18 +50,6 @@ class ContextoOrganizacao:
 
     def has_minimum_role(self, minimum_role: int) -> bool:
         return self.vinculo is not None and self.vinculo.papel >= minimum_role
-
-
-class PoliticaComercialTenant(Protocol):
-    """Contrato fechado para construir o contexto comercial final."""
-
-    def __call__(
-        self,
-        organizacao: Organizacao,
-        vinculo: Vinculo | None,
-        *,
-        regularizacao_assinatura: bool,
-    ) -> ContextoOrganizacao: ...
 
 
 def definir_organizacao_atual(organizacao_id):

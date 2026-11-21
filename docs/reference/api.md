@@ -162,68 +162,6 @@ atual e enxergam apenas registros compartilhados. O contexto `system` atravessa
 Workspaces somente dentro da Organização explicitamente selecionada; não é um
 atalho para atravessar tenants.
 
-## Assinatura
-
-`GET /planos/` exige autenticação, dispensa `X-Organization` e lista somente
-planos visíveis com versão atual publicada e preços ativos contratáveis. As
-demais rotas exigem uma sessão humana e o header `X-Organization`; API keys não
-recebem acesso financeiro por padrão. Alteração e cancelamento exigem
-reautenticação recente e MFA quando o usuário o tiver habilitado. Toda mutação
-contratual ou financeira exige também e-mail verificado.
-
-| Rota | Contrato |
-| --- | --- |
-| `GET /planos/` | Catálogo contratável global; retorna plano, versão atual publicada, recursos/seats/carências e preços ativos. |
-| `GET /assinatura/` | Proprietário ou administrador; devolve o snapshot corrente, revisão e situação de acesso com motivos e menor prazo de regularização. |
-| `GET /assinatura/recursos/` | Qualquer vínculo ativo; devolve todos os recursos efetivos em tipos JSON. |
-| `GET /assinatura/utilizacao-seats/` | Proprietário ou administrador; devolve contratados, consumo, reservas, disponibilidade e excessos. |
-| `POST /assinatura/alteracoes/` | Proprietário; solicita plano, periodicidade ou quantidade absoluta de seats com revisão e chave de idempotência. |
-| `POST /assinatura/cancelamento/` | Proprietário; encerra imediatamente contratos gratuitos, trials ou pendentes (`200`), ou agenda contratos pagos para o fim do período (`202`), sempre com revisão otimista. |
-| `DELETE /assinatura/cancelamento/` | Proprietário; remove o agendamento antes da efetivação, também com revisão. |
-| `POST /assinatura/propostas/{id}/aceitar/` | Proprietário; aceita uma proposta do próprio tenant sem enumerar propostas alheias. |
-
-Conflitos de revisão ou idempotência usam
-`409 billing.subscription_conflict`. Uma organização ativa ainda não
-inicializada usa `503 billing.subscription_required`. Após expirar uma carência,
-rotas comuns usam `403 billing.organization_restricted`; as rotas acima são
-marcadas para permitir somente a consulta ou regularização por proprietário e
-administrador, sem ampliar o papel do usuário.
-
-## Faturamento
-
-As rotas financeiras autenticadas aceitam somente sessões humanas, exigem
-`X-Organization` e respeitam o mesmo isolamento RLS da assinatura. Criação de
-checkout exige autenticação recente; quando MFA estiver habilitado para a
-conta, o step-up também exige o segundo fator. Valores são inteiros em centavos.
-
-| Rota | Contrato |
-| --- | --- |
-| `POST /assinatura/checkouts/` | Proprietário. Cria checkout recorrente para contratação (`finalidade=10`), alteração (`20`) ou proposta aceita (`30`). Recebe `chave_idempotencia` e a referência exigida pela finalidade. |
-| `GET /faturamento/checkouts/` | Proprietário ou administrador. Lista até 50 checkouts por página, do mais recente para o mais antigo. |
-| `GET /faturamento/faturas/` | Proprietário ou administrador. Lista até 50 estados normalizados de fatura por página, sem expor payload do gateway. |
-| `POST /faturamento/forma-pagamento/checkouts/` | Proprietário ou administrador com autenticação recente. Abre um setup hospedado, sem item ou cobrança, usando `chave_idempotencia`. |
-| `POST /faturamento/webhooks/{variante}/` | Pública e sem autenticação de sessão. Autentica os bytes originais pela assinatura do gateway; para Stripe, a variante é `stripe`. |
-
-Uma chave idempotente repetida com o mesmo snapshot devolve a operação vigente;
-se for reutilizada para outro conteúdo, a API responde
-`409 billing.checkout_conflict`. Enquanto já existir checkout da mesma operação
-em criação ou aberto, responde `409 billing.checkout_pending`. Ausência de
-capability ou referência de preço obrigatória usa
-`422 billing.checkout_unavailable`. Uma falha externa inconclusiva usa
-`503 billing.checkout_uncertain`: o cliente não deve criar outra chave nem
-assumir falha; a reconciliação decide o estado remoto.
-
-O webhook responde `200` tanto para um evento novo quanto para uma duplicata
-idempotente (`received=true`, `duplicate=false|true`). Assinatura, variante ou
-protocolo inválido respondem `400`; reutilizar o mesmo identificador remoto com
-conteúdo autenticado diferente responde `409 billing.webhook_collision`. O
-schema deliberadamente não descreve nem persiste o corpo bruto do provedor.
-
-As duas listagens financeiras aceitam `size` inteiro positivo para reduzir a
-página, mas sempre limitam a resposta a 50 registros. `size=all` não é
-suportado e nunca desativa a paginação; valores inválidos usam a página padrão
-de 50 registros.
-
 ## MFA
 
 | Rota | Contrato |
