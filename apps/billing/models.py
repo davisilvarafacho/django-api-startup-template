@@ -123,10 +123,13 @@ class Plan(BaseTenantless):
     def get_free(cls):
         """Retorna o plano gratuito, garantido pelo handler de `post_migrate`.
 
+        Usa `all_objects`: o gratuito nunca pode sumir da leitura, mesmo com soft delete,
+        até o próximo `migrate` restaurá-lo.
+
         Returns:
             Plan: O plano com `is_free=True`.
         """
-        return cls.objects.get(is_free=True)
+        return cls.all_objects.get(is_free=True)
 
     def __str__(self):
         return self.name

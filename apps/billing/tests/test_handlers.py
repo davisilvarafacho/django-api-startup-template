@@ -47,3 +47,18 @@ def test_ensure_free_plan_ignores_other_apps():
     ensure_free_plan(sender=django_apps.get_app_config("organizacoes"), using="default")
 
     assert not Plan.all_objects.filter(is_free=True).exists()
+
+
+@pytest.mark.django_db
+def test_ensure_free_plan_restores_soft_deleted_free_plan():
+    gratuito = Plan.all_objects.get(is_free=True)
+    gratuito.delete()
+
+    ensure_free_plan(sender=django_apps.get_app_config("billing"), using="default")
+
+    gratuitos = Plan.all_objects.filter(is_free=True)
+    assert gratuitos.count() == 1
+    restaurado = gratuitos.get()
+    assert restaurado.pk == gratuito.pk
+    assert restaurado.is_deleted is False
+    assert Plan.objects.filter(is_free=True).exists()

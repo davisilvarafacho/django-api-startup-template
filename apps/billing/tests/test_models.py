@@ -102,3 +102,11 @@ def test_billing_event_unique_per_variant_and_event_id():
     with pytest.raises(IntegrityError, match="billing_event_unico_por_variante"), transaction.atomic():
         BillingEvent.objects.create(gateway_variant="stripe", **campos)
 
+
+
+@pytest.mark.django_db
+def test_get_free_returns_soft_deleted_free_plan():
+    gratuito = Plan.all_objects.get(is_free=True)
+    gratuito.delete()
+
+    assert Plan.get_free().pk == gratuito.pk
