@@ -77,7 +77,7 @@ def configure_enviroment(environment):
     raise NotImplementedError(f"Environment '{environment}' is not supported.")
 
 
-def build_checkout_variants(*, api_key: str, webhook_secret: str, in_production: bool) -> dict:
+def build_checkout_variants(*, api_key: str, webhook_secret: str, sandbox: bool, in_production: bool) -> dict:
     """Monta `CHECKOUT_VARIANTS` do django-checkouts para o ambiente.
 
     Sem chave fora de produção a variante Stripe não é registrada: o check da
@@ -88,6 +88,8 @@ def build_checkout_variants(*, api_key: str, webhook_secret: str, in_production:
     Args:
         api_key: Chave secreta da Stripe (`STRIPE_SECRET_KEY`).
         webhook_secret: Segredo de webhook da Stripe (`STRIPE_WEBHOOK_SECRET`).
+        sandbox: Se o gateway opera em sandbox (`STRIPE_SANDBOX`). Com chave live
+            e sandbox ligado, a lib emite aviso.
         in_production: Se o ambiente efetivo é produção.
 
     Returns:
@@ -99,6 +101,6 @@ def build_checkout_variants(*, api_key: str, webhook_secret: str, in_production:
     return {
         "stripe": (
             "django_checkouts.gateways.stripe.StripeGateway",
-            {"api_key": api_key, "webhook_secret": webhook_secret},
+            {"api_key": api_key, "webhook_secret": webhook_secret, "sandbox": sandbox},
         ),
     }

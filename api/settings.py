@@ -326,9 +326,12 @@ FRONTEND_ACCOUNT_REACTIVATION_URL = get_env_var("FRONTEND_ACCOUNT_REACTIVATION_U
 # de produção a variante não é registrada (ver `build_checkout_variants`).
 STRIPE_SECRET_KEY = get_env_var("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = get_env_var("STRIPE_WEBHOOK_SECRET", "")
+# Sandbox do gateway: o default da lib é `True`, então em produção o padrão é `False`.
+STRIPE_SANDBOX = get_bool_from_env("STRIPE_SANDBOX", not IN_PRODUCTION)
 CHECKOUT_VARIANTS = build_checkout_variants(
     api_key=STRIPE_SECRET_KEY,
     webhook_secret=STRIPE_WEBHOOK_SECRET,
+    sandbox=STRIPE_SANDBOX,
     in_production=IN_PRODUCTION,
 )
 BILLING_GATEWAY_VARIANT = get_env_var("BILLING_GATEWAY_VARIANT", "stripe")
