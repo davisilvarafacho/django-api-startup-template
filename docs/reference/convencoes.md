@@ -76,8 +76,10 @@ Nomes de arquivo **devem** ser sempre em inglês e no plural (ex.: `models.py`,
 fazem parte da lista fixa acima (ex.: `validators.py`, não `validator.py`). Nomes
 canônicos impostos pelo Python, Django ou outra ferramenta, como `__init__.py`,
 `admin.py` e `manage.py`, são exceções e devem conservar o nome reconhecido pelo
-framework. Nomes de classes, campos e conceitos do domínio podem permanecer em
-português; esta regra se aplica aos nomes dos arquivos.
+framework. Código novo usa nomes em inglês também para classes, campos e
+conceitos do domínio; comentários, docstrings e documentação continuam em
+português. Parte do código existente ainda usa nomes em português e será migrada
+à parte.
 
 ### 1.3. Criação de Apps
 

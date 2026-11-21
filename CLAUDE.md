@@ -2,9 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Base reutilizável para APIs Django REST Framework, multi-tenant por padrão. Código,
-comentários e documentação são em **português**; codinames de permissão e nomes de
-migração seguem o padrão do Django (inglês).
+Base reutilizável para APIs Django REST Framework, multi-tenant por padrão.
+
+Idioma: código (nomes de módulos, classes, funções, campos e variáveis) é escrito em
+**inglês**; comentários, docstrings e documentação (do código, da API e do app) são
+em **português**. Mensagens de commit continuam em português. Parte do código
+existente ainda usa nomes em português — código novo já nasce em inglês, e a
+migração do restante é uma tarefa à parte.
 
 ## Comandos
 
