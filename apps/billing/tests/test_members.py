@@ -111,6 +111,18 @@ def test_apply_does_not_reactivate_manual_deactivation():
     assert _recarregar(inativo_manual).plan_limit_suspended_at is None
 
 
+def test_apply_noop_for_inactive_organization():
+    organizacao = _organizacao("acme-inativa")
+    membros = [_vinculo(organizacao, idade=idade) for idade in range(5)]
+    Organizacao.all_objects.filter(pk=organizacao.pk).update(is_active=False)
+
+    MemberLimits.apply(organizacao.pk)
+
+    for vinculo in membros:
+        assert _recarregar(vinculo).is_active is True
+        assert _recarregar(vinculo).plan_limit_suspended_at is None
+
+
 def test_apply_is_idempotent():
     organizacao = _organizacao("acme-idempotente")
     for idade in range(5):
@@ -186,6 +198,20 @@ def test_accept_invite_without_active_tenant_checks_capacity():
         Vinculos.aceitar_convite(convite, usuario)
 
     assert erro.value.code == "billing.member_limit_reached"
+
+
+def test_accept_invite_with_inactive_membership_skips_capacity_check():
+    organizacao = _organizacao("acme-aceite-inativo")
+    for idade in range(3):
+        _vinculo(organizacao, idade=idade)
+    usuario = criar_usuario(email="inativo-convidado@example.com", email_verificado_em=timezone.now())
+    inativo = Vinculo.objects.create(organizacao=organizacao, usuario=usuario, papel=Papel.MEMBRO, is_active=False)
+    convite = Convite.objects.create(organizacao=organizacao, email=usuario.email, papel=Papel.MEMBRO)
+
+    with organizacao_atual(organizacao.pk):
+        Vinculos.aceitar_convite(convite, usuario)
+
+    assert _recarregar(inativo).is_active is False
 
 
 def test_manual_reactivation_clears_suspension_mark():

@@ -106,7 +106,7 @@ class Vinculos:
 
             organizacao_id = convite_bloqueado.organizacao_id
             vinculo_existente = Vinculo.objects.using(using).select_for_update().filter(organizacao_id=organizacao_id, usuario=usuario).first()
-            if vinculo_existente is None or not vinculo_existente.is_active:
+            if vinculo_existente is None:
                 MemberLimits.ensure_capacity(organizacao_id, using=using)
 
             vinculo, criado = (
