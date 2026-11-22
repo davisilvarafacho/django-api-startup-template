@@ -5,7 +5,8 @@ from django.utils import timezone
 import pytest
 from celery.exceptions import Retry
 from django_checkouts.client import CheckoutClient
-from django_checkouts.enums import Gateway
+from django_checkouts.enums import CancellationTiming, Gateway
+from django_checkouts.enums import SubscriptionStatus as RemoteStatus
 from django_checkouts.exceptions import GatewayPermanentError, GatewayTemporaryError
 from django_checkouts.gateways.commands import CancelRemoteSubscription, RetrieveSubscription
 from django_checkouts.types.subscriptions import SubscriptionItem
@@ -316,3 +317,119 @@ def test_process_duplicate_subscription_stays_pending_when_cancel_fails(monkeypa
     assert record.attempts == 1
     assert "recusado" in record.last_error
     assert _mirror(organization).external_id == "sub_1"
+
+
+def _close(organization):
+    """Marca a organização como encerrada, do jeito que o encerramento deixa a linha."""
+    Organizacao.all_objects.filter(pk=organization.pk).update(
+        is_active=False,
+        is_deleted=True,
+        encerramento_solicitado_em=timezone.now(),
+    )
+
+
+def test_late_checkout_for_closed_organization_cancels_with_close_key_without_paid_plan(monkeypatch):
+    organization = _organization()
+    Subscriptions.ensure_free(organization.pk)
+    _pro_plan()
+    _close(organization)
+    active = _remote(organization, external_id="sub_1", price_id="price_pro")
+    canceled = remote_subscription(external_id="sub_1", reference_id=str(organization.pk), status=RemoteStatus.CANCELED)
+    retrievals = []
+
+    def retrieve(command):
+        # Primeira leitura: a assinatura ainda dá acesso. Depois do cancelamento, o gateway a devolve cancelada.
+        retrievals.append(command)
+        return active if len(retrievals) == 1 else canceled
+
+    gateway = _patch_gateway(monkeypatch, {RetrieveSubscription: retrieve, CancelRemoteSubscription: canceled})
+    event = _registered_event(event_id="evt_tardio")
+
+    process_billing_event(event.pk)
+
+    cancellations = [command for command in gateway.commands if isinstance(command, CancelRemoteSubscription)]
+    assert len(cancellations) == 1
+    assert cancellations[0].external_id == "sub_1"
+    assert cancellations[0].timing == CancellationTiming.IMMEDIATELY
+    assert cancellations[0].idempotency_key == f"billing:close:{organization.pk}"
+    assert _record(event).processed_at is not None
+    mirror = _mirror(organization)
+    assert mirror.plan.is_free is True
+    assert mirror.external_id is None
+
+
+def test_late_event_for_closed_organization_without_access_only_marks_processed(monkeypatch):
+    organization = _organization()
+    Subscriptions.ensure_free(organization.pk)
+    _close(organization)
+    gateway = _patch_gateway(
+        monkeypatch,
+        {RetrieveSubscription: remote_subscription(external_id="sub_1", reference_id=str(organization.pk), status=RemoteStatus.CANCELED)},
+    )
+    event = _registered_event(event_id="evt_ja_cancelada")
+
+    process_billing_event(event.pk)
+
+    assert [command for command in gateway.commands if isinstance(command, CancelRemoteSubscription)] == []
+    assert _record(event).processed_at is not None
+
+
+def test_late_checkout_for_closed_organization_stays_pending_when_cancel_fails(monkeypatch):
+    organization = _organization()
+    Subscriptions.ensure_free(organization.pk)
+    _close(organization)
+    _patch_gateway(
+        monkeypatch,
+        {
+            RetrieveSubscription: _remote(organization, external_id="sub_1"),
+            CancelRemoteSubscription: _raising(GatewayPermanentError("recusado", gateway=Gateway.STRIPE, variant="stripe")),
+        },
+    )
+    event = _registered_event(event_id="evt_tardio_falha")
+
+    process_billing_event(event.pk)
+
+    record = _record(event)
+    assert record.processed_at is None
+    assert "recusado" in record.last_error
+
+
+def test_late_checkout_for_closed_organization_with_other_link_cancels_only_newcomer(monkeypatch):
+    organization = _organization()
+    Subscriptions.ensure_free(organization.pk)
+    Subscriptions.link_external(organization.pk, external_id="sub_1", gateway_variant="stripe")
+    _close(organization)
+    remotes = {"sub_1": _remote(organization, external_id="sub_1"), "sub_2": _remote(organization, external_id="sub_2")}
+    gateway = _patch_gateway(
+        monkeypatch,
+        {
+            RetrieveSubscription: lambda command: remotes[command.external_id],
+            CancelRemoteSubscription: remote_subscription(external_id="sub_2", reference_id=str(organization.pk), status=RemoteStatus.CANCELED),
+        },
+    )
+    event = _registered_event(event_id="evt_tardio_duplicado", subscription_external_id="sub_2")
+
+    process_billing_event(event.pk)
+
+    cancellations = [command for command in gateway.commands if isinstance(command, CancelRemoteSubscription)]
+    assert [(command.external_id, command.idempotency_key) for command in cancellations] == [("sub_2", "billing:duplicate:sub_2")]
+    assert _record(event).processed_at is not None
+    assert _mirror(organization).external_id == "sub_1"
+
+
+def test_cancellation_event_for_closed_organization_resets_linked_mirror(monkeypatch):
+    organization = _organization()
+    Subscriptions.ensure_free(organization.pk)
+    Subscriptions.link_external(organization.pk, external_id="sub_1", gateway_variant="stripe")
+    _close(organization)
+    canceled = remote_subscription(external_id="sub_1", reference_id=str(organization.pk), status=RemoteStatus.CANCELED)
+    gateway = _patch_gateway(monkeypatch, {RetrieveSubscription: canceled})
+    event = _registered_event(event_id="evt_cancelamento_encerrada")
+
+    process_billing_event(event.pk)
+
+    assert [command for command in gateway.commands if isinstance(command, CancelRemoteSubscription)] == []
+    assert _record(event).processed_at is not None
+    mirror = _mirror(organization)
+    assert mirror.external_id is None
+    assert mirror.plan.is_free is True

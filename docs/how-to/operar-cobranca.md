@@ -103,7 +103,7 @@ banco (`DatabaseScheduler`), e a agenda de `billing.reconcile` está em
 
 ## O que a reconciliação faz
 
-A cada 15 minutos, `billing.reconcile` executa três passos:
+A cada 15 minutos, `billing.reconcile` executa quatro passos:
 
 1. **Eventos perdidos.** Pede ao gateway os eventos dos últimos
    `BILLING_RECONCILE_WINDOW_HOURS` (72 horas por padrão), página a página. Os
@@ -112,7 +112,11 @@ A cada 15 minutos, `billing.reconcile` executa três passos:
 2. **Pendentes.** Reenfileira os eventos não aplicados que estão na caixa de
    entrada há mais de 5 minutos e têm menos tentativas que
    `BILLING_EVENT_MAX_ATTEMPTS`.
-3. **Limpeza.** Apaga os eventos aplicados há mais de 90 dias.
+3. **Organizações encerradas.** Reenfileira o cancelamento imediato das
+   organizações encerradas que ainda têm assinatura vinculada ao gateway (veja
+   [Organização encerrada](#organizacao-encerrada)). Uma falha neste passo é
+   registrada no log e não impede os demais.
+4. **Limpeza.** Apaga os eventos aplicados há mais de 90 dias.
 
 A reconciliação não reprocessa eventos já aplicados. O espelho se corrige no
 próximo evento da assinatura, porque a sincronização relê o estado atual no
@@ -167,17 +171,29 @@ organização estiver encerrada, a sincronização não reativa vínculos suspen
 pelo limite do plano.
 
 Essa tarefa só repete automaticamente uma falha **temporária** do gateway, até 5
-vezes, com espera exponencial de 30 segundos, limitada a 15 minutos. Dois casos
-não têm recuperação automática:
+vezes, com espera exponencial de 30 segundos, limitada a 15 minutos. Se o
+`.delay` nunca chegou ao broker (broker fora no commit), a tarefa nem chega a
+existir, e portanto não há log de worker para esse caso. Duas situações ficam
+sem retentativa da própria tarefa:
 
-- uma recusa permanente do gateway: a tarefa falha, sem nova tentativa;
+- uma recusa permanente do gateway (`CheckoutError` não temporário): a tarefa
+  falha, sem nova tentativa;
 - o esgotamento das 5 tentativas.
 
-Nesses casos a assinatura paga continua ativa no gateway e o espelho não muda:
-continua mostrando o plano pago, com status ativo e sem cancelamento agendado.
-Nada na reconciliação corrige isso, porque o encerramento não gera um evento.
+Em todos esses casos a assinatura paga continua ativa no gateway e o espelho não
+muda. A reconciliação (`reconcile_billing`, a cada 15 minutos) cobre isso: ela
+procura as organizações encerradas que ainda têm assinatura vinculada ao gateway
+e reenfileira o cancelamento, registrando no log a quantidade reenfileirada.
+Assim, uma falha ou um enfileiramento perdido é recuperado em até 15 minutos,
+desde que o gateway volte a aceitar o cancelamento. Uma recusa permanente
+persistente reaparece a cada ciclo e pede investigação.
 
-O que fazer:
+Um checkout concluído **depois** do encerramento (o dono iniciou o pagamento
+antes) também não gera cobrança: ao processar o evento, a assinatura remota que
+dá acesso é cancelada já, com a mesma chave `billing:close:<id>`, e o espelho
+continua no plano gratuito.
+
+O que fazer se o cancelamento continuar falhando:
 
 1. Veja nos logs do worker a falha de `billing.cancel_closed_organization` da
    organização, e confira no admin, em **Assinaturas**, que o espelho ainda está

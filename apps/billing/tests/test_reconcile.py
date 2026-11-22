@@ -11,8 +11,9 @@ from django_checkouts.enums import Gateway
 from django_checkouts.gateways.commands import ListEvents, RetrieveSubscription
 from django_checkouts.types.events import EventPage, WebhookEvent
 
+from apps.billing.context import organization_scope
 from apps.billing.events import record_event
-from apps.billing.models import BillingEvent
+from apps.billing.models import BillingEvent, Plan, Subscription, SubscriptionStatus
 from apps.billing.tasks import process_billing_event, reconcile_billing
 from apps.organizacoes.models import Organizacao
 from tests.support.billing import fake_gateway, remote_subscription
@@ -173,3 +174,65 @@ def test_reconcile_stops_requeuing_after_repeated_unexpected_failures(monkeypatc
 
     assert enqueued == [event.pk]
     assert BillingEvent.all_objects.get(pk=event.pk).attempts == 2
+
+
+def _organization_with_subscription(slug: str, *, linked: bool, closed: bool) -> Organizacao:
+    """Organização com assinatura paga, ligada ou não ao gateway, aberta ou encerrada."""
+    organization = Organizacao.objects.create(nome=slug, slug=slug)
+    plan = Plan.objects.create(name=f"Pro {slug}", slug=f"pro-{slug}", rank=2, member_limit=10, gateway_price_id=f"price_{slug}")
+    with organization_scope(organization.pk):
+        Subscription.all_objects.create(
+            organizacao=organization,
+            plan=plan,
+            status=SubscriptionStatus.ACTIVE,
+            external_id=f"sub_{slug}" if linked else None,
+            gateway_variant="stripe" if linked else None,
+        )
+    if closed:
+        Organizacao.all_objects.filter(pk=organization.pk).update(
+            is_active=False,
+            is_deleted=True,
+            encerramento_solicitado_em=timezone.now(),
+        )
+    return organization
+
+
+def _cancel_spy(monkeypatch) -> list[int]:
+    """Troca o enfileiramento do cancelamento de encerradas por uma lista com os ids recebidos."""
+    enqueued: list[int] = []
+    monkeypatch.setattr("apps.billing.tasks.cancel_for_closed_organization.delay", enqueued.append)
+    return enqueued
+
+
+def test_reconcile_requeues_cancellation_only_for_closed_organizations_with_link(monkeypatch):
+    _patch_reconcile_gateway(monkeypatch, {ListEvents: _page([])})
+    _enqueued_spy(monkeypatch)
+    cancellations = _cancel_spy(monkeypatch)
+    closed = _organization_with_subscription("encerrada-vinculada", linked=True, closed=True)
+    _organization_with_subscription("encerrada-sem-vinculo", linked=False, closed=True)
+    _organization_with_subscription("ativa-vinculada", linked=True, closed=False)
+
+    reconcile_billing()
+
+    assert cancellations == [closed.pk]
+
+
+def test_reconcile_closed_organization_sweep_failure_does_not_abort_requeue_or_purge(monkeypatch, caplog):
+    _patch_reconcile_gateway(monkeypatch, {ListEvents: _page([])})
+    enqueued = _enqueued_spy(monkeypatch)
+    stale = _pending_event("evt_stale_varredura", created_ago=timedelta(minutes=30), attempts=2)
+    old = _pending_event("evt_antigo_varredura", created_ago=timedelta(days=100), processed=True)
+    BillingEvent.all_objects.filter(pk=old.pk).update(processed_at=timezone.now() - timedelta(days=91))
+    _organization_with_subscription("encerrada-falha", linked=True, closed=True)
+
+    def broker_down(organization_id):
+        raise RuntimeError("broker indisponível")
+
+    monkeypatch.setattr("apps.billing.tasks.cancel_for_closed_organization.delay", broker_down)
+
+    with caplog.at_level(logging.ERROR, logger="apps.billing"):
+        reconcile_billing()
+
+    assert enqueued == [stale.pk]
+    assert BillingEvent.all_objects.filter(pk=old.pk).exists() is False
+    assert any(record.levelno == logging.ERROR for record in caplog.records)
