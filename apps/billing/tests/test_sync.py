@@ -7,8 +7,9 @@ from django.db import connection
 from django.utils import timezone
 
 import pytest
-from django_checkouts.enums import CancellationTiming
+from django_checkouts.enums import CancellationTiming, Gateway
 from django_checkouts.enums import SubscriptionStatus as RemoteStatus
+from django_checkouts.exceptions import CheckoutError, GatewayPermanentError
 from django_checkouts.gateways.commands import CancelRemoteSubscription, RetrieveSubscription
 from django_checkouts.types.subscriptions import SubscriptionItem
 
@@ -257,9 +258,10 @@ def test_sync_loss_of_access_suspends_members(monkeypatch):
     assert MemberLimits.active_count(organization.pk) == Plan.get_free().member_limit
 
 
-def test_link_external_only_fills_empty_external_id(caplog):
+def test_link_external_only_fills_empty_external_id(monkeypatch, caplog):
     organization = _organization()
     Subscriptions.ensure_free(organization.pk)
+    patch_billing_gateway(monkeypatch, {CancelRemoteSubscription: remote_subscription(external_id="sub_2")})
 
     Subscriptions.link_external(organization.pk, external_id="sub_1", gateway_variant="stripe")
     with caplog.at_level(logging.ERROR, logger="apps.billing"):
@@ -269,3 +271,35 @@ def test_link_external_only_fills_empty_external_id(caplog):
     assert state.external_id == "sub_1"
     assert state.gateway_variant == "stripe"
     assert any(record.levelno == logging.ERROR for record in caplog.records)
+
+
+def test_link_external_duplicate_cancels_newcomer_immediately(monkeypatch):
+    organization = _organization()
+    Subscriptions.ensure_free(organization.pk)
+    Subscriptions.link_external(organization.pk, external_id="sub_1", gateway_variant="stripe")
+    gateway = patch_billing_gateway(monkeypatch, {CancelRemoteSubscription: remote_subscription(external_id="sub_2")})
+
+    Subscriptions.link_external(organization.pk, external_id="sub_2", gateway_variant="stripe")
+
+    cancellations = [command for command in gateway.commands if isinstance(command, CancelRemoteSubscription)]
+    assert len(cancellations) == 1
+    assert cancellations[0].external_id == "sub_2"
+    assert cancellations[0].timing == CancellationTiming.IMMEDIATELY
+    assert cancellations[0].idempotency_key == "billing:duplicate:sub_2"
+    assert _state(organization).external_id == "sub_1"
+
+
+def test_link_external_duplicate_cancel_failure_raises_and_keeps_first(monkeypatch):
+    organization = _organization()
+    Subscriptions.ensure_free(organization.pk)
+    Subscriptions.link_external(organization.pk, external_id="sub_1", gateway_variant="stripe")
+
+    def refused(command):
+        raise GatewayPermanentError("recusado", gateway=Gateway.STRIPE, variant="stripe")
+
+    patch_billing_gateway(monkeypatch, {CancelRemoteSubscription: refused})
+
+    with pytest.raises(CheckoutError):
+        Subscriptions.link_external(organization.pk, external_id="sub_2", gateway_variant="stripe")
+
+    assert _state(organization).external_id == "sub_1"

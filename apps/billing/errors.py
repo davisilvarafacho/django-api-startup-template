@@ -11,6 +11,10 @@ class BillingErrorCode(models.TextChoices):
     NOT_SUBSCRIBED = "billing.not_subscribed", _("A organização não possui assinatura ativa.")
     SAME_PLAN = "billing.same_plan", _("A organização já está neste plano.")
     PLAN_UNAVAILABLE = "billing.plan_unavailable", _("Este plano não está disponível para assinatura.")
+    CURRENT_PLAN_UNKNOWN = (
+        "billing.current_plan_unknown",
+        _("O plano atual da assinatura não está no catálogo; a troca para um plano pago está suspensa até a correção."),
+    )
     IDEMPOTENCY_KEY_REQUIRED = "billing.idempotency_key_required", _("Informe o cabeçalho Idempotency-Key.")
     GATEWAY_UNCERTAIN = "billing.gateway_uncertain", _("O gateway de pagamento não confirmou a operação. Tente novamente em instantes.")
     GATEWAY_ERROR = "billing.gateway_error", _("O gateway de pagamento recusou a operação.")

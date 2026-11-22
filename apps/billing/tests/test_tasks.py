@@ -7,7 +7,7 @@ from celery.exceptions import Retry
 from django_checkouts.client import CheckoutClient
 from django_checkouts.enums import Gateway
 from django_checkouts.exceptions import GatewayPermanentError, GatewayTemporaryError
-from django_checkouts.gateways.commands import RetrieveSubscription
+from django_checkouts.gateways.commands import CancelRemoteSubscription, RetrieveSubscription
 from django_checkouts.types.subscriptions import SubscriptionItem
 
 from apps.billing.context import organization_scope
@@ -226,7 +226,14 @@ def test_process_reference_mismatch_records_error(monkeypatch):
             return _remote(organization, external_id="sub_nova")
         return _remote(other, external_id="sub_antiga")
 
-    _patch_gateway(monkeypatch, {RetrieveSubscription: retrieve})
+    # `sub_nova` é uma segunda assinatura da organização: é cancelada antes da sincronização falhar.
+    _patch_gateway(
+        monkeypatch,
+        {
+            RetrieveSubscription: retrieve,
+            CancelRemoteSubscription: _remote(organization, external_id="sub_nova"),
+        },
+    )
     event = _registered_event(subscription_external_id="sub_nova")
 
     process_billing_event(event.pk)
@@ -263,3 +270,49 @@ def test_process_unexpected_error_counts_attempt_and_propagates(monkeypatch):
         process_billing_event(event.pk)
 
     assert _record(event).attempts == 2
+
+
+def test_process_duplicate_subscription_cancels_newcomer_and_marks_processed(monkeypatch):
+    organization = _organization()
+    Subscriptions.ensure_free(organization.pk)
+    Subscriptions.link_external(organization.pk, external_id="sub_1", gateway_variant="stripe")
+    remotes = {"sub_1": _remote(organization, external_id="sub_1"), "sub_2": _remote(organization, external_id="sub_2")}
+    gateway = _patch_gateway(
+        monkeypatch,
+        {
+            RetrieveSubscription: lambda command: remotes[command.external_id],
+            CancelRemoteSubscription: remote_subscription(external_id="sub_2", reference_id=str(organization.pk)),
+        },
+    )
+    event = _registered_event(event_id="evt_dup", subscription_external_id="sub_2")
+
+    process_billing_event(event.pk)
+
+    cancellations = [command for command in gateway.commands if isinstance(command, CancelRemoteSubscription)]
+    assert [command.external_id for command in cancellations] == ["sub_2"]
+    assert cancellations[0].idempotency_key == "billing:duplicate:sub_2"
+    assert _record(event).processed_at is not None
+    assert _mirror(organization).external_id == "sub_1"
+
+
+def test_process_duplicate_subscription_stays_pending_when_cancel_fails(monkeypatch):
+    organization = _organization()
+    Subscriptions.ensure_free(organization.pk)
+    Subscriptions.link_external(organization.pk, external_id="sub_1", gateway_variant="stripe")
+    remotes = {"sub_1": _remote(organization, external_id="sub_1"), "sub_2": _remote(organization, external_id="sub_2")}
+    _patch_gateway(
+        monkeypatch,
+        {
+            RetrieveSubscription: lambda command: remotes[command.external_id],
+            CancelRemoteSubscription: _raising(GatewayPermanentError("recusado", gateway=Gateway.STRIPE, variant="stripe")),
+        },
+    )
+    event = _registered_event(event_id="evt_dup_falha", subscription_external_id="sub_2")
+
+    process_billing_event(event.pk)
+
+    record = _record(event)
+    assert record.processed_at is None
+    assert record.attempts == 1
+    assert "recusado" in record.last_error
+    assert _mirror(organization).external_id == "sub_1"

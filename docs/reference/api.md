@@ -214,6 +214,7 @@ Erros de cobrança seguem o envelope padrão da seção [Erros](#erros):
 | `billing.same_plan` | `422` | Alteração para o plano que a assinatura já tem. |
 | `billing.already_subscribed` | `409` | Checkout com assinatura paga já existente. |
 | `billing.not_subscribed` | `409` | Alteração, cancelamento ou desfazer sem assinatura paga com vínculo no gateway. |
+| `billing.current_plan_unknown` | `409` | Troca para plano pago quando o plano atual não está no catálogo (preço desconhecido no gateway). Cancelar continua permitido. |
 | `billing.downgrade_blocked` | `409` | Downgrade, ou cancelamento (que desce ao gratuito), com mais vínculos ativos que o limite do destino. `context.excess` informa quantos precisam sair. |
 | `billing.member_limit_reached` | `409` | Convite, aceite ou reativação sem vaga no plano efetivo. `context.limit` informa o limite. Vem das rotas de organizações, não das de cobrança. |
 | `billing.gateway_uncertain` | `503` | Falha temporária do gateway, ou resultado incerto. Repetir com a mesma `Idempotency-Key`. |

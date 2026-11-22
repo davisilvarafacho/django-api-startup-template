@@ -65,10 +65,21 @@ class Subscriptions:
     def link_external(cls, organization_id: int, *, external_id: str, gateway_variant: str) -> None:
         """Liga o espelho à assinatura remota, sem sobrescrever um vínculo já existente.
 
+        Se a organização já está ligada a outra assinatura, a recém-chegada é uma cobrança
+        duplicada: ela é cancelada já no gateway, e a assinatura original fica intacta. O
+        cancelamento roda fora do lock e da transação, depois que elas foram liberadas. A chave
+        de idempotência deriva do id da duplicada, então repetir não cancela duas vezes.
+
+        O reembolso da duplicada não é automático: continua manual.
+
         Args:
             organization_id (int): Organização dona da assinatura.
             external_id (str): Identificador da assinatura no gateway.
             gateway_variant (str): Variante do gateway que emitiu a assinatura.
+
+        Raises:
+            CheckoutError: Falha ao cancelar a duplicada; a tarefa que chama registra o erro e
+                não marca o evento como processado.
         """
         with organization_scope(organization_id), transaction.atomic():
             subscription = cls.get_current(organization_id, lock=True)
@@ -76,12 +87,23 @@ class Subscriptions:
                 subscription.external_id = external_id
                 subscription.gateway_variant = gateway_variant
                 subscription.save()
-            elif subscription.external_id != external_id:
-                logger.error(
-                    "Assinatura %s já vinculada a outro ID no gateway; o vínculo %s foi ignorado.",
-                    subscription.pk,
-                    external_id,
-                )
+                return
+            vinculada = subscription.external_id
+
+        if vinculada == external_id:
+            return
+        logger.error(
+            "Organização %s já tem a assinatura %s no gateway; a assinatura duplicada %s foi cancelada imediatamente. "
+            "Se houve cobrança dela, o reembolso é manual.",
+            organization_id,
+            vinculada,
+            external_id,
+        )
+        get_client().subscriptions.cancel(
+            external_id,
+            timing=CancellationTiming.IMMEDIATELY,
+            idempotency_key=f"billing:duplicate:{external_id}",
+        )
 
     @classmethod
     def sync(cls, organization_id: int) -> Subscription:
@@ -113,8 +135,10 @@ class Subscriptions:
     def subscribe(cls, organization_id: int, *, plan: Plan, idempotency_key: str, customer_email: str | None) -> str:
         """Cria o checkout de assinatura do plano pago e devolve a URL de pagamento.
 
-        Só a organização sem assinatura paga pode assinar. O `reference_id` do checkout é o
-        id da organização, para que a assinatura criada no gateway carregue o vínculo.
+        Só a organização sem assinatura no gateway pode assinar. Assinatura vinculada conta mesmo
+        que o espelho mostre o plano gratuito (preço desconhecido ou plano excluído). O
+        `reference_id` do checkout é o id da organização, para que a assinatura criada no gateway
+        carregue o vínculo.
 
         Args:
             organization_id (int): Organização que assina.
@@ -126,14 +150,14 @@ class Subscriptions:
             str: URL do checkout hospedado pelo gateway.
 
         Raises:
-            APIError: `billing.already_subscribed` (409) se já há assinatura paga;
+            APIError: `billing.already_subscribed` (409) se já há assinatura vinculada ao gateway;
                 `billing.plan_unavailable` (422) se o plano não é pago, ativo ou assinável.
             CheckoutError: Falha do gateway, traduzida pela view.
         """
         with organization_scope(organization_id):
             cls.ensure_free(organization_id)
             current = cls.get_current(organization_id)
-            if not current.is_free:
+            if current.external_id or not current.is_free:
                 raise APIError(BillingErrorCode.ALREADY_SUBSCRIBED, status_code=409)
             cls._validate_assignable_plan(plan)
 
@@ -168,7 +192,8 @@ class Subscriptions:
 
         Raises:
             APIError: `billing.not_subscribed` (409), `billing.same_plan` (422),
-                `billing.plan_unavailable` (422) ou `billing.downgrade_blocked` (409).
+                `billing.plan_unavailable` (422), `billing.current_plan_unknown` (409) ou
+                `billing.downgrade_blocked` (409).
             CheckoutError: Falha do gateway, traduzida pela view.
         """
         with organization_scope(organization_id):
@@ -176,6 +201,11 @@ class Subscriptions:
             cls._require_paid(current)
             if current.plan_id == plan.pk:
                 raise APIError(BillingErrorCode.SAME_PLAN, status_code=422)
+            if current.is_free and not plan.is_free:
+                # Assinatura vinculada cujo preço não está no catálogo: o espelho ficou no gratuito,
+                # e o rank não diz se a troca é upgrade ou downgrade. Recusa a troca para plano pago;
+                # cancelar (alvo gratuito) continua permitido.
+                raise APIError(BillingErrorCode.CURRENT_PLAN_UNKNOWN, status_code=409)
             upgrade = plan.rank >= current.plan.rank
             if not plan.is_free:
                 cls._validate_assignable_plan(plan)
@@ -233,33 +263,50 @@ class Subscriptions:
 
     @classmethod
     def cancel_immediately(cls, organization_id: int) -> Subscription | None:
-        """Cancela já a assinatura paga de uma organização encerrada e sincroniza o espelho.
+        """Cancela já a assinatura de uma organização encerrada e sincroniza o espelho.
 
-        Sem a barreira de limite de membros do cancelamento comum: a organização já foi encerrada.
-        A chave de idempotência é fixa por organização, então repetir a tarefa não cancela duas vezes.
+        Basta o vínculo com o gateway: a assinatura pode estar no gratuito pelo espelho (preço
+        desconhecido) e ainda cobrar. Sem a barreira de limite de membros do cancelamento comum:
+        a organização já foi encerrada.
 
         Args:
             organization_id (int): Organização encerrada.
 
         Returns:
             Subscription | None: O espelho depois da sincronização, ou `None` se a organização não
-            tem assinatura paga com vínculo no gateway.
+            tem assinatura vinculada ao gateway.
 
         Raises:
             CheckoutError: Falha do gateway; a tarefa que chama registra o erro.
         """
         with organization_scope(organization_id):
-            current = Subscription.all_objects.select_related("plan").filter(organizacao_id=organization_id).first()
-            if current is None or current.is_free or not current.external_id:
+            current = Subscription.all_objects.filter(organizacao_id=organization_id).first()
+            if current is None or not current.external_id:
                 return None
             external_id = current.external_id
 
+        cls.cancel_remote_for_closed(organization_id, external_id=external_id)
+        return cls.sync(organization_id)
+
+    @staticmethod
+    def cancel_remote_for_closed(organization_id: int, *, external_id: str) -> None:
+        """Cancela já, no gateway, a assinatura remota de uma organização encerrada.
+
+        A chave de idempotência é fixa por organização (`billing:close:<id>`), então repetir não
+        cancela duas vezes. Não grava o espelho: quem chama decide se sincroniza.
+
+        Args:
+            organization_id (int): Organização encerrada.
+            external_id (str): Identificador da assinatura remota a cancelar.
+
+        Raises:
+            CheckoutError: Falha do gateway.
+        """
         get_client().subscriptions.cancel(
             external_id,
             timing=CancellationTiming.IMMEDIATELY,
             idempotency_key=f"billing:close:{organization_id}",
         )
-        return cls.sync(organization_id)
 
     @classmethod
     def resume(cls, organization_id: int, *, idempotency_key: str) -> Subscription:
@@ -286,8 +333,13 @@ class Subscriptions:
 
     @staticmethod
     def _require_paid(subscription: Subscription) -> None:
-        """Exige assinatura paga com vínculo no gateway."""
-        if subscription.is_free or not subscription.external_id:
+        """Exige vínculo com a assinatura no gateway.
+
+        Só o vínculo importa, não o plano do espelho: com preço desconhecido, o espelho mostra o
+        gratuito e a assinatura continua cobrando. Assim cancelar e desfazer chegam ao gateway,
+        e a troca de plano é recusada à parte (`CURRENT_PLAN_UNKNOWN`).
+        """
+        if not subscription.external_id:
             raise APIError(BillingErrorCode.NOT_SUBSCRIBED, status_code=409)
 
     @staticmethod

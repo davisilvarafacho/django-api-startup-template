@@ -305,3 +305,68 @@ def test_cancel_at_period_end_then_resume(monkeypatch):
     state = _state(organization)
     assert state.cancel_at is None
     assert state.status == SubscriptionStatus.ACTIVE
+
+
+def test_second_checkout_refused_once_first_subscription_is_linked(monkeypatch):
+    organization = _organization()
+    Subscriptions.ensure_free(organization.pk)
+    pro = _plan("pro", price="price_pro", rank=2)
+    patch_billing_gateway(monkeypatch, {CreateCheckout: fake_checkout()})
+    Subscriptions.subscribe(organization.pk, plan=pro, idempotency_key="idem-1", customer_email=None)
+    # O webhook do primeiro checkout chegou e ligou o espelho à assinatura remota.
+    Subscriptions.link_external(organization.pk, external_id="sub_1", gateway_variant="stripe")
+
+    with pytest.raises(APIError) as excinfo:
+        Subscriptions.subscribe(organization.pk, plan=pro, idempotency_key="idem-2", customer_email=None)
+
+    assert excinfo.value.code == BillingErrorCode.ALREADY_SUBSCRIBED
+    assert excinfo.value.status_code == 409
+
+
+def test_checkout_refused_when_linked_subscription_mirrors_free_plan(monkeypatch):
+    organization = _organization()
+    _linked_subscription(organization, Plan.get_free())
+    pro = _plan("pro", price="price_pro", rank=2)
+    patch_billing_gateway(monkeypatch, {})
+
+    with pytest.raises(APIError) as excinfo:
+        Subscriptions.subscribe(organization.pk, plan=pro, idempotency_key="idem-1", customer_email=None)
+
+    assert excinfo.value.code == BillingErrorCode.ALREADY_SUBSCRIBED
+
+
+def test_cancel_reaches_gateway_when_plan_price_is_unknown(monkeypatch):
+    organization = _organization()
+    _linked_subscription(organization, Plan.get_free())
+    agora = timezone.now()
+    # Preço desconhecido no catálogo: o espelho mantém o gratuito, mas a assinatura continua cobrando.
+    remote = _remote_with_price(organization, "price_desconhecido", cancel_at=agora + timedelta(days=30))
+    gateway = patch_billing_gateway(
+        monkeypatch,
+        {
+            CancelRemoteSubscription: remote,
+            RetrieveSubscription: remote,
+        },
+    )
+
+    subscription = Subscriptions.cancel(organization.pk, idempotency_key="idem-cancel")
+
+    cancellations = [command for command in gateway.commands if isinstance(command, CancelRemoteSubscription)]
+    assert len(cancellations) == 1
+    assert cancellations[0].external_id == "sub_1"
+    assert cancellations[0].timing == CancellationTiming.PERIOD_END
+    assert subscription.is_cancel_scheduled is True
+
+
+def test_change_to_paid_plan_refused_when_current_plan_is_unknown(monkeypatch):
+    organization = _organization()
+    _linked_subscription(organization, Plan.get_free())
+    pro = _plan("pro", price="price_pro", rank=2)
+    gateway = patch_billing_gateway(monkeypatch, {})
+
+    with pytest.raises(APIError) as excinfo:
+        Subscriptions.change_plan(organization.pk, plan=pro, idempotency_key="idem-2")
+
+    assert excinfo.value.code == BillingErrorCode.CURRENT_PLAN_UNKNOWN
+    assert excinfo.value.status_code == 409
+    assert gateway.commands == []

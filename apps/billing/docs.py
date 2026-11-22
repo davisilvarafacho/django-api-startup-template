@@ -89,7 +89,11 @@ document_subscription_change = extend_schema(
         200: SubscriptionSchema,
         401: _AUTH_ERRORS,
         403: _ROLE_ERRORS,
-        409: document_error_codes(BillingErrorCode.NOT_SUBSCRIBED, BillingErrorCode.DOWNGRADE_BLOCKED),
+        409: document_error_codes(
+            BillingErrorCode.NOT_SUBSCRIBED,
+            BillingErrorCode.DOWNGRADE_BLOCKED,
+            BillingErrorCode.CURRENT_PLAN_UNKNOWN,
+        ),
         422: document_error_codes(
             BillingErrorCode.PLAN_UNAVAILABLE,
             BillingErrorCode.SAME_PLAN,
