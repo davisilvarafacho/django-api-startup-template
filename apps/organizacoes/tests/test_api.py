@@ -17,6 +17,7 @@ from apps.api.autenticacao.models import TokenMetaData, TokenType
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
 from apps.organizacoes.models import Convite, Organizacao, Papel, Time, Vinculo
 from internal_frameworks.context import ContextVariable
+from tests.support.billing import subscribe_organization
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
@@ -414,6 +415,7 @@ def test_api_key_com_scopes_crud_ignora_papel_pessoal_em_convites_e_vinculos():
     proprietario = criar_usuario(email="api-key-crud-owner@example.com")
     alvo = criar_usuario(email="api-key-crud-alvo@example.com")
     organizacao = Organizacao.objects.create(nome="Org API key CRUD", slug="org-api-key-crud")
+    subscribe_organization(organizacao, member_limit=10)
     vincular(responsavel, organizacao, Papel.MEMBRO)
     vincular(proprietario, organizacao, Papel.PROPRIETARIO)
     vinculo_alvo = vincular(alvo, organizacao, Papel.MEMBRO)

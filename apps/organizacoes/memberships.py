@@ -8,6 +8,7 @@ from django.utils.translation import gettext_lazy as _
 from apps.api.autenticacao.errors import AuthErrorCode
 from apps.api.autenticacao.services import lock_user_accounts
 from apps.api.core.errors import APIError
+from apps.billing.members import MemberLimits
 from apps.organizacoes.errors import OrganizationErrorCode
 from apps.organizacoes.models import Convite, Organizacao, Papel, Vinculo
 from apps.usuarios.errors import AccountErrorCode
@@ -72,6 +73,7 @@ class Vinculos:
                 )
                 if validar_papel_ator:
                     cls._exigir_papel_concedivel(papel, vinculo_ator, mensagem="Você não pode convidar alguém para um papel acima do seu.")
+            MemberLimits.ensure_capacity(organizacao.pk, count_pending_invites=True, using=using)
             dados = {
                 "organizacao": organizacao,
                 "email": email,
@@ -101,6 +103,11 @@ class Vinculos:
                     status_code=422,
                     field="token",
                 )
+
+            organizacao_id = convite_bloqueado.organizacao_id
+            vinculo_existente = Vinculo.objects.using(using).select_for_update().filter(organizacao_id=organizacao_id, usuario=usuario).first()
+            if vinculo_existente is None or not vinculo_existente.is_active:
+                MemberLimits.ensure_capacity(organizacao_id, using=using)
 
             vinculo, criado = (
                 Vinculo.objects.using(using)
@@ -245,6 +252,9 @@ class Vinculos:
                 is_deleted_pretendido=novos_dados.get("is_deleted", vinculo_bloqueado.is_deleted),
                 using=using,
             )
+            if novos_dados.get("is_active") and not vinculo_bloqueado.is_active:
+                MemberLimits.ensure_capacity(organizacao.pk, using=using)
+                novos_dados["plan_limit_suspended_at"] = None
 
             for campo, valor in novos_dados.items():
                 setattr(vinculo_bloqueado, campo, valor)

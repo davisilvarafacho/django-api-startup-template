@@ -1,10 +1,17 @@
 """Construtores exclusivos da infraestrutura de teste da cobrança."""
 
+from uuid import uuid4
+
 from django_checkouts.client import CheckoutClient
 from django_checkouts.enums import Gateway, SubscriptionStatus
 from django_checkouts.gateways.stripe.capabilities import STRIPE_CAPABILITIES
 from django_checkouts.testing.fakes import FakeCheckoutGateway
 from django_checkouts.types.subscriptions import Subscription, SubscriptionItem
+
+from apps.billing.context import organization_scope
+from apps.billing.models import Plan
+from apps.billing.models import Subscription as AssinaturaLocal
+from apps.organizacoes.models import Organizacao
 
 
 class FakeGatewayVariant(FakeCheckoutGateway):
@@ -51,3 +58,20 @@ def remote_subscription(**overrides) -> Subscription:
     }
     campos.update(overrides)
     return Subscription(**campos)
+
+
+def subscribe_organization(organization: Organizacao, *, member_limit: int) -> AssinaturaLocal:
+    """Assina a organização, ativa, num plano pago com o limite de membros informado."""
+    plano = Plan.objects.create(
+        name=f"Plano de teste {member_limit}",
+        slug=f"teste-{uuid4().hex[:12]}",
+        rank=1,
+        member_limit=member_limit,
+        is_free=False,
+    )
+    with organization_scope(organization.pk):
+        assinatura, _ = AssinaturaLocal.all_objects.update_or_create(
+            organizacao=organization,
+            defaults={"plan": plano, "status": AssinaturaLocal.Status.ACTIVE},
+        )
+    return assinatura
