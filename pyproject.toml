@@ -14,7 +14,7 @@ dependencies = [
     "charset-normalizer==3.4.4",
     "cryptography>=46.0.0,<47.0.0",
     "diff-match-patch==20241021",
-    "django==5.2.8",
+    "django==5.2.17",
     "django-anymail[resend]>=15.0",
     "django-auditlog==3.4.1",
     "django-axes==8.0.0",
