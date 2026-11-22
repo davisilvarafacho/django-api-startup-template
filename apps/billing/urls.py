@@ -1,9 +1,19 @@
-from django.urls import include, path
+"""Rotas da cobrança, explícitas e sob `/cobranca/` (sem router)."""
 
-from rest_framework.routers import DefaultRouter
+from django.urls import path
 
-router_v1 = DefaultRouter()
+from apps.billing.views import (
+    PlanListView,
+    SubscriptionCancelView,
+    SubscriptionChangeView,
+    SubscriptionCheckoutView,
+    SubscriptionView,
+)
 
 urlpatterns = [
-    path("v1/", include(router_v1.urls)),
+    path("cobranca/planos/", PlanListView.as_view(), name="cobranca-planos"),
+    path("cobranca/assinatura/", SubscriptionView.as_view(), name="cobranca-assinatura"),
+    path("cobranca/assinatura/checkout/", SubscriptionCheckoutView.as_view(), name="cobranca-assinatura-checkout"),
+    path("cobranca/assinatura/alteracao/", SubscriptionChangeView.as_view(), name="cobranca-assinatura-alteracao"),
+    path("cobranca/assinatura/cancelamento/", SubscriptionCancelView.as_view(), name="cobranca-assinatura-cancelamento"),
 ]
