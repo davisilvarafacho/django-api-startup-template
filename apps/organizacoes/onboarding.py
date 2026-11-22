@@ -2,6 +2,7 @@
 
 from django.db import transaction
 
+from apps.billing.subscriptions import Subscriptions
 from apps.organizacoes.memberships import Vinculos
 from apps.organizacoes.models import Organizacao
 from apps.organizacoes.organizations import Organizacoes
@@ -28,4 +29,5 @@ class OrganizationOnboarding:
             from apps.workspaces.workspaces import Workspaces
 
             Workspaces.criar_inicial(organizacao=organizacao, proprietario=proprietario)
+            Subscriptions.ensure_free(organizacao.pk)
             return organizacao

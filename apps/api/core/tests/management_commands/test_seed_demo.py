@@ -7,6 +7,8 @@ from django.core.management.base import CommandError
 
 import pytest
 
+from apps.billing.context import organization_scope
+from apps.billing.models import Subscription
 from apps.organizacoes.models import Organizacao, Papel, Time, Vinculo
 from apps.usuarios.models import Usuario
 
@@ -102,6 +104,19 @@ def test_seed_demo_e_idempotente_e_preserva_edicoes_manuais():
     assert vinculo.papel == Papel.MEMBRO
     assert set(vinculo.times.all()) == {time_demo, time_extra}
     assert "já existia" in output
+
+
+def test_seed_demo_creates_free_subscription():
+    executar_seed()
+    executar_seed()
+
+    organizacao = Organizacao.objects.get(slug="demo")
+    with organization_scope(organizacao.pk):
+        assinaturas = list(Subscription.all_objects.filter(organizacao=organizacao))
+
+    assert len(assinaturas) == 1
+    assert assinaturas[0].is_free is True
+    assert assinaturas[0].status == "active"
 
 
 def test_seed_demo_reverte_todo_o_grafo_quando_o_banco_falha(monkeypatch):

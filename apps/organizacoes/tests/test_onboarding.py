@@ -5,6 +5,8 @@ from django.utils import timezone
 import pytest
 
 from apps.api.core.errors import APIError
+from apps.billing.context import organization_scope
+from apps.billing.models import Subscription
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
 from apps.usuarios.accounts import Contas
 from apps.usuarios.models import Usuario
@@ -62,9 +64,22 @@ def test_onboarding_copia_email_e_cria_proprietario_e_workspace_inicial():
     assert VinculoWorkspace.objects.filter(vinculo=vinculo, workspace=workspace, selected_for_view=True).count() == 1
 
 
+def test_onboarding_creates_free_subscription():
+    from apps.organizacoes.onboarding import OrganizationOnboarding
+
+    usuario = criar_usuario(email_verificado_em=timezone.now())
+
+    organizacao = OrganizationOnboarding.criar(usuario=usuario, nome="Gratuita", slug="gratuita")
+
+    with organization_scope(organizacao.pk):
+        assinatura = Subscription.all_objects.get(organizacao=organizacao)
+    assert assinatura.is_free is True
+    assert assinatura.status == "active"
+
+
 @pytest.mark.parametrize(
     "colaborador",
-    ["contas", "organizacoes", "vinculos", "workspace"],
+    ["contas", "organizacoes", "vinculos", "workspace", "assinatura"],
 )
 def test_onboarding_reverte_organizacao_e_vinculo_quando_colaborador_falha(monkeypatch, colaborador):
     from apps.organizacoes import onboarding
@@ -91,13 +106,21 @@ def test_onboarding_reverte_organizacao_e_vinculo_quando_colaborador_falha(monke
             raise RuntimeError("vinculos")
 
         monkeypatch.setattr(Vinculos, "criar_proprietario", classmethod(vincular_e_falhar))
-    else:
+    elif colaborador == "workspace":
         from apps.workspaces.workspaces import Workspaces
 
         monkeypatch.setattr(
             Workspaces,
             "criar_inicial",
             classmethod(lambda cls, **kwargs: (_ for _ in ()).throw(RuntimeError("workspace"))),
+        )
+    else:
+        from apps.billing.subscriptions import Subscriptions
+
+        monkeypatch.setattr(
+            Subscriptions,
+            "ensure_free",
+            classmethod(lambda cls, organization_id: (_ for _ in ()).throw(RuntimeError("assinatura"))),
         )
 
     with pytest.raises(RuntimeError, match=colaborador):

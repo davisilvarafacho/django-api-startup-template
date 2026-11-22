@@ -5,6 +5,7 @@ from django.contrib.auth.hashers import make_password
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
+from apps.billing.subscriptions import Subscriptions
 from apps.organizacoes.models import Organizacao, Papel, Time, Vinculo
 from apps.usuarios.models import Usuario
 
@@ -57,6 +58,7 @@ class Command(BaseCommand):
             defaults={"papel": Papel.PROPRIETARIO},
         )
         vinculo.times.add(time)
+        Subscriptions.ensure_free(organizacao.pk)
 
         return [
             ("Organização Demo", organizacao_criada),
