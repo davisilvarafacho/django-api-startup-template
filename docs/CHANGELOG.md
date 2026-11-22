@@ -14,7 +14,7 @@ projeto adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 - Catálogo versionado de planos, contratos gratuitos/trial/enterprise,
   propostas, seats, carências e política tenant de acesso comercial.
 - Faturamento recorrente Stripe pela interface publicada
-  `django-checkouts[stripe]==1.0.1`, com checkouts, setup de forma de pagamento,
+  `django-checkouts[stripe]==1.1.0`, com checkouts, setup de forma de pagamento,
   faturas, webhooks autenticados, retries, recuperação e reconciliação.
 - Rollout idempotente de organizações existentes por `sync_plans` e
   `initialize_subscriptions`, protegido por system check de deploy.

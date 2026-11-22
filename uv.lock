@@ -922,7 +922,7 @@ requires-dist = [
     { name = "django-axes", specifier = "==8.0.0" },
     { name = "django-cachalot", specifier = "==2.8.0" },
     { name = "django-celery-beat", specifier = ">=2.9.0" },
-    { name = "django-checkouts", extras = ["stripe"], specifier = "==1.0.1" },
+    { name = "django-checkouts", extras = ["stripe"], specifier = "==1.1.0" },
     { name = "django-cors-headers", specifier = "==4.9.0" },
     { name = "django-dbbackup", specifier = "==5.0.1" },
     { name = "django-filter", specifier = "==25.2" },
@@ -1079,15 +1079,15 @@ wheels = [
 
 [[package]]
 name = "django-checkouts"
-version = "1.0.1"
+version = "1.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "django" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4f/bf/81f174304ec701fd59b3aca165a142aa4249cd2d6314632beaabbc8ecd3f/django_checkouts-1.0.1.tar.gz", hash = "sha256:ddbf1961f4de019e9f8277a5330760b8da9cf0dce7e3114b049c7705d3d9d6a5", size = 188663, upload-time = "2026-09-05T22:38:01.314Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/48/1c/c8dfa85c001a482d7a29f840c3a39e68cf5dac5e954606111f06272b13ba/django_checkouts-1.1.0.tar.gz", hash = "sha256:6ae222dd4342495beaece11b24422de41fdfd014bd7e5e37798356127ba4b64f", size = 189172, upload-time = "2026-11-22T15:25:11.821Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/06/d8/fe4a2b05f6cde9e2e2771ab40acecdfe0e8b687b0b6b3f2cb45f937c7640/django_checkouts-1.0.1-py3-none-any.whl", hash = "sha256:3ab58fab905a794b1876dca44602b9e5ccce7bb68d8e1944dc3a49028cc797b8", size = 57348, upload-time = "2026-09-05T22:37:59.967Z" },
+    { url = "https://files.pythonhosted.org/packages/44/74/6db575f792c989f04b76d65bd978a9fc1121c4af22f9773baf7cc6c4de8b/django_checkouts-1.1.0-py3-none-any.whl", hash = "sha256:88fe37b0575b3ddae6c502d1bb05a2e5febe8380e52e9f48dbe2f807157c023d", size = 57439, upload-time = "2026-11-22T15:25:10.673Z" },
 ]
 
 [package.optional-dependencies]
