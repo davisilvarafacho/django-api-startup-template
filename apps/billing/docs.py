@@ -62,8 +62,8 @@ _IDEMPOTENCY_ERRORS = document_error_codes(BillingErrorCode.IDEMPOTENCY_KEY_REQU
 _GATEWAY_ERRORS = document_error_codes(BillingErrorCode.GATEWAY_UNCERTAIN, BillingErrorCode.GATEWAY_ERROR)
 
 document_plan_list = extend_schema(
-    responses={200: PlanSchema(many=True), 401: _AUTH_ERRORS},
-    description="Catálogo de planos ativos, em ordem de rank. Não exige `X-Organization`.",
+    responses={200: PlanSchema(many=True), 401: _AUTH_ERRORS, 403: document_error_codes(AuthErrorCode.PERMISSION_DENIED)},
+    description="Catálogo de planos ativos, em ordem de rank. Só sessão humana (API key recebe 403); não exige `X-Organization`.",
 )
 
 document_subscription_get = extend_schema(

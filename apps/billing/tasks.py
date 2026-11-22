@@ -13,9 +13,9 @@ from celery import shared_task
 from django_checkouts.exceptions import CheckoutError, GatewayTemporaryError
 
 from apps.billing.events import record_event
-from apps.billing.gateway import get_client
+from apps.billing.gateway import ReferenceMismatch, get_client
 from apps.billing.models import BillingEvent, Subscription, SubscriptionStatus
-from apps.billing.subscriptions import ReferenceMismatch, Subscriptions
+from apps.billing.subscriptions import Subscriptions
 from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.models import Organizacao
 

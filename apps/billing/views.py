@@ -81,9 +81,12 @@ class SubscriptionViewMixin:
 @document_plan_list
 @no_tenancy
 class PlanListView(ListAPIView):
-    """Catálogo de planos ativos, em ordem de rank. Exige só autenticação, não organização."""
+    """Catálogo de planos ativos, em ordem de rank. Exige sessão humana, mas não organização."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TokenScopePermission]
+    # Sessão humana apenas: `session_only` recusa API keys na `TokenScopePermission` e o
+    # middleware a deixa passar sem tenant nesta rota livre de organização.
+    session_only = True
     serializer_class = PlanSerpySerializer
     filterset_class = PlanFilter
     queryset = Plan.objects.filter(is_active=True).order_by("rank")

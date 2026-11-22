@@ -14,9 +14,10 @@ from django_checkouts.gateways.commands import CancelRemoteSubscription, Retriev
 from django_checkouts.types.subscriptions import SubscriptionItem
 
 from apps.billing.context import organization_scope
+from apps.billing.gateway import ReferenceMismatch
 from apps.billing.members import MemberLimits
 from apps.billing.models import Plan, Subscription, SubscriptionStatus
-from apps.billing.subscriptions import ReferenceMismatch, Subscriptions
+from apps.billing.subscriptions import Subscriptions
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
 from tests.support.billing import patch_billing_gateway, remote_subscription
 from tests.support.usuarios import criar_usuario

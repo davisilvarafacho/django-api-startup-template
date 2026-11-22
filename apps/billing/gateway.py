@@ -1,5 +1,6 @@
 """Cliente do gateway de cobrança e tradução das suas falhas para a API."""
 
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -13,12 +14,18 @@ from django_checkouts.registry import get_checkout_gateway
 from apps.api.core.errors import APIError
 from apps.billing.errors import BillingErrorCode
 
+logger = logging.getLogger("apps.billing")
+
 # Disposições em que o estado no gateway pode ter mudado sem confirmação.
 _DISPOSICOES_INCERTAS = {
     RetryDisposition.RETRY,
     RetryDisposition.RETRY_SAME_KEY,
     RetryDisposition.RECONCILE_FIRST,
 }
+
+
+class ReferenceMismatch(Exception):
+    """A assinatura remota aponta para outra organização; nada é gravado."""
 
 
 def get_client() -> CheckoutClient:
@@ -38,11 +45,18 @@ def translate_gateway_errors() -> Iterator[None]:
     é incerto, viram `503 billing.gateway_uncertain`. As demais viram
     `502 billing.gateway_error`.
 
+    `ReferenceMismatch` também vira `502 billing.gateway_error`, com log de erro: a operação
+    já chegou ao gateway, e a assinatura remota que a fecha não pertence à organização. A
+    mutação não pode escapar como exceção não tratada.
+
     Raises:
-        APIError: Sempre que um `CheckoutError` atravessa o bloco.
+        APIError: Sempre que um `CheckoutError` ou `ReferenceMismatch` atravessa o bloco.
     """
     try:
         yield
+    except ReferenceMismatch as erro:
+        logger.error("Resposta do gateway recusada: %s", erro)
+        raise APIError(BillingErrorCode.GATEWAY_ERROR, status_code=502) from erro
     except CheckoutError as erro:
         if isinstance(erro, GatewayTemporaryError) or erro.retry_advice.disposition in _DISPOSICOES_INCERTAS:
             raise APIError(BillingErrorCode.GATEWAY_UNCERTAIN, status_code=503) from erro

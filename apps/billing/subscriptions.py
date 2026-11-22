@@ -13,15 +13,11 @@ from django_checkouts.types.subscriptions import ChangeSubscription, ReplacePric
 from apps.api.core.errors import APIError
 from apps.billing.context import organization_scope
 from apps.billing.errors import BillingErrorCode
-from apps.billing.gateway import get_client
+from apps.billing.gateway import ReferenceMismatch, get_client
 from apps.billing.members import MemberLimits
 from apps.billing.models import Plan, Subscription, SubscriptionStatus
 
 logger = logging.getLogger("apps.billing")
-
-
-class ReferenceMismatch(Exception):
-    """A assinatura remota aponta para outra organização; nada é gravado."""
 
 
 class Subscriptions:

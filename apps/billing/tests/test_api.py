@@ -6,17 +6,24 @@ from rest_framework.test import APIClient
 import pytest
 from django_checkouts.enums import Gateway
 from django_checkouts.exceptions import GatewayTemporaryError
-from django_checkouts.gateways.commands import CreateCheckout
+from django_checkouts.gateways.commands import (
+    CancelRemoteSubscription,
+    ChangeRemoteSubscription,
+    CreateCheckout,
+    ResumeSubscription,
+    RetrieveSubscription,
+)
 from knox.models import get_token_model
 
 from apps.api.autenticacao.errors import AuthErrorCode
 from apps.api.autenticacao.models import TokenMetaData, TokenType
-from apps.billing.models import Plan
+from apps.billing.context import organization_scope
+from apps.billing.models import Plan, Subscription, SubscriptionStatus
 from apps.billing.subscriptions import Subscriptions
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
 from internal_frameworks.context import ContextVariable
-from tests.support.billing import fake_checkout, patch_billing_gateway
+from tests.support.billing import fake_checkout, patch_billing_gateway, remote_subscription
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
@@ -203,3 +210,64 @@ def test_gateway_temporary_error_returns_503(monkeypatch):
 
     assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
     assert response.json()["errors"][0]["code"] == "billing.gateway_uncertain"
+
+
+def test_plans_list_rejects_api_keys_but_serves_sessions_without_organization_header():
+    organization = _organization()
+    owner = criar_usuario()
+    _link(owner, organization, Papel.PROPRIETARIO)
+    _paid_plan("pro")
+
+    api_key_response = api_key_client(owner, ["organizations:read"], organization).get("/cobranca/planos/")
+    session_response = authenticated_client(owner).get("/cobranca/planos/")
+
+    assert api_key_response.status_code == status.HTTP_403_FORBIDDEN
+    assert api_key_response.json()["errors"][0]["code"] == AuthErrorCode.PERMISSION_DENIED
+    assert session_response.status_code == status.HTTP_200_OK
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("post", "/cobranca/assinatura/cancelamento/", None),
+        ("delete", "/cobranca/assinatura/cancelamento/", None),
+        ("post", "/cobranca/assinatura/alteracao/", {"plan": "pro"}),
+    ],
+)
+def test_reference_mismatch_after_gateway_call_returns_502(monkeypatch, caplog, method, path, body):
+    organization = _organization()
+    owner = criar_usuario()
+    _link(owner, organization, Papel.PROPRIETARIO)
+    basic = _paid_plan("basic", rank=1, price="price_basic")
+    _paid_plan("pro", rank=2, price="price_pro")
+    with organization_scope(organization.pk):
+        Subscription.all_objects.create(
+            organizacao=organization,
+            plan=basic,
+            status=SubscriptionStatus.ACTIVE,
+            external_id="sub_1",
+            gateway_variant="stripe",
+        )
+    # Assinatura remota que aponta para outra organização: a leitura que fecha a operação a rejeita.
+    foreign = remote_subscription(external_id="sub_1", reference_id="999999")
+    patch_billing_gateway(
+        monkeypatch,
+        {
+            RetrieveSubscription: foreign,
+            CancelRemoteSubscription: foreign,
+            ResumeSubscription: foreign,
+            ChangeRemoteSubscription: foreign,
+        },
+    )
+
+    with caplog.at_level("ERROR", logger="apps.billing"):
+        response = getattr(authenticated_client(owner), method)(
+            path,
+            body,
+            format="json",
+            **{META_HEADER_ORGANIZACAO: "acme", IDEMPOTENCY_HEADER: "idem-1"},
+        )
+
+    assert response.status_code == status.HTTP_502_BAD_GATEWAY
+    assert response.json()["errors"][0]["code"] == "billing.gateway_error"
+    assert any(record.levelname == "ERROR" for record in caplog.records)
