@@ -227,12 +227,12 @@ default sobre a tabela unificada de tokens.
 **Exceções arquiteturais explícitas:**
 
 - Modelos globais de identidade, catálogo, tenancy ou roteamento do control
-  plane podem herdar de `BaseGlobal` quando precisam ser consultados antes de
+  plane podem herdar de `BaseTenantless` quando precisam ser consultados antes de
   existir contexto RLS. A exceção deve ser justificada na docstring do model;
   ela mantém `created_by`, `created_at` e `last_modified_at`. Exemplos existentes
   são `Usuario`, `Organizacao`, `Vinculo` e `Convite`.
 - Um modelo com isolamento especial que não caiba no FK obrigatório de `Base`
-  pode combinar `BaseGlobal` com `RLSModel` e policies próprias. A necessidade,
+  pode combinar `BaseTenantless` com `RLSModel` e policies próprias. A necessidade,
   o caminho privilegiado e testes sob um papel sujeito a RLS devem ser
   documentados explicitamente.
 - Modelos de credencial que implementam contratos externos (como o

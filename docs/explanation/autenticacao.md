@@ -96,11 +96,11 @@ codenames internos do Django (`app_label.codename`) pelo registry em
 ### Declarando o recurso de um model
 
 ```python
-class Time(BaseGlobal):
+class Time(BaseTenantless):
     api_scope_resource = "teams"
 ```
 
-`None` (o default de `BaseGlobal`) significa que o model não é exposto pelo
+`None` (o default de `BaseTenantless`) significa que o model não é exposto pelo
 registry. Um ViewSet pode sobrescrever o recurso público quando ele diverge do
 model consultado (ex.: sem `queryset` estático):
 

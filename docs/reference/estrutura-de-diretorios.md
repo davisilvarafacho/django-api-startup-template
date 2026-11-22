@@ -78,7 +78,7 @@ Código de produção nunca importa `tests`. Fixture específica de um app fica 
   base), `core` (registries, cache, erros, health, management commands),
   `autenticacao`, `mcp_server` e `metadata`. É o que o template entrega pronto.
 - **Identidade, tenancy e domínio** (`apps/organizacoes/`, `apps/usuarios/`,
-  `apps/workspaces/`, `apps/logs/`) — os apps que herdam de `BaseGlobal` por
+  `apps/workspaces/`, `apps/logs/`) — os apps que herdam de `BaseTenantless` por
   serem lidos antes de existir contexto RLS, o app de subtenancy de Workspaces
   e o app de trilha de auditoria. Workspaces usa models tenantless para
   representar a própria fronteira e é aplicado às entidades de negócio por

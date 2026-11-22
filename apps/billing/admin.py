@@ -44,7 +44,7 @@ class OrganizacaoAdminMixin:
     As rotas de `/admin/` não passam pelo `OrganizacaoMiddleware`, então a query levantaria
     `RLSContextRequiredError`. Como no admin de metadados, as views são embrulhadas em
     `organizacao_atual_privilegiada`, uma organização por vez: a escolhida no filtro da
-    listagem, a lembrada na sessão ou a primeira cadastrada.
+    listagem, a lembrada na sessão ou a primeira por nome.
     """
 
     def get_queryset(self, request):
@@ -83,7 +83,7 @@ class OrganizacaoAdminMixin:
         return wrapper
 
     def _resolve_organization(self, request):
-        """Organização vigente: filtro da listagem > sessão > primeira cadastrada."""
+        """Organização vigente: filtro da listagem > sessão > primeira por nome."""
         from_filter = request.GET.get(ORGANIZATION_FILTER_PARAM, "")
         if from_filter.isdigit():
             organization_id = int(from_filter)

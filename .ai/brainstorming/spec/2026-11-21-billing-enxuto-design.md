@@ -26,8 +26,11 @@ pago e se cabe mais um membro.
 - **Preço fixo por plano** com **limite de membros** por plano (teto, não cobrança).
 - Quando o acesso pago cai, a organização volta ao gratuito e os **membros mais
   recentes acima do limite são suspensos**; quando o acesso volta, são reativados.
-- Webhook idempotente + reconciliação periódica: nenhum evento perdido deixa o
-  espelho errado por mais que um ciclo do worker.
+- Webhook idempotente + reconciliação periódica: um evento perdido é recuperado
+  em até um ciclo do worker (15 min), **desde que** esteja dentro da janela de
+  reconciliação (`BILLING_RECONCILE_WINDOW_HOURS`, 72h) e abaixo de
+  `BILLING_EVENT_MAX_ATTEMPTS` tentativas. Fora disso, a divergência pede
+  sincronização manual (`Subscriptions.sync`).
 
 ## Não-objetivos
 
@@ -59,7 +62,7 @@ pago e se cabe mais um membro.
 O usuário escolheu a 1.
 
 Para achar a organização de um evento, também foram consideradas: models de
-billing globais (`BaseGlobal`) — rejeitado, dado de tenant fora do RLS; bypass
+billing globais (`BaseTenantless`) — rejeitado, dado de tenant fora do RLS; bypass
 privilegiado — `organizacao_atual_privilegiada` só **troca** de tenant, não lê
 atravessando tenants, então exigiria `SECURITY DEFINER`/`BYPASSRLS` (o que inflou a
 versão antiga). **Escolhido:** a própria assinatura no gateway carrega o id da
@@ -102,7 +105,7 @@ apps/billing/
 ### Topologia
 
 ```
-                 Plan  (BaseGlobal · catálogo)
+                 Plan  (BaseTenantless · catálogo)
                   ▲  ▲
           plan N:1│  │N:1 pending_plan (downgrade agendado)
                   │  │
@@ -111,14 +114,14 @@ Organizacao ─1:1─ Subscription  (Base · tenant, sob RLS)
   Vinculo ─N:1─ Usuario
   (+ plan_limit_suspended_at)
 
-BillingEvent  (BaseGlobal · caixa de entrada, sem FK)
+BillingEvent  (BaseTenantless · caixa de entrada, sem FK)
 ```
 
-- `Plan` é catálogo: não pertence a organização → `BaseGlobal`.
+- `Plan` é catálogo: não pertence a organização → `BaseTenantless`.
 - `Subscription` é dado do tenant → `Base`, sob RLS. Toda leitura/escrita fora de
   request usa `organizacao_atual(org_id)`, com o id vindo do gateway.
 - `BillingEvent` existe antes de se saber o tenant e só guarda ids e metadados do
-  evento (nenhum dado da organização) → `BaseGlobal`.
+  evento (nenhum dado da organização) → `BaseTenantless`.
 
 ## Modelo de dados
 
@@ -145,7 +148,7 @@ class BillingCycle(models.TextChoices): ...  # mesmos valores da lib
 `IntegerChoices`, comentada no código. Alias na classe:
 `Subscription.Status = SubscriptionStatus`, `Plan.Cycle = BillingCycle`.
 
-### `Plan` (`billing_plan`, `BaseGlobal`)
+### `Plan` (`billing_plan`, `BaseTenantless`)
 - `name`, `slug` (único), `description`
 - `rank` `PositiveSmallIntegerField` — ordem para decidir upgrade × downgrade
 - `price_amount` `PositiveIntegerField` nulo (centavos, só exibição), `currency`
@@ -196,7 +199,7 @@ Nenhum campo "tem acesso" é gravado: o acesso é sempre derivado do status.
   desativa o vínculo por limite do plano. Distingue essas desativações das feitas
   à mão por um admin, para reativar só as do billing.
 
-### `BillingEvent` (`billing_event`, `BaseGlobal`) — caixa de entrada
+### `BillingEvent` (`billing_event`, `BaseTenantless`) — caixa de entrada
 - `gateway_variant`, `event_id` — `UniqueConstraint` em ambos (idempotência)
 - `event_type`, `resource_kind`, `resource_id`, `occurred_at`
 - `processed_at` nulo, `attempts`, `last_error`
@@ -271,7 +274,10 @@ repete com a **mesma** chave; a reconciliação corrige o espelho). Erro permane
 
 ### Assinar (gratuito → pago)
 
-Proprietário. Exige plano atual gratuito. Cria
+Proprietário. Exige que a organização **não tenha assinatura vinculada ao gateway**
+(`external_id` vazio) e esteja no plano gratuito; vínculo existente → `409
+billing.already_subscribed`, mesmo que o espelho mostre o gratuito (preço
+desconhecido ou plano excluído). Cria
 `CheckoutCreate(mode=SUBSCRIPTION, items=[preço de catálogo],
 reference_id=str(org.id), customer=e-mail de faturamento, success_url/cancel_url)`.
 Devolve a URL. O `reference_id` chega à assinatura pela mudança na lib.
@@ -297,7 +303,38 @@ membros acima do limite do gratuito (cancelar = descer para o gratuito).
 ### Encerramento de organização
 
 `Organizacoes.solicitar_encerramento` agenda via `transaction.on_commit`
-`cancel_for_closed_organization(org_id)` → `cancel(timing=IMMEDIATELY)` + `sync`.
+`cancel_for_closed_organization(org_id)` → `cancel(timing=IMMEDIATELY)` (chave
+`billing:close:<id>`) + `sync`. Falha temporária do gateway é repetida com backoff.
+
+Cobrança nunca continua para organização encerrada, por três caminhos:
+
+- **Evento tardio** (checkout concluído depois do encerramento): `process_billing_event`
+  detecta a organização encerrada, cancela já a assinatura remota que dá acesso com a
+  mesma chave `billing:close:<id>` e **não** espelha plano pago nela.
+- **Varredura** na reconciliação: organizações encerradas com assinatura vinculada
+  (`external_id` preenchido) têm `cancel_for_closed_organization` reenfileirado. Cobre
+  um `.delay` perdido no `on_commit` e uma recusa permanente do gateway. A consulta
+  de assinatura roda sob o contexto de cada organização encerrada, porque o RLS não
+  permite uma consulta única entre organizações.
+- **Duplicada:** ver abaixo.
+
+### Assinatura duplicada
+
+`link_external` só preenche um `external_id` vazio. Se a organização já está ligada a
+outra assinatura e chega uma segunda (ex.: dois checkouts concluídos), a recém-chegada
+é cancelada **na hora** no gateway (`timing=IMMEDIATELY`, chave
+`billing:duplicate:<external_id>`), com log de erro, e a original fica intacta. O
+cancelamento acontece fora do lock e da transação; o evento só é marcado como
+processado se ele der certo. O **reembolso da duplicada é manual**.
+
+### Preço desconhecido
+
+Quando o preço da assinatura remota não existe no catálogo (ou o plano foi excluído),
+`_apply_state` mantém o plano atual e o espelho pode ler `active` no plano gratuito com
+`external_id` preenchido. Nesse estado: assinar é recusado (vínculo existente), cancelar
+e desfazer chegam ao gateway, e trocar para plano pago é recusado com `409
+billing.current_plan_unknown`, porque o rank do gratuito não diz se é upgrade ou
+downgrade.
 
 ### Webhook
 
@@ -331,13 +368,23 @@ loga em nível `error` (Sentry).
    fixa sobreposta basta na escala de um template.
 2. **Pendentes:** reenfileira `BillingEvent` não processados há mais de 5 min com
    `attempts` abaixo do máximo.
-3. **Limpeza:** apaga `BillingEvent` processados há mais de 90 dias.
+3. **Organizações encerradas:** reenfileira o cancelamento das encerradas que ainda têm
+   assinatura vinculada (ver "Encerramento de organização"). Uma falha neste passo é
+   logada e não aborta os demais.
+4. **Limpeza:** apaga `BillingEvent` processados há mais de 90 dias.
+
+### Erros do gateway e `ReferenceMismatch`
+
+Uma assinatura remota cujo `reference_id` aponta para outra organização nunca é gravada.
+Numa rota (alteração, cancelamento, desfazer) a operação já chegou ao gateway, então o
+desencontro vira `502 billing.gateway_error` com log de erro, nunca um `500` não tratado.
+Na tarefa, vira `last_error` e o evento fica pendente.
 
 ## Rotas
 
 | Rota | Quem | O quê |
 |---|---|---|
-| `GET /cobranca/planos/` | autenticado, sem tenant (`@no_tenancy`) | catálogo ativo |
+| `GET /cobranca/planos/` | sessão humana apenas (API key → `403`), sem tenant (`@no_tenancy`) | catálogo ativo |
 | `GET /cobranca/assinatura/` | proprietário/admin | espelho + `has_access`, `effective_plan`, `pending_plan`, uso de membros |
 | `POST /cobranca/assinatura/checkout/` | proprietário | assinar |
 | `POST /cobranca/assinatura/alteracao/` | proprietário | upgrade/downgrade |

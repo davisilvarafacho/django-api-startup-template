@@ -143,9 +143,9 @@ produção, o Sentry captura esse erro. Esse caso pede investigação manual.
 
 No admin, em **Assinaturas**, o staff vê uma organização por vez. Escolha a
 organização no filtro **Organização** da listagem; a escolha fica na sessão para
-as telas de detalhe. Sem filtro nem escolha anterior, é usada a primeira
-organização cadastrada. O espelho é só leitura: status, plano, plano agendado,
-período e data de sincronização. Nenhum registro é criado, alterado ou apagado
+as telas de detalhe. Sem filtro nem escolha anterior, é usada a primeira organização
+**por nome** (a ordenação padrão de `Organizacao` é `nome`, não a data de
+cadastro). O espelho é só leitura: status, plano, plano agendado, período e data de sincronização. Nenhum registro é criado, alterado ou apagado
 por ali; a escrita vem só da sincronização.
 
 Se uma assinatura parecer desatualizada, confirme primeiro que os eventos
@@ -160,6 +160,23 @@ Subscriptions.sync(ID_DA_ORGANIZACAO)
 
 A sincronização lê o estado atual no gateway e sobrescreve o espelho. Ela não
 reprocessa eventos.
+
+## Assinatura duplicada
+
+Uma organização só pode ter uma assinatura vinculada ao gateway. O checkout é
+recusado (`billing.already_subscribed`) enquanto houver vínculo, mesmo que o
+espelho mostre o plano gratuito por causa de um preço fora do catálogo. Mesmo
+assim, dois checkouts abertos antes do primeiro ser pago podem terminar os dois:
+quando o webhook do segundo chega, a assinatura recém-chegada é **cancelada
+imediatamente** no gateway (chave `billing:duplicate:<id da assinatura>`) e a
+original continua intacta. O log do app registra um erro com os dois ids, e o
+Sentry o captura.
+
+O evento só fica como processado se o cancelamento der certo; se falhar, ele
+fica pendente com o erro em **Último erro** e a reconciliação o reenfileira.
+
+O **reembolso do que foi cobrado pela duplicada é manual**: faça-o no painel do
+Stripe.
 
 ## Organização encerrada
 

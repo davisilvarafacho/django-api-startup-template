@@ -22,7 +22,7 @@ Django frequentemente está errado aqui. Quando houver conflito, `docs/reference
 ## Models
 
 - Todo model herda de `Base` — que já traz organização (RLS), soft delete,
-  timestamps, `created_by` e histórico de auditoria. Só use `BaseGlobal` para
+  timestamps, `created_by` e histórico de auditoria. Só use `BaseTenantless` para
   identidade lida antes de existir tenant, e justifique na docstring.
 - Todo model implementa `__str__`.
 - **Todo field declara `help_text` e `db_comment` com o mesmo valor.**

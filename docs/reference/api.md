@@ -182,12 +182,12 @@ para MFA retorna `202` e nunca uma sessão normal antes da verificação.
 
 Rotas explícitas sob `/cobranca/`, sem router. A assinatura é dado da
 organização: as rotas `assinatura/` exigem `X-Organization`, sessão humana (API
-keys são recusadas) e papel mínimo indicado abaixo. O catálogo não exige
-organização. O webhook é público e fica fora do OpenAPI.
+keys são recusadas) e papel mínimo indicado abaixo. O catálogo também é só para
+sessão humana (API key recebe `403`), mas não exige organização. O webhook é público e fica fora do OpenAPI.
 
 | Rota | Quem | Contrato |
 | --- | --- | --- |
-| `GET /cobranca/planos/` | Autenticado, sem `X-Organization` | Catálogo de planos ativos, em ordem de `rank`. Filtros: `is_free` e `billing_cycle`. Responde `200`. |
+| `GET /cobranca/planos/` | Sessão humana (API key recebe `403`), sem `X-Organization` | Catálogo de planos ativos, em ordem de `rank`. Filtros: `is_free` e `billing_cycle`. Responde `200`. |
 | `GET /cobranca/assinatura/` | Administrador ou superior | Espelho da assinatura: `plan`, `pending_plan`, `status`, `has_access`, `effective_plan`, `current_period_end`, `cancel_at`, `is_cancel_scheduled` e `members` (`active` e `limit`). Responde `200`. Cria a assinatura gratuita se ela ainda não existir. |
 | `POST /cobranca/assinatura/checkout/` | Proprietário | Corpo `{"plan": "<slug>"}`. Assina um plano pago e devolve `201` com `{"url": ...}` do checkout hospedado. |
 | `POST /cobranca/assinatura/alteracao/` | Proprietário | Corpo `{"plan": "<slug>"}`. Upgrade imediato, com fatura proporcional; downgrade no próximo ciclo. Responde `200` com o espelho. |
@@ -212,11 +212,11 @@ Erros de cobrança seguem o envelope padrão da seção [Erros](#erros):
 | `billing.idempotency_key_required` | `422` | Falta o header `Idempotency-Key` numa mutação. |
 | `billing.plan_unavailable` | `422` | O plano não existe, está inativo, é o gratuito ou não tem preço no gateway. |
 | `billing.same_plan` | `422` | Alteração para o plano que a assinatura já tem. |
-| `billing.already_subscribed` | `409` | Checkout com assinatura paga já existente. |
+| `billing.already_subscribed` | `409` | Checkout com a organização já ligada a uma assinatura no gateway, mesmo que o espelho mostre o plano gratuito. |
 | `billing.not_subscribed` | `409` | Alteração, cancelamento ou desfazer sem assinatura paga com vínculo no gateway. |
 | `billing.current_plan_unknown` | `409` | Troca para plano pago quando o plano atual não está no catálogo (preço desconhecido no gateway). Cancelar continua permitido. |
 | `billing.downgrade_blocked` | `409` | Downgrade, ou cancelamento (que desce ao gratuito), com mais vínculos ativos que o limite do destino. `context.excess` informa quantos precisam sair. |
 | `billing.member_limit_reached` | `409` | Convite, aceite ou reativação sem vaga no plano efetivo. `context.limit` informa o limite. Vem das rotas de organizações, não das de cobrança. |
 | `billing.gateway_uncertain` | `503` | Falha temporária do gateway, ou resultado incerto. Repetir com a mesma `Idempotency-Key`. |
-| `billing.gateway_error` | `502` | O gateway recusou a operação. |
+| `billing.gateway_error` | `502` | O gateway recusou a operação, ou a assinatura devolvida por ele não pertence à organização (`reference_id` diferente). |
 | `billing.webhook_invalid` | `400` | A assinatura do webhook não confere com o segredo configurado. |
