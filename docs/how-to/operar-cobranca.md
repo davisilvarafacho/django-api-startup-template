@@ -113,7 +113,8 @@ A cada 15 minutos, `billing.reconcile` executa quatro passos:
    entrada há mais de 5 minutos e têm menos tentativas que
    `BILLING_EVENT_MAX_ATTEMPTS`.
 3. **Organizações encerradas.** Reenfileira o cancelamento imediato das
-   organizações encerradas que ainda têm assinatura vinculada ao gateway (veja
+   organizações com `encerramento_solicitado_em` preenchido que ainda têm
+   assinatura vinculada ao gateway (veja
    [Organização encerrada](#organizacao-encerrada)). Uma falha neste passo é
    registrada no log e não impede os demais.
 4. **Limpeza.** Apaga os eventos aplicados há mais de 90 dias.
@@ -179,6 +180,11 @@ O **reembolso do que foi cobrado pela duplicada é manual**: faça-o no painel d
 Stripe.
 
 ## Organização encerrada
+
+Uma organização está encerrada quando tem `encerramento_solicitado_em` preenchido,
+e só nesse caso a cobrança a trata como encerrada. Desativar ou excluir a
+organização pelo admin **não** a encerra: a assinatura paga dela continua ativa no
+gateway e não é cancelada.
 
 Ao encerrar uma organização, a cobrança cancela a assinatura paga **imediatamente**
 no gateway, depois do commit do encerramento, pela tarefa

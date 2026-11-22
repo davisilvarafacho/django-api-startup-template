@@ -6,7 +6,7 @@ from datetime import timedelta
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import DataError, IntegrityError, models
-from django.db.models import F, Q
+from django.db.models import F
 from django.utils import timezone
 
 from celery import shared_task
@@ -94,15 +94,19 @@ def process_billing_event(self, event_pk: int) -> None:
 
 
 def _is_closed(organization: Organizacao) -> bool:
-    """Organização encerrada: com pedido de encerramento registrado, inativa ou excluída.
+    """Organização encerrada: a que tem pedido de encerramento registrado.
+
+    `is_active` e `is_deleted` sozinhos não contam: o admin também desativa ou exclui uma organização
+    que segue paga, e isso não é encerramento. Por isso a assinatura paga dela não é cancelada.
+    O encerramento sempre preenche `encerramento_solicitado_em`, antes de desativar e excluir a linha.
 
     Args:
         organization (Organizacao): Organização lida sem filtro de exclusão.
 
     Returns:
-        bool: True se a organização não pode mais receber cobrança.
+        bool: True se a organização teve o encerramento solicitado e não pode mais receber cobrança.
     """
-    return organization.encerramento_solicitado_em is not None or not organization.is_active or organization.is_deleted
+    return organization.encerramento_solicitado_em is not None
 
 
 def _close_remote(organization_id: int, remote, *, gateway_variant: str) -> None:
@@ -276,9 +280,7 @@ def _requeue_closed_organizations() -> None:
     consulta em `Organizacao`, sem RLS, e cada assinatura é consultada sob o contexto da sua
     própria organização.
     """
-    closed_ids = Organizacao.all_objects.filter(
-        Q(is_active=False) | Q(is_deleted=True) | Q(encerramento_solicitado_em__isnull=False),
-    ).values_list("pk", flat=True)
+    closed_ids = Organizacao.all_objects.filter(encerramento_solicitado_em__isnull=False).values_list("pk", flat=True)
     pending_ids = []
     for organization_id in list(closed_ids):
         with organizacao_atual_privilegiada(organization_id):

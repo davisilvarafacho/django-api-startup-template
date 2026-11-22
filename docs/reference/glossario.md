@@ -102,6 +102,12 @@ O espelho local, uma por organização, da assinatura que o gateway mantém. Nã
 a fonte da verdade, que é o gateway; o espelho só é gravado pela sincronização.
 _Evitar_: contrato, plano
 
+**Organização encerrada**:
+A organização com `encerramento_solicitado_em` preenchido, que é o único sinal de
+encerramento da cobrança. Desativar ou excluir a organização pelo admin não a
+encerra: a assinatura paga dela continua ativa e não é cancelada pela cobrança.
+_Evitar_: organização inativa, organização excluída (são desativação, não encerramento)
+
 **Plano efetivo**:
 O plano que de fato vale para a organização: o da assinatura quando ela tem
 acesso (ativa, em teste ou em atraso); caso contrário, o gratuito. É ele que

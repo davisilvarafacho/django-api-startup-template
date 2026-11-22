@@ -306,6 +306,12 @@ membros acima do limite do gratuito (cancelar = descer para o gratuito).
 `cancel_for_closed_organization(org_id)` → `cancel(timing=IMMEDIATELY)` (chave
 `billing:close:<id>`) + `sync`. Falha temporária do gateway é repetida com backoff.
 
+**Encerrada** = `encerramento_solicitado_em` preenchido, e só isso. `is_active=False` ou
+`is_deleted=True` sozinhos (desativação ou exclusão pelo admin) **não** são encerramento:
+a assinatura paga de uma organização apenas desativada não é cancelada, e a
+reativação a deixa como estava. O encerramento preenche o campo antes de desativar e
+excluir a linha, então ele é o marcador confiável.
+
 Cobrança nunca continua para organização encerrada, por três caminhos:
 
 - **Evento tardio** (checkout concluído depois do encerramento): `process_billing_event`

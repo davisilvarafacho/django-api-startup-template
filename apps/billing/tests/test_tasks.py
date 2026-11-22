@@ -429,3 +429,23 @@ def test_cancellation_event_for_closed_organization_resets_linked_mirror(monkeyp
     mirror = _mirror(organization)
     assert mirror.external_id is None
     assert mirror.plan.is_free is True
+
+
+@pytest.mark.parametrize("is_deleted", [False, True], ids=["inativa", "excluida"])
+def test_process_event_for_organization_merely_deactivated_by_admin_mirrors_paid_plan(monkeypatch, is_deleted):
+    # Desativar pelo admin não é encerramento: sem `encerramento_solicitado_em`, a assinatura paga segue espelhada.
+    organization = create_organization()
+    Subscriptions.ensure_free(organization.pk)
+    plan = _pro_plan()
+    Organizacao.all_objects.filter(pk=organization.pk).update(is_active=False, is_deleted=is_deleted)
+    gateway = _patch_gateway(monkeypatch, {RetrieveSubscription: lambda command: _remote(organization)})
+    event = _registered_event(resource_kind="checkout")
+
+    process_billing_event(event.pk)
+
+    assert [command for command in gateway.commands if isinstance(command, CancelRemoteSubscription)] == []
+    mirror = _mirror(organization)
+    assert mirror.external_id == "sub_1"
+    assert mirror.plan == plan
+    assert mirror.status == SubscriptionStatus.ACTIVE
+    assert _record(event).processed_at is not None

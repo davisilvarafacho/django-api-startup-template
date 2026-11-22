@@ -236,3 +236,19 @@ def test_reconcile_closed_organization_sweep_failure_does_not_abort_requeue_or_p
     assert enqueued == [stale.pk]
     assert BillingEvent.all_objects.filter(pk=old.pk).exists() is False
     assert any(record.levelno == logging.ERROR for record in caplog.records)
+
+
+def test_reconcile_does_not_cancel_organization_merely_deactivated_by_admin(monkeypatch):
+    # Desativação pelo admin não é encerramento: a assinatura paga da organização não é cancelada.
+    _patch_reconcile_gateway(monkeypatch, {ListEvents: _page([])})
+    _enqueued_spy(monkeypatch)
+    cancellations = _cancel_spy(monkeypatch)
+    inactive = _organization_with_subscription("desativada", linked=True, closed=False)
+    Organizacao.all_objects.filter(pk=inactive.pk).update(is_active=False)
+    excluded = _organization_with_subscription("excluida", linked=True, closed=False)
+    Organizacao.all_objects.filter(pk=excluded.pk).update(is_deleted=True)
+    closed = _organization_with_subscription("encerrada-admin", linked=True, closed=True)
+
+    reconcile_billing()
+
+    assert cancellations == [closed.pk]

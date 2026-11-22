@@ -82,7 +82,8 @@ de novo, reativa só esses. `apps.organizacoes` depende do billing em três pont
 apenas: a checagem de capacidade em convites, aceites e reativações de vínculo; a
 criação da assinatura gratuita (`Subscriptions.ensure_free`) no onboarding da
 organização (`apps/organizacoes/onboarding.py`); e o disparo do cancelamento
-quando a organização é encerrada.
+quando a organização é encerrada (`encerramento_solicitado_em` preenchido). Desativar
+a organização pelo admin não dispara nada: a assinatura paga dela segue ativa.
 
 As rotas de escrita chamam o gateway fora da transação da request e exigem o
 header `Idempotency-Key`, repassado à biblioteca. Uma falha que deixa o resultado
