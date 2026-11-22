@@ -743,6 +743,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "usuarios.anonimizar_contas_vencidas",
         "schedule": crontab(hour=0, minute=30),
     },
+    "reconcile-billing": {
+        "task": "billing.reconcile",
+        "schedule": crontab(minute="*/15"),
+    },
 }
 
 # sm testes, executa as tasks de forma síncrona e propaga exceções.

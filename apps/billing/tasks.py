@@ -1,15 +1,18 @@
 """Tarefas Celery da cobrança: aplicação dos eventos recebidos ao espelho local da assinatura."""
 
 import logging
+from datetime import timedelta
 
+from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
-from django.db import DataError, IntegrityError
+from django.db import DataError, IntegrityError, models
 from django.db.models import F
 from django.utils import timezone
 
 from celery import shared_task
 from django_checkouts.exceptions import CheckoutError, GatewayTemporaryError
 
+from apps.billing.events import record_event
 from apps.billing.gateway import get_client
 from apps.billing.models import BillingEvent
 from apps.billing.subscriptions import ReferenceMismatch, Subscriptions
@@ -21,6 +24,10 @@ logger = logging.getLogger("apps.billing")
 MISSING_REFERENCE_MESSAGE = "assinatura do gateway sem referência à organização"
 MISSING_ORGANIZATION_MESSAGE = "organização da assinatura não encontrada"
 MAX_RETRY_COUNTDOWN_SECONDS = 900
+# Carência antes de reenfileirar um evento pendente, para não disputar com o processamento em curso.
+PENDING_GRACE_PERIOD = timedelta(minutes=5)
+# Tempo que um evento já aplicado fica na caixa de entrada antes da limpeza.
+PROCESSED_RETENTION = timedelta(days=90)
 
 
 @shared_task(name="billing.process_event", bind=True, ignore_result=True, max_retries=5)
@@ -115,3 +122,82 @@ def _record_failure(event: BillingEvent, message: str) -> None:
 def _mark_processed(event: BillingEvent) -> None:
     """Fecha o evento como aplicado ao espelho."""
     BillingEvent.all_objects.filter(pk=event.pk).update(processed_at=timezone.now())
+
+
+@shared_task(name="billing.reconcile", ignore_result=True)
+def reconcile_billing() -> None:
+    """Corrige o espelho quando um webhook se perdeu ou ficou pendente.
+
+    Em três passos: registra e enfileira os eventos da janela `BILLING_RECONCILE_WINDOW_HOURS`
+    que ainda não chegaram à caixa de entrada; reenfileira os eventos pendentes há mais que a
+    carência e abaixo de `BILLING_EVENT_MAX_ATTEMPTS`; e apaga os já aplicados há mais de 90 dias.
+    Os que atingiram o máximo não são reenfileirados e geram um log de erro por execução.
+    """
+    now = timezone.now()
+    _record_missing_events(now)
+    _requeue_pending_events(now)
+    _purge_processed_events(now)
+
+
+@shared_task(name="billing.cancel_closed_organization", ignore_result=True)
+def cancel_for_closed_organization(organization_id: int) -> None:
+    """Cancela já a assinatura paga de uma organização encerrada.
+
+    Roda depois do commit do encerramento, e nunca dentro da transação dele: o `sync` trava a
+    assinatura antes da organização, e a ordem inversa poderia travar. A organização gratuita
+    não tem nada a cancelar.
+
+    Args:
+        organization_id (int): Organização que acabou de ser encerrada.
+    """
+    Subscriptions.cancel_immediately(organization_id)
+
+
+def _record_missing_events(now) -> None:
+    """Percorre a janela remota, página a página, e enfileira só os eventos recém-registrados.
+
+    Args:
+        now: Momento de referência; a janela termina nele.
+    """
+    client = get_client()
+    occurred_since = now - timedelta(hours=settings.BILLING_RECONCILE_WINDOW_HOURS)
+    cursor = None
+    while True:
+        page = client.events.list(occurred_since=occurred_since, occurred_before=now, cursor=cursor)
+        for event in page.items:
+            record, created = record_event(event, variant=event.variant)
+            if created:
+                process_billing_event.delay(record.pk)
+        if page.next_cursor is None:
+            return
+        cursor = page.next_cursor
+
+
+def _requeue_pending_events(now) -> None:
+    """Reenfileira os pendentes parados e registra, uma vez, quantos atingiram o máximo de tentativas.
+
+    Args:
+        now: Momento de referência para a carência dos eventos recentes.
+    """
+    limit = settings.BILLING_EVENT_MAX_ATTEMPTS
+    pending = BillingEvent.all_objects.filter(processed_at__isnull=True)
+    stale_pks = list(
+        pending.filter(attempts__lt=limit, created_at__lt=now - PENDING_GRACE_PERIOD).values_list("pk", flat=True),
+    )
+    for event_pk in stale_pks:
+        process_billing_event.delay(event_pk)
+
+    exhausted = pending.filter(attempts__gte=limit).count()
+    if exhausted:
+        logger.error("%s eventos de cobrança atingiram o máximo de %s tentativas e não serão reprocessados.", exhausted, limit)
+
+
+def _purge_processed_events(now) -> None:
+    """Apaga de vez os eventos aplicados há mais que a retenção.
+
+    Args:
+        now: Momento de referência para a idade dos eventos.
+    """
+    processed_before = now - PROCESSED_RETENTION
+    # O `delete()` do queryset base faz soft delete; a limpeza precisa do DELETE real do Django.
+    models.QuerySet.delete(BillingEvent.all_objects.filter(processed_at__lt=processed_before))

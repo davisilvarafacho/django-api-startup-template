@@ -6,6 +6,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.api.autenticacao.services import lock_user_accounts
+from apps.billing.tasks import cancel_for_closed_organization
 from apps.organizacoes.memberships import Vinculos
 from apps.organizacoes.models import Convite, Organizacao, Papel, Vinculo
 from apps.usuarios.policies import exigir_email_verificado
@@ -74,6 +75,8 @@ class Organizacoes:
             atual.encerramento_solicitado_em = agora
             atual.save(using=database_alias, update_fields=["encerramento_solicitado_em"])
             cls._efetivar_bloqueada(atual, ator=ator, agora=agora, using=database_alias)
+            # Só depois do commit: o cancelamento no gateway roda fora do lock de `Organizacao`.
+            transaction.on_commit(lambda: cancel_for_closed_organization.delay(atual.pk), using=database_alias)
             return True
 
     @classmethod

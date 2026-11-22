@@ -232,6 +232,36 @@ class Subscriptions:
         return cls.sync(organization_id)
 
     @classmethod
+    def cancel_immediately(cls, organization_id: int) -> Subscription | None:
+        """Cancela já a assinatura paga de uma organização encerrada e sincroniza o espelho.
+
+        Sem a barreira de limite de membros do cancelamento comum: a organização já foi encerrada.
+        A chave de idempotência é fixa por organização, então repetir a tarefa não cancela duas vezes.
+
+        Args:
+            organization_id (int): Organização encerrada.
+
+        Returns:
+            Subscription | None: O espelho depois da sincronização, ou `None` se a organização não
+            tem assinatura paga com vínculo no gateway.
+
+        Raises:
+            CheckoutError: Falha do gateway; a tarefa que chama registra o erro.
+        """
+        with organization_scope(organization_id):
+            current = Subscription.all_objects.select_related("plan").filter(organizacao_id=organization_id).first()
+            if current is None or current.is_free or not current.external_id:
+                return None
+            external_id = current.external_id
+
+        get_client().subscriptions.cancel(
+            external_id,
+            timing=CancellationTiming.IMMEDIATELY,
+            idempotency_key=f"billing:close:{organization_id}",
+        )
+        return cls.sync(organization_id)
+
+    @classmethod
     def resume(cls, organization_id: int, *, idempotency_key: str) -> Subscription:
         """Desfaz o cancelamento agendado para o fim do período.
 

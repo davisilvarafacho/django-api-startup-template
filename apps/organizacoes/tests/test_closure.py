@@ -9,12 +9,17 @@ from django.db import close_old_connections, connections
 from django.utils import timezone
 
 import pytest
+from django_checkouts.enums import CancellationTiming, SubscriptionStatus
+from django_checkouts.gateways.commands import CancelRemoteSubscription, RetrieveSubscription
 
 from apps.api.autenticacao.models import AuthToken, TokenMetaData, TokenType
 from apps.api.core.errors import APIError
+from apps.billing.members import MemberLimits
+from apps.billing.subscriptions import Subscriptions
 from apps.organizacoes.memberships import Vinculos
 from apps.organizacoes.models import Convite, Organizacao, Papel, Vinculo
 from apps.organizacoes.organizations import Organizacoes
+from tests.support.billing import patch_billing_gateway, remote_subscription, subscribe_organization
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
@@ -299,3 +304,36 @@ def test_efetivacao_concorrente_com_rotacao_nao_deixa_api_key_viva_nem_deadlock(
         ).exists()
         is False
     )
+
+
+def test_closed_organization_cancels_immediately_and_reactivates_nobody(monkeypatch, django_capture_on_commit_callbacks):
+    agora = timezone.now()
+    proprietario, organizacao, _, _, _, _ = _cenario_encerramento("cancel-paid")
+    subscribe_organization(organizacao, member_limit=10)
+    Subscriptions.link_external(organizacao.pk, external_id="sub_1", gateway_variant="stripe")
+    suspended = criar_usuario(email="suspended-cancela-pago@example.com")
+    Vinculo.objects.create(
+        organizacao=organizacao,
+        usuario=suspended,
+        papel=Papel.MEMBRO,
+        is_active=False,
+        plan_limit_suspended_at=agora,
+    )
+    canceled_remote = remote_subscription(external_id="sub_1", reference_id=str(organizacao.pk), status=SubscriptionStatus.CANCELED)
+    gateway = patch_billing_gateway(monkeypatch, {CancelRemoteSubscription: canceled_remote, RetrieveSubscription: canceled_remote})
+
+    with django_capture_on_commit_callbacks(execute=True):
+        Organizacoes.solicitar_encerramento(organizacao, ator=proprietario, agora=agora)
+
+    cancellations = [command for command in gateway.commands if isinstance(command, CancelRemoteSubscription)]
+    assert len(cancellations) == 1
+    assert cancellations[0].timing == CancellationTiming.IMMEDIATELY
+    assert cancellations[0].idempotency_key == f"billing:close:{organizacao.pk}"
+
+    # Nova aplicação do limite depois do encerramento: a organização inativa não pode reativar vínculos.
+    MemberLimits.apply(organizacao.pk)
+
+    assert Vinculo.objects.filter(organizacao=organizacao, is_active=True).exists() is False
+    suspended_membership = Vinculo.all_objects.get(organizacao=organizacao, usuario=suspended)
+    assert suspended_membership.is_active is False
+    assert suspended_membership.plan_limit_suspended_at == agora
