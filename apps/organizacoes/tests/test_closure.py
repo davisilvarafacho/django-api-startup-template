@@ -9,13 +9,16 @@ from django.db import close_old_connections, connections
 from django.utils import timezone
 
 import pytest
-from django_checkouts.enums import CancellationTiming, SubscriptionStatus
+from celery.exceptions import Retry
+from django_checkouts.enums import CancellationTiming, Gateway, SubscriptionStatus
+from django_checkouts.exceptions import GatewayTemporaryError
 from django_checkouts.gateways.commands import CancelRemoteSubscription, RetrieveSubscription
 
 from apps.api.autenticacao.models import AuthToken, TokenMetaData, TokenType
 from apps.api.core.errors import APIError
 from apps.billing.members import MemberLimits
 from apps.billing.subscriptions import Subscriptions
+from apps.billing.tasks import cancel_for_closed_organization
 from apps.organizacoes.memberships import Vinculos
 from apps.organizacoes.models import Convite, Organizacao, Papel, Vinculo
 from apps.organizacoes.organizations import Organizacoes
@@ -337,3 +340,36 @@ def test_closed_organization_cancels_immediately_and_reactivates_nobody(monkeypa
     suspended_membership = Vinculo.all_objects.get(organizacao=organizacao, usuario=suspended)
     assert suspended_membership.is_active is False
     assert suspended_membership.plan_limit_suspended_at == agora
+
+
+def test_closure_cancel_retries_after_temporary_gateway_failure(monkeypatch, django_capture_on_commit_callbacks):
+    agora = timezone.now()
+    proprietario, organizacao, _, _, _, _ = _cenario_encerramento("repete-cancelamento")
+    subscribe_organization(organizacao, member_limit=10)
+    Subscriptions.link_external(organizacao.pk, external_id="sub_1", gateway_variant="stripe")
+    canceled_remote = remote_subscription(external_id="sub_1", reference_id=str(organizacao.pk), status=SubscriptionStatus.CANCELED)
+    calls = []
+
+    def cancel_fails_once(command):
+        calls.append(command)
+        if len(calls) == 1:
+            raise GatewayTemporaryError("indisponível", gateway=Gateway.STRIPE, variant="stripe")
+        return canceled_remote
+
+    gateway = patch_billing_gateway(
+        monkeypatch,
+        {CancelRemoteSubscription: cancel_fails_once, RetrieveSubscription: canceled_remote},
+    )
+
+    # Em modo eager, a repetição não roda sozinha: a `Retry` chega a quem disparou a tarefa.
+    with pytest.raises(Retry) as retry_exc, django_capture_on_commit_callbacks(execute=True):
+        Organizacoes.solicitar_encerramento(organizacao, ator=proprietario, agora=agora)
+    assert retry_exc.value.when == 30
+
+    # Segunda tentativa, como o worker faria ao consumir a repetição.
+    cancel_for_closed_organization(organizacao.pk)
+
+    cancellations = [command for command in gateway.commands if isinstance(command, CancelRemoteSubscription)]
+    assert len(cancellations) == 2
+    assert {command.idempotency_key for command in cancellations} == {f"billing:close:{organizacao.pk}"}
+    assert {command.timing for command in cancellations} == {CancellationTiming.IMMEDIATELY}

@@ -8,13 +8,14 @@ from django.utils import timezone
 import pytest
 from django_checkouts.client import CheckoutClient
 from django_checkouts.enums import Gateway
-from django_checkouts.gateways.commands import ListEvents
+from django_checkouts.gateways.commands import ListEvents, RetrieveSubscription
 from django_checkouts.types.events import EventPage, WebhookEvent
 
 from apps.billing.events import record_event
 from apps.billing.models import BillingEvent
-from apps.billing.tasks import reconcile_billing
-from tests.support.billing import fake_gateway
+from apps.billing.tasks import process_billing_event, reconcile_billing
+from apps.organizacoes.models import Organizacao
+from tests.support.billing import fake_gateway, remote_subscription
 
 pytestmark = pytest.mark.django_db
 
@@ -139,3 +140,36 @@ def test_reconcile_purges_processed_older_than_90_days(monkeypatch):
     # `all_objects` inclui linhas com soft delete: a ausência prova o DELETE real.
     assert BillingEvent.all_objects.filter(pk=old.pk).exists() is False
     assert set(BillingEvent.all_objects.values_list("pk", flat=True)) >= {recent.pk, pending.pk}
+
+
+def test_reconcile_stops_requeuing_after_repeated_unexpected_failures(monkeypatch, settings):
+    settings.BILLING_EVENT_MAX_ATTEMPTS = 2
+    organization = Organizacao.objects.create(nome="Falhas inesperadas", slug="falhas-inesperadas")
+    remote = remote_subscription(external_id="sub_1", reference_id=str(organization.pk))
+    _patch_reconcile_gateway(monkeypatch, {ListEvents: _page([]), RetrieveSubscription: remote})
+    enqueued = _enqueued_spy(monkeypatch)
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("falha de infraestrutura")
+
+    monkeypatch.setattr("apps.billing.tasks.Subscriptions.link_external", explode)
+    event = BillingEvent.all_objects.create(
+        gateway_variant="stripe",
+        event_id="evt_unexpected",
+        event_type="customer.subscription.updated",
+        resource_kind="subscription",
+        resource_id="sub_1",
+        subscription_external_id="sub_1",
+        occurred_at=timezone.now(),
+    )
+    BillingEvent.all_objects.filter(pk=event.pk).update(created_at=timezone.now() - timedelta(hours=1))
+
+    with pytest.raises(RuntimeError):
+        process_billing_event(event.pk)
+    reconcile_billing()  # 1 tentativa, abaixo do limite de 2: reenfileira
+    with pytest.raises(RuntimeError):
+        process_billing_event(event.pk)  # a reenfileirada falha de novo
+    reconcile_billing()  # no limite: não reenfileira mais
+
+    assert enqueued == [event.pk]
+    assert BillingEvent.all_objects.get(pk=event.pk).attempts == 2

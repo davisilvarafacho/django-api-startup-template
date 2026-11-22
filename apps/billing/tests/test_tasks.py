@@ -239,3 +239,27 @@ def test_process_reference_mismatch_records_error(monkeypatch):
     assert after.external_id == "sub_antiga"
     assert after.status == before.status
     assert after.plan_id == before.plan_id
+
+
+def test_process_unexpected_error_counts_attempt_and_propagates(monkeypatch):
+    organization = _organization("inesperado")
+    _patch_gateway(monkeypatch, {RetrieveSubscription: _remote(organization)})
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("falha de infraestrutura")
+
+    monkeypatch.setattr("apps.billing.tasks.Subscriptions.link_external", explode)
+    event = _registered_event()
+
+    with pytest.raises(RuntimeError, match="falha de infraestrutura"):
+        process_billing_event(event.pk)
+
+    record = _record(event)
+    assert record.attempts == 1
+    assert record.last_error == "falha inesperada (RuntimeError): falha de infraestrutura"
+    assert record.processed_at is None
+
+    with pytest.raises(RuntimeError):
+        process_billing_event(event.pk)
+
+    assert _record(event).attempts == 2

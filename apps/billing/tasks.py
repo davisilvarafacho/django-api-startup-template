@@ -75,6 +75,12 @@ def process_billing_event(self, event_pk: int) -> None:
         # Nova tentativa não cria a organização: o `reference_id` não aponta para uma linha válida.
         _record_failure(event, MISSING_ORGANIZATION_MESSAGE)
         return
+    except Exception as error:
+        # Falha não prevista: conta a tentativa para que a reconciliação, após o limite, pare de
+        # reenfileirar o evento. O `Retry` do `self.retry` acima não chega aqui, porque é levantado
+        # dentro de outro handler do mesmo `try`, e cláusulas irmãs não capturam isso.
+        _record_failure(event, f"falha inesperada ({type(error).__name__}): {error}")
+        raise
 
     _mark_processed(event)
 
@@ -139,13 +145,25 @@ def reconcile_billing() -> None:
     _purge_processed_events(now)
 
 
-@shared_task(name="billing.cancel_closed_organization", ignore_result=True)
+@shared_task(
+    name="billing.cancel_closed_organization",
+    ignore_result=True,
+    autoretry_for=(GatewayTemporaryError,),
+    retry_backoff=30,
+    retry_backoff_max=900,
+    retry_jitter=False,
+    max_retries=5,
+)
 def cancel_for_closed_organization(organization_id: int) -> None:
     """Cancela já a assinatura paga de uma organização encerrada.
 
     Roda depois do commit do encerramento, e nunca dentro da transação dele: o `sync` trava a
     assinatura antes da organização, e a ordem inversa poderia travar. A organização gratuita
     não tem nada a cancelar.
+
+    Falha temporária do gateway é repetida com backoff exponencial, até 5 vezes. A chave de
+    idempotência é fixa por organização, então repetir não cancela duas vezes; sem a repetição,
+    a assinatura paga de uma organização encerrada continuaria cobrando.
 
     Args:
         organization_id (int): Organização que acabou de ser encerrada.
