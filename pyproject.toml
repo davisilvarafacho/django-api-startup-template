@@ -25,7 +25,7 @@ dependencies = [
     "django-dbbackup==5.0.1",
     "django-filter==25.2",
     "django-guardian>=3.3.2",
-    "django-hijack==3.7.4",
+    "django-hijack==3.7.8",
     "django-import-export==4.3.14",
     "django-prometheus>=2.5.0",
     "django-redis>=7.0.0",
