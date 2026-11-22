@@ -33,11 +33,11 @@ class Subscriptions:
             Subscription: A assinatura existente ou a recém-criada.
         """
         with organization_scope(organization_id):
-            assinatura, _ = Subscription.all_objects.get_or_create(
+            subscription, _ = Subscription.all_objects.get_or_create(
                 organizacao_id=organization_id,
                 defaults={"plan": Plan.get_free(), "status": SubscriptionStatus.ACTIVE},
             )
-        return assinatura
+        return subscription
 
     @classmethod
     def get_current(cls, organization_id: int, *, lock: bool = False) -> Subscription:
@@ -51,10 +51,10 @@ class Subscriptions:
             Subscription: A assinatura espelhada da organização.
         """
         with organization_scope(organization_id):
-            consulta = Subscription.all_objects.select_related("plan", "pending_plan")
+            query = Subscription.all_objects.select_related("plan", "pending_plan")
             if lock:
-                consulta = consulta.select_for_update(of=("self",))
-            return consulta.get(organizacao_id=organization_id)
+                query = query.select_for_update(of=("self",))
+            return query.get(organizacao_id=organization_id)
 
     @classmethod
     def link_external(cls, organization_id: int, *, external_id: str, gateway_variant: str) -> None:
@@ -66,15 +66,15 @@ class Subscriptions:
             gateway_variant (str): Variante do gateway que emitiu a assinatura.
         """
         with organization_scope(organization_id), transaction.atomic():
-            assinatura = cls.get_current(organization_id, lock=True)
-            if not assinatura.external_id:
-                assinatura.external_id = external_id
-                assinatura.gateway_variant = gateway_variant
-                assinatura.save()
-            elif assinatura.external_id != external_id:
+            subscription = cls.get_current(organization_id, lock=True)
+            if not subscription.external_id:
+                subscription.external_id = external_id
+                subscription.gateway_variant = gateway_variant
+                subscription.save()
+            elif subscription.external_id != external_id:
                 logger.error(
                     "Assinatura %s já vinculada a outro ID no gateway; o vínculo %s foi ignorado.",
-                    assinatura.pk,
+                    subscription.pk,
                     external_id,
                 )
 
@@ -96,63 +96,63 @@ class Subscriptions:
         """
         with organization_scope(organization_id), transaction.atomic():
             cls.ensure_free(organization_id)
-            assinatura = cls.get_current(organization_id, lock=True)
-            if assinatura.external_id:
+            subscription = cls.get_current(organization_id, lock=True)
+            if subscription.external_id:
                 client = get_client()
-                remota = client.subscriptions.retrieve(assinatura.external_id)
-                cls._espelhar(assinatura, remota, organization_id, client)
+                remote = client.subscriptions.retrieve(subscription.external_id)
+                cls._mirror_remote(subscription, remote, organization_id, client)
             MemberLimits.apply(organization_id)
-        return assinatura
+        return subscription
 
     @classmethod
-    def _espelhar(cls, assinatura: Subscription, remota, organization_id: int, client) -> None:
+    def _mirror_remote(cls, subscription: Subscription, remote, organization_id: int, client) -> None:
         """Copia o estado remoto para o espelho, tratando cancelamento por falta de pagamento e encerramento."""
-        if remota.reference_id != str(organization_id):
-            raise ReferenceMismatch(f"A assinatura {remota.external_id} não pertence à organização {organization_id}.")
+        if remote.reference_id != str(organization_id):
+            raise ReferenceMismatch(f"A assinatura {remote.external_id} não pertence à organização {organization_id}.")
 
-        status = SubscriptionStatus(remota.status.value)
-        agora = timezone.now()
+        status = SubscriptionStatus(remote.status.value)
+        now = timezone.now()
 
         if status == SubscriptionStatus.UNPAID:
             client.subscriptions.cancel(
-                assinatura.external_id,
+                subscription.external_id,
                 timing=CancellationTiming.IMMEDIATELY,
-                idempotency_key=f"billing:abandon:{assinatura.external_id}",
+                idempotency_key=f"billing:abandon:{subscription.external_id}",
             )
 
         if status in Subscription.TERMINAL_STATUSES | Subscription.ABANDONED_STATUSES:
-            cls._voltar_ao_gratuito(assinatura, agora)
+            cls._reset_to_free(subscription, now)
         else:
-            cls._aplicar_estado(assinatura, remota, status, agora)
-        assinatura.save()
+            cls._apply_state(subscription, remote, status, now)
+        subscription.save()
 
     @staticmethod
-    def _aplicar_estado(assinatura: Subscription, remota, status: SubscriptionStatus, agora) -> None:
+    def _apply_state(subscription: Subscription, remote, status: SubscriptionStatus, now) -> None:
         """Grava status, plano e datas da assinatura remota ativa, em teste, atrasada, pausada ou incompleta."""
-        preco = remota.items[0].price_id if remota.items else None
-        plano = Plan.objects.filter(gateway_price_id=preco).first() if preco else None
-        if plano is None:
-            logger.error("Preço %s sem plano correspondente; o plano atual foi mantido.", preco)
+        price_id = remote.items[0].price_id if remote.items else None
+        plan = Plan.objects.filter(gateway_price_id=price_id).first() if price_id else None
+        if plan is None:
+            logger.error("Preço %s sem plano correspondente; o plano atual foi mantido.", price_id)
         else:
-            assinatura.plan = plano
+            subscription.plan = plan
 
-        assinatura.status = status
-        assinatura.current_period_end = remota.current_period_end
-        assinatura.cancel_at = remota.cancel_at
-        assinatura.customer_id = remota.customer_id
-        assinatura.synced_at = agora
-        if assinatura.pending_plan_id == assinatura.plan_id:
-            assinatura.pending_plan = None
+        subscription.status = status
+        subscription.current_period_end = remote.current_period_end
+        subscription.cancel_at = remote.cancel_at
+        subscription.customer_id = remote.customer_id
+        subscription.synced_at = now
+        if subscription.pending_plan_id == subscription.plan_id:
+            subscription.pending_plan = None
 
     @staticmethod
-    def _voltar_ao_gratuito(assinatura: Subscription, agora) -> None:
+    def _reset_to_free(subscription: Subscription, now) -> None:
         """Devolve a linha ao plano gratuito, sem vínculo com a assinatura remota encerrada."""
-        assinatura.plan = Plan.get_free()
-        assinatura.status = SubscriptionStatus.ACTIVE
-        assinatura.external_id = None
-        assinatura.gateway_variant = None
-        assinatura.customer_id = None
-        assinatura.current_period_end = None
-        assinatura.cancel_at = None
-        assinatura.pending_plan = None
-        assinatura.synced_at = agora
+        subscription.plan = Plan.get_free()
+        subscription.status = SubscriptionStatus.ACTIVE
+        subscription.external_id = None
+        subscription.gateway_variant = None
+        subscription.customer_id = None
+        subscription.current_period_end = None
+        subscription.cancel_at = None
+        subscription.pending_plan = None
+        subscription.synced_at = now

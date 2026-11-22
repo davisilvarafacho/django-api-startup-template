@@ -24,31 +24,31 @@ from tests.support.usuarios import criar_usuario
 pytestmark = pytest.mark.django_db
 
 
-def _organizacao(slug="acme"):
+def _organization(slug="acme"):
     return Organizacao.objects.create(nome=slug, slug=slug)
 
 
-def _plano(slug, *, price=None, rank=1, limit=5):
+def _plan(slug, *, price=None, rank=1, limit=5):
     return Plan.objects.create(name=slug, slug=slug, rank=rank, member_limit=limit, gateway_price_id=price)
 
 
-def _assinatura(organizacao, plano, **campos):
-    with organization_scope(organizacao.pk):
-        return Subscription.all_objects.create(organizacao=organizacao, plan=plano, **{"status": SubscriptionStatus.ACTIVE, **campos})
+def _subscription(organization, plan, **fields):
+    with organization_scope(organization.pk):
+        return Subscription.all_objects.create(organizacao=organization, plan=plan, **{"status": SubscriptionStatus.ACTIVE, **fields})
 
 
-def _vincular(organizacao, plano, **campos):
+def _linked_subscription(organization, plan, **fields):
     """Assinatura local já ligada à assinatura remota `sub_1`."""
-    return _assinatura(organizacao, plano, external_id="sub_1", gateway_variant="stripe", **campos)
+    return _subscription(organization, plan, external_id="sub_1", gateway_variant="stripe", **fields)
 
 
-def _estado(organizacao):
-    with organization_scope(organizacao.pk):
-        return Subscription.all_objects.get(organizacao_id=organizacao.pk)
+def _state(organization):
+    with organization_scope(organization.pk):
+        return Subscription.all_objects.get(organizacao_id=organization.pk)
 
 
-def _vinculos(organizacao, quantidade):
-    return [Vinculo.objects.create(organizacao=organizacao, usuario=criar_usuario(), papel=Papel.MEMBRO) for _ in range(quantidade)]
+def _memberships(organization, quantity):
+    return [Vinculo.objects.create(organizacao=organization, usuario=criar_usuario(), papel=Papel.MEMBRO) for _ in range(quantity)]
 
 
 def _gateway(monkeypatch, results):
@@ -57,199 +57,222 @@ def _gateway(monkeypatch, results):
     return gateway
 
 
-def _remota_com_preco(organizacao, preco):
-    item = SubscriptionItem(external_id="si_2", price_id=preco, quantity=1, unit_amount=None, currency=None, billing_cycle=None, raw={})
-    return remote_subscription(reference_id=str(organizacao.pk), items=(item,))
+def _remote_with_price(organization, price_id):
+    item = SubscriptionItem(external_id="si_2", price_id=price_id, quantity=1, unit_amount=None, currency=None, billing_cycle=None, raw={})
+    return remote_subscription(reference_id=str(organization.pk), items=(item,))
 
 
 def test_ensure_free_is_idempotent():
-    organizacao = _organizacao()
+    organization = _organization()
 
-    primeira = Subscriptions.ensure_free(organizacao.pk)
-    segunda = Subscriptions.ensure_free(organizacao.pk)
+    first = Subscriptions.ensure_free(organization.pk)
+    second = Subscriptions.ensure_free(organization.pk)
 
-    assert primeira.pk == segunda.pk
-    assert primeira.plan == Plan.get_free()
-    assert primeira.status == SubscriptionStatus.ACTIVE
-    assert primeira.external_id is None
-    with organization_scope(organizacao.pk):
-        assert Subscription.all_objects.filter(organizacao_id=organizacao.pk).count() == 1
+    assert first.pk == second.pk
+    assert first.plan == Plan.get_free()
+    assert first.status == SubscriptionStatus.ACTIVE
+    assert first.external_id is None
+    with organization_scope(organization.pk):
+        assert Subscription.all_objects.filter(organizacao_id=organization.pk).count() == 1
 
 
 def test_sync_free_without_external_id_only_applies_limit(monkeypatch):
-    organizacao = _organizacao()
-    Subscriptions.ensure_free(organizacao.pk)
-    limite = Plan.get_free().member_limit
-    _vinculos(organizacao, limite + 2)
+    organization = _organization()
+    Subscriptions.ensure_free(organization.pk)
+    limit = Plan.get_free().member_limit
+    _memberships(organization, limit + 2)
     gateway = _gateway(monkeypatch, {})
 
-    Subscriptions.sync(organizacao.pk)
+    Subscriptions.sync(organization.pk)
 
     assert gateway.commands == []
-    assert MemberLimits.active_count(organizacao.pk) == limite
+    assert MemberLimits.active_count(organization.pk) == limit
 
 
 def test_sync_maps_price_to_plan_and_status(monkeypatch):
-    organizacao = _organizacao()
-    basico = _plano("basico", price="price_basico", rank=1)
-    pro = _plano("pro", price="price_pro", rank=2)
-    _vincular(organizacao, basico)
-    fim = timezone.now() + timedelta(days=30)
+    organization = _organization()
+    basic = _plan("basico", price="price_basico", rank=1)
+    pro = _plan("pro", price="price_pro", rank=2)
+    _linked_subscription(organization, basic)
+    end = timezone.now() + timedelta(days=30)
     _gateway(
         monkeypatch,
         {
             RetrieveSubscription: remote_subscription(
-                reference_id=str(organizacao.pk),
+                reference_id=str(organization.pk),
                 status=RemoteStatus.PAST_DUE,
                 customer_id="cus_1",
-                current_period_end=fim,
+                current_period_end=end,
             ),
         },
     )
 
-    Subscriptions.sync(organizacao.pk)
+    Subscriptions.sync(organization.pk)
 
-    estado = _estado(organizacao)
-    assert estado.plan_id == pro.pk
-    assert estado.status == SubscriptionStatus.PAST_DUE
-    assert estado.has_access is True
-    assert estado.customer_id == "cus_1"
-    assert estado.current_period_end == fim
-    assert estado.synced_at is not None
+    state = _state(organization)
+    assert state.plan_id == pro.pk
+    assert state.status == SubscriptionStatus.PAST_DUE
+    assert state.has_access is True
+    assert state.customer_id == "cus_1"
+    assert state.current_period_end == end
+    assert state.synced_at is not None
 
 
 def test_sync_clears_pending_plan_when_applied(monkeypatch):
-    organizacao = _organizacao()
-    basico = _plano("basico", price="price_basico", rank=1)
-    pro = _plano("pro", price="price_pro", rank=2)
-    _vincular(organizacao, basico, pending_plan=pro)
-    _gateway(monkeypatch, {RetrieveSubscription: remote_subscription(reference_id=str(organizacao.pk))})
+    organization = _organization()
+    basic = _plan("basico", price="price_basico", rank=1)
+    pro = _plan("pro", price="price_pro", rank=2)
+    _linked_subscription(organization, basic, pending_plan=pro)
+    _gateway(monkeypatch, {RetrieveSubscription: remote_subscription(reference_id=str(organization.pk))})
 
-    Subscriptions.sync(organizacao.pk)
+    Subscriptions.sync(organization.pk)
 
-    estado = _estado(organizacao)
-    assert estado.plan_id == pro.pk
-    assert estado.pending_plan_id is None
+    state = _state(organization)
+    assert state.plan_id == pro.pk
+    assert state.pending_plan_id is None
 
 
 def test_sync_terminal_resets_to_free(monkeypatch):
-    organizacao = _organizacao()
-    pro = _plano("pro", price="price_pro", rank=2)
-    _vincular(organizacao, pro, cancel_at=timezone.now() + timedelta(days=5))
+    organization = _organization()
+    pro = _plan("pro", price="price_pro", rank=2)
+    _linked_subscription(organization, pro, cancel_at=timezone.now() + timedelta(days=5))
     _gateway(
         monkeypatch,
-        {RetrieveSubscription: remote_subscription(reference_id=str(organizacao.pk), status=RemoteStatus.CANCELED)},
+        {RetrieveSubscription: remote_subscription(reference_id=str(organization.pk), status=RemoteStatus.CANCELED)},
     )
 
-    Subscriptions.sync(organizacao.pk)
+    Subscriptions.sync(organization.pk)
 
-    estado = _estado(organizacao)
-    assert estado.plan == Plan.get_free()
-    assert estado.status == SubscriptionStatus.ACTIVE
-    assert estado.external_id is None
-    assert estado.cancel_at is None
+    state = _state(organization)
+    assert state.plan == Plan.get_free()
+    assert state.status == SubscriptionStatus.ACTIVE
+    assert state.external_id is None
+    assert state.cancel_at is None
 
 
 def test_sync_unpaid_cancels_remote_and_resets(monkeypatch):
-    organizacao = _organizacao()
-    pro = _plano("pro", price="price_pro", rank=2)
-    _vincular(organizacao, pro)
+    organization = _organization()
+    pro = _plan("pro", price="price_pro", rank=2)
+    _linked_subscription(organization, pro)
     gateway = _gateway(
         monkeypatch,
         {
-            RetrieveSubscription: remote_subscription(reference_id=str(organizacao.pk), status=RemoteStatus.UNPAID),
-            CancelRemoteSubscription: remote_subscription(reference_id=str(organizacao.pk), status=RemoteStatus.CANCELED),
+            RetrieveSubscription: remote_subscription(reference_id=str(organization.pk), status=RemoteStatus.UNPAID),
+            CancelRemoteSubscription: remote_subscription(reference_id=str(organization.pk), status=RemoteStatus.CANCELED),
         },
     )
 
-    Subscriptions.sync(organizacao.pk)
+    Subscriptions.sync(organization.pk)
 
-    cancelamentos = [comando for comando in gateway.commands if isinstance(comando, CancelRemoteSubscription)]
-    assert len(cancelamentos) == 1
-    assert cancelamentos[0].external_id == "sub_1"
-    assert cancelamentos[0].timing == CancellationTiming.IMMEDIATELY
-    assert cancelamentos[0].idempotency_key == "billing:abandon:sub_1"
-    estado = _estado(organizacao)
-    assert estado.plan == Plan.get_free()
-    assert estado.external_id is None
+    cancellations = [command for command in gateway.commands if isinstance(command, CancelRemoteSubscription)]
+    assert len(cancellations) == 1
+    assert cancellations[0].external_id == "sub_1"
+    assert cancellations[0].timing == CancellationTiming.IMMEDIATELY
+    assert cancellations[0].idempotency_key == "billing:abandon:sub_1"
+    state = _state(organization)
+    assert state.plan == Plan.get_free()
+    assert state.external_id is None
 
 
 def test_sync_unknown_price_keeps_plan_and_logs(monkeypatch, caplog):
-    organizacao = _organizacao()
-    pro = _plano("pro", price="price_pro", rank=2)
-    _vincular(organizacao, pro)
-    _gateway(monkeypatch, {RetrieveSubscription: _remota_com_preco(organizacao, "price_desconhecido")})
+    organization = _organization()
+    pro = _plan("pro", price="price_pro", rank=2)
+    _linked_subscription(organization, pro)
+    _gateway(monkeypatch, {RetrieveSubscription: _remote_with_price(organization, "price_desconhecido")})
 
     with caplog.at_level(logging.ERROR, logger="apps.billing"):
-        Subscriptions.sync(organizacao.pk)
+        Subscriptions.sync(organization.pk)
 
-    assert _estado(organizacao).plan_id == pro.pk
-    assert any(registro.levelno == logging.ERROR and "price_desconhecido" in registro.getMessage() for registro in caplog.records)
+    assert _state(organization).plan_id == pro.pk
+    assert any(record.levelno == logging.ERROR and "price_desconhecido" in record.getMessage() for record in caplog.records)
 
 
 def test_sync_rejects_reference_mismatch(monkeypatch):
-    organizacao = _organizacao()
-    pro = _plano("pro", price="price_pro", rank=2)
-    _vincular(organizacao, pro)
+    organization = _organization()
+    pro = _plan("pro", price="price_pro", rank=2)
+    _linked_subscription(organization, pro)
     _gateway(monkeypatch, {RetrieveSubscription: remote_subscription(reference_id="999", status=RemoteStatus.CANCELED)})
 
     with pytest.raises(ReferenceMismatch):
-        Subscriptions.sync(organizacao.pk)
+        Subscriptions.sync(organization.pk)
 
-    estado = _estado(organizacao)
-    assert estado.plan_id == pro.pk
-    assert estado.external_id == "sub_1"
-    assert estado.status == SubscriptionStatus.ACTIVE
+    state = _state(organization)
+    assert state.plan_id == pro.pk
+    assert state.external_id == "sub_1"
+    assert state.status == SubscriptionStatus.ACTIVE
+
+
+def test_sync_rejects_reference_mismatch_before_unpaid_cancel(monkeypatch):
+    organization = _organization()
+    pro = _plan("pro", price="price_pro", rank=2)
+    _linked_subscription(organization, pro)
+    gateway = _gateway(
+        monkeypatch,
+        {
+            RetrieveSubscription: remote_subscription(reference_id="999", status=RemoteStatus.UNPAID),
+            CancelRemoteSubscription: remote_subscription(reference_id="999", status=RemoteStatus.CANCELED),
+        },
+    )
+
+    with pytest.raises(ReferenceMismatch):
+        Subscriptions.sync(organization.pk)
+
+    assert not any(isinstance(command, CancelRemoteSubscription) for command in gateway.commands)
+    state = _state(organization)
+    assert state.plan_id == pro.pk
+    assert state.external_id == "sub_1"
+    assert state.status == SubscriptionStatus.ACTIVE
+    assert state.synced_at is None
 
 
 def test_sync_reads_remote_inside_lock(monkeypatch):
-    organizacao = _organizacao()
-    _vincular(organizacao, _plano("pro", price="price_pro", rank=2))
-    sql_executado = []
-    chamadas = []
+    organization = _organization()
+    _linked_subscription(organization, _plan("pro", price="price_pro", rank=2))
+    executed_sql = []
+    calls = []
 
-    def registrar(execute, sql, params, many, context):
-        sql_executado.append(sql)
+    def record_sql(execute, sql, params, many, context):
+        executed_sql.append(sql)
         return execute(sql, params, many, context)
 
-    def recuperar(_comando):
-        chamadas.append(_comando)
+    def fake_retrieve(_command):
+        calls.append(_command)
         assert connection.in_atomic_block
-        assert any("FOR UPDATE" in sql and "billing_subscription" in sql for sql in sql_executado)
-        return remote_subscription(reference_id=str(organizacao.pk))
+        assert any("FOR UPDATE" in sql and "billing_subscription" in sql for sql in executed_sql)
+        return remote_subscription(reference_id=str(organization.pk))
 
-    _gateway(monkeypatch, {RetrieveSubscription: recuperar})
+    _gateway(monkeypatch, {RetrieveSubscription: fake_retrieve})
 
-    with connection.execute_wrapper(registrar):
-        Subscriptions.sync(organizacao.pk)
+    with connection.execute_wrapper(record_sql):
+        Subscriptions.sync(organization.pk)
 
-    assert len(chamadas) == 1
+    assert len(calls) == 1
 
 
 def test_sync_loss_of_access_suspends_members(monkeypatch):
-    organizacao = _organizacao()
-    pro = _plano("pro", price="price_pro", rank=2, limit=5)
-    _vincular(organizacao, pro)
-    _vinculos(organizacao, 5)
+    organization = _organization()
+    pro = _plan("pro", price="price_pro", rank=2, limit=5)
+    _linked_subscription(organization, pro)
+    _memberships(organization, 5)
     _gateway(
         monkeypatch,
-        {RetrieveSubscription: remote_subscription(reference_id=str(organizacao.pk), status=RemoteStatus.CANCELED)},
+        {RetrieveSubscription: remote_subscription(reference_id=str(organization.pk), status=RemoteStatus.CANCELED)},
     )
 
-    Subscriptions.sync(organizacao.pk)
+    Subscriptions.sync(organization.pk)
 
-    assert MemberLimits.active_count(organizacao.pk) == Plan.get_free().member_limit
+    assert MemberLimits.active_count(organization.pk) == Plan.get_free().member_limit
 
 
 def test_link_external_only_fills_empty_external_id(caplog):
-    organizacao = _organizacao()
-    Subscriptions.ensure_free(organizacao.pk)
+    organization = _organization()
+    Subscriptions.ensure_free(organization.pk)
 
-    Subscriptions.link_external(organizacao.pk, external_id="sub_1", gateway_variant="stripe")
+    Subscriptions.link_external(organization.pk, external_id="sub_1", gateway_variant="stripe")
     with caplog.at_level(logging.ERROR, logger="apps.billing"):
-        Subscriptions.link_external(organizacao.pk, external_id="sub_2", gateway_variant="stripe")
+        Subscriptions.link_external(organization.pk, external_id="sub_2", gateway_variant="stripe")
 
-    estado = _estado(organizacao)
-    assert estado.external_id == "sub_1"
-    assert estado.gateway_variant == "stripe"
-    assert any(registro.levelno == logging.ERROR for registro in caplog.records)
+    state = _state(organization)
+    assert state.external_id == "sub_1"
+    assert state.gateway_variant == "stripe"
+    assert any(record.levelno == logging.ERROR for record in caplog.records)

@@ -10,7 +10,7 @@ from django_checkouts.types.subscriptions import Subscription, SubscriptionItem
 
 from apps.billing.context import organization_scope
 from apps.billing.models import Plan
-from apps.billing.models import Subscription as AssinaturaLocal
+from apps.billing.models import Subscription as LocalSubscription
 from apps.organizacoes.models import Organizacao
 
 
@@ -42,7 +42,7 @@ def remote_subscription(**overrides) -> Subscription:
         billing_cycle=None,
         raw={},
     )
-    campos = {
+    fields = {
         "external_id": "sub_1",
         "gateway": Gateway.STRIPE,
         "variant": "stripe",
@@ -60,13 +60,13 @@ def remote_subscription(**overrides) -> Subscription:
         "metadata": {},
         "raw": {},
     }
-    campos.update(overrides)
-    return Subscription(**campos)
+    fields.update(overrides)
+    return Subscription(**fields)
 
 
-def subscribe_organization(organization: Organizacao, *, member_limit: int) -> AssinaturaLocal:
+def subscribe_organization(organization: Organizacao, *, member_limit: int) -> LocalSubscription:
     """Assina a organização, ativa, num plano pago com o limite de membros informado."""
-    plano = Plan.objects.create(
+    plan = Plan.objects.create(
         name=f"Plano de teste {member_limit}",
         slug=f"teste-{uuid4().hex[:12]}",
         rank=1,
@@ -74,8 +74,8 @@ def subscribe_organization(organization: Organizacao, *, member_limit: int) -> A
         is_free=False,
     )
     with organization_scope(organization.pk):
-        assinatura, _ = AssinaturaLocal.all_objects.update_or_create(
+        subscription, _ = LocalSubscription.all_objects.update_or_create(
             organizacao=organization,
-            defaults={"plan": plano, "status": AssinaturaLocal.Status.ACTIVE},
+            defaults={"plan": plan, "status": LocalSubscription.Status.ACTIVE},
         )
-    return assinatura
+    return subscription
