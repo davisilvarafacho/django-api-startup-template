@@ -53,6 +53,9 @@ class CheckoutSchema(serializers.Serializer):
     url = serializers.URLField(help_text="URL do checkout hospedado pelo gateway.")
 
 
+# Webhook é contrato com o gateway, não com clientes da API: fica fora do OpenAPI.
+document_webhook = extend_schema(exclude=True)
+
 _AUTH_ERRORS = document_error_codes(AuthErrorCode.NOT_AUTHENTICATED)
 _ROLE_ERRORS = document_error_codes(OrganizationErrorCode.ROLE_INSUFFICIENT)
 _IDEMPOTENCY_ERRORS = document_error_codes(BillingErrorCode.IDEMPOTENCY_KEY_REQUIRED)

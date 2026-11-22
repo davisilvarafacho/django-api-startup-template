@@ -8,10 +8,12 @@ from apps.billing.views import (
     SubscriptionChangeView,
     SubscriptionCheckoutView,
     SubscriptionView,
+    WebhookView,
 )
 
 urlpatterns = [
     path("cobranca/planos/", PlanListView.as_view(), name="cobranca-planos"),
+    path("cobranca/webhooks/<str:variante>/", WebhookView.as_view(), name="cobranca-webhook"),
     path("cobranca/assinatura/", SubscriptionView.as_view(), name="cobranca-assinatura"),
     path("cobranca/assinatura/checkout/", SubscriptionCheckoutView.as_view(), name="cobranca-assinatura-checkout"),
     path("cobranca/assinatura/alteracao/", SubscriptionChangeView.as_view(), name="cobranca-assinatura-alteracao"),

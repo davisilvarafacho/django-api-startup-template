@@ -14,3 +14,4 @@ class BillingErrorCode(models.TextChoices):
     IDEMPOTENCY_KEY_REQUIRED = "billing.idempotency_key_required", _("Informe o cabeçalho Idempotency-Key.")
     GATEWAY_UNCERTAIN = "billing.gateway_uncertain", _("O gateway de pagamento não confirmou a operação. Tente novamente em instantes.")
     GATEWAY_ERROR = "billing.gateway_error", _("O gateway de pagamento recusou a operação.")
+    WEBHOOK_INVALID = "billing.webhook_invalid", _("A assinatura do webhook não confere.")
