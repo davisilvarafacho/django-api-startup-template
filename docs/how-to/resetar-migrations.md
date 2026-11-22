@@ -26,6 +26,11 @@ O comando só opera quando `DATABASE_NAME=base` e a confirmação literal é
 `--confirm-database base`; qualquer outro nome é recusado. A operação não cria
 backup dos dados.
 
+O alvo usa a credencial admin do Postgres (`DATABASE_ADMIN_USER` e
+`DATABASE_ADMIN_PASSWORD`), porque o login web não tem permissão de DDL. Com
+`--apply`, ele roda `make db-roles` ao final, para reaplicar os grants do login
+web, que a recriação do schema `public` apaga.
+
 ## Verificar
 
 ```bash

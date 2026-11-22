@@ -34,6 +34,7 @@ nav:
       - Alertas do Grafana no Discord e Telegram: how-to/alertas-grafana.md
       - Analytics com PostHog: how-to/analytics-posthog.md
       - Publicar uma versão: how-to/publicar-versao.md
+      - Operar a cobrança: how-to/operar-cobranca.md
   - Referência:
       - API: reference/api.md
       - Estrutura de diretórios: reference/estrutura-de-diretorios.md

@@ -74,8 +74,9 @@ dev-obs-down: ## Derruba a observabilidade conectada ao devcontainer
 migrate: ## Aplica as migrações com a credencial admin (o login web não tem DDL)
 	DATABASE_USER="$(DATABASE_ADMIN_USER)" DATABASE_PASSWORD="$(DATABASE_ADMIN_PASSWORD)" uv run python manage.py migrate
 
-reset-migrations: ## Planeja o reset; use RESET_MIGRATIONS_ARGS='--apply --confirm-database base' para executar
-	uv run python manage.py reset_migrations $(RESET_MIGRATIONS_ARGS)
+reset-migrations: ## Planeja o reset com a credencial admin; RESET_MIGRATIONS_ARGS='--apply --confirm-database base' executa e roda db-roles
+	DATABASE_USER="$(DATABASE_ADMIN_USER)" DATABASE_PASSWORD="$(DATABASE_ADMIN_PASSWORD)" uv run python manage.py reset_migrations $(RESET_MIGRATIONS_ARGS)
+	$(if $(findstring --apply,$(RESET_MIGRATIONS_ARGS)),$(MAKE) db-roles)
 
 # Dentro de um container (dev container) o runserver precisa escutar em 0.0.0.0
 # para o nginx alcançá-lo; no host, 127.0.0.1 evita expor a API na rede local.

@@ -11,7 +11,7 @@ O glossário distingue identidade, tenancy e autorização de campos.
     fixam o vocabulário de domínios já desenhados em spec, mas ainda sem model
     correspondente — estão aqui para que o nome já nasça estável quando a
     implementação chegar. Hoje existem em código: Usuário, Organização, Vínculo,
-    Papel, Convite e Time.
+    Papel, Convite, Time, Plano, Assinatura, Plano efetivo e Suspensão por limite.
 
 ## Identidade e tenancy
 
@@ -88,6 +88,32 @@ _Evitar_: Papel de administrador
 Campo gravável sem política de escrita na organização atual; preserva as regras
 normais de autorização do endpoint.
 _Evitar_: Campo público, campo sem segurança
+
+## Cobrança
+
+**Plano**:
+Oferta do catálogo, com nome, ordem (`rank`), limite de membros e, quando paga,
+um preço fixo no gateway (`gateway_price_id`). Exatamente um plano é o gratuito.
+Preço novo é plano novo: o `gateway_price_id` não muda depois de salvo.
+_Evitar_: tier, produto, pacote
+
+**Assinatura**:
+O espelho local, uma por organização, da assinatura que o gateway mantém. Não é
+a fonte da verdade, que é o gateway; o espelho só é gravado pela sincronização.
+_Evitar_: contrato, plano
+
+**Plano efetivo**:
+O plano que de fato vale para a organização: o da assinatura quando ela tem
+acesso (ativa, em teste ou em atraso); caso contrário, o gratuito. É ele que
+define o limite de membros.
+_Evitar_: plano atual, plano contratado
+
+**Suspensão por limite**:
+Desativação de vínculos feita pela cobrança quando o plano efetivo tem menos
+vagas que vínculos ativos. Suspende os mais recentes, nunca o proprietário, e
+marca `plan_limit_suspended_at`. Quando cabe de novo, a cobrança reativa só os
+vínculos que ela mesma suspendeu.
+_Evitar_: desativação manual, bloqueio de conta
 
 ## Convenção HTTP
 

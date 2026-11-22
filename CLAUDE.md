@@ -100,9 +100,11 @@ exige um worker ASGI (`GUNICORN_WORKER_CLASS`). Ver `docs/how-to/proxy-nginx.md`
   Todo modelo de negócio herda dela; o FK `organizacao` e a `TenantPolicy` do
   `django-rls` são propagados às subclasses. Multi-tenancy é o default: esquecer de
   configurar algo resulta em ficar protegido, não em vazar dados.
-- `BaseGlobal` = mesmos campos **sem** isolamento. Reservado aos modelos de
-  identidade/bootstrap lidos antes de existir tenant: `Organizacao`, `Vinculo`,
-  `Convite`, `Time`, `Usuario`.
+- `BaseTenantless` (`apps/api/base/models.py`) = mesmos campos **sem** isolamento.
+  Reservado aos modelos de identidade/bootstrap lidos antes de existir tenant:
+  `Organizacao`, `Vinculo`, `Convite`, `Time`, `Usuario`. Na cobrança
+  (`apps/billing`), são `BaseTenantless` o catálogo `Plan` e a caixa de entrada
+  `BillingEvent`; a `Subscription` é `Base`, sob RLS.
 - `apps.organizacoes.permissions.TenantPermission` está em
   `DEFAULT_PERMISSION_CLASSES`: **toda** rota exige `X-Organization` válido por padrão.
   Ela resolve o `Vinculo`, popula `request.organizacao`/`request.vinculo` e chama
@@ -222,7 +224,7 @@ ou views. Os pontos mais fáceis de violar:
   seguem a ordem fixa por tipo de field.
 - `Meta` com `db_table`, `ordering = ("-id",)`, `verbose_name`, `verbose_name_plural`
   e `permissions`. Choices (preferencialmente `IntegerChoices`) no topo do `models.py`.
-- Todo model herda de `Base` (ou `BaseGlobal`, se for identidade) e implementa `__str__`.
+- Todo model herda de `Base` (ou `BaseTenantless`, se for identidade) e implementa `__str__`.
 - Toda view define `filterset_class` explicitamente.
 - QuerySets: `select_related`/`prefetch_related` obrigatórios; `only()`/`values()` para
   limitar colunas.
