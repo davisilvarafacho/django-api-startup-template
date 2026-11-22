@@ -21,10 +21,14 @@ class FakeGatewayVariant(FakeCheckoutGateway):
         super().__init__(results={}, capabilities=STRIPE_CAPABILITIES, variant=variant)
 
 
+def fake_gateway(results: dict) -> FakeCheckoutGateway:
+    """Cria um gateway fake que responde `results` por tipo de comando e guarda os comandos recebidos."""
+    return FakeCheckoutGateway(results=results, capabilities=STRIPE_CAPABILITIES, variant="stripe")
+
+
 def fake_client(results: dict) -> CheckoutClient:
     """Cria um cliente sobre um gateway fake que responde `results` por tipo de comando."""
-    gateway = FakeCheckoutGateway(results=results, capabilities=STRIPE_CAPABILITIES, variant="stripe")
-    return CheckoutClient(gateway)
+    return CheckoutClient(fake_gateway(results))
 
 
 def remote_subscription(**overrides) -> Subscription:
