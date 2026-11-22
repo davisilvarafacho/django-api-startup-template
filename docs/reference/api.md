@@ -197,8 +197,9 @@ organização. O webhook é público e fica fora do OpenAPI.
 
 As rotas de mutação (`checkout/`, `alteracao/` e o `POST`/`DELETE` de
 `cancelamento/`) exigem o header `Idempotency-Key`. Sem ele, respondem
-`422 billing.idempotency_key_required`. Repetir uma operação com a mesma chave
-é seguro: o gateway devolve o resultado da primeira execução, em vez de repeti-la.
+`422 billing.idempotency_key_required`. A API repassa a chave ao gateway; o que
+acontece quando a mesma chave é reenviada é decidido pelo gateway, que costuma
+devolver o resultado da primeira execução em vez de repeti-la.
 
 Quando o gateway não confirma a operação, a resposta é
 `503 billing.gateway_uncertain`. O cliente deve repetir com a **mesma** chave; a

@@ -24,6 +24,8 @@ hooks: ## Ativa os hooks de pre-commit
 up: ## Sobe Postgres + Redis (docker compose)
 	docker compose up -d db redis
 
+# db-roles sempre age no container `db` do docker compose, independentemente de DATABASE_HOST:
+# não reaplica os grants do login web em outro banco.
 db-roles: ## Provisiona/reaplica o login web (sem BYPASSRLS) no PostgreSQL local
 	docker compose up -d --wait db
 	docker compose exec -T db sh /docker-entrypoint-initdb.d/10-app-roles.sh

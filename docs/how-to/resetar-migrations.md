@@ -31,6 +31,15 @@ O alvo usa a credencial admin do Postgres (`DATABASE_ADMIN_USER` e
 `--apply`, ele roda `make db-roles` ao final, para reaplicar os grants do login
 web, que a recriação do schema `public` apaga.
 
+O `make db-roles` age sempre no container `db` do `docker compose`, e não no
+`DATABASE_HOST`. Se o banco alvo for outro (outro host ou outra instância), o
+`--apply` recria o schema nele, mas **não restaura os grants do login web**
+naquele banco. Reaplique-os manualmente com o script
+`docker/postgres/init-app-roles.sh`, o mesmo que o `make db-roles` executa no
+container. Ele lê `POSTGRES_USER` (o admin), `POSTGRES_DB`, `DATABASE_WEB_USER` e
+`DATABASE_WEB_PASSWORD`, e chama `psql` sem host explícito: aponte o `psql` para
+esse banco com `PGHOST` e `PGPORT`.
+
 ## Verificar
 
 ```bash

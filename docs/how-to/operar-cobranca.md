@@ -14,8 +14,8 @@ Todas são lidas por `utils/env.py` e estão no `.env.example`.
 | `STRIPE_WEBHOOK_SECRET` | vazio | Segredo de assinatura do endpoint de webhook. Sem ele, todo evento é recusado com `400 billing.webhook_invalid`. |
 | `STRIPE_SANDBOX` | `true` fora de produção, `false` em produção | Opera o gateway em modo de teste. Com chave `sk_live_` e sandbox ligado, o check emite aviso. |
 | `BILLING_GATEWAY_VARIANT` | `stripe` | Variante do `CHECKOUT_VARIANTS` usada pela cobrança. A rota de webhook só aceita esse nome. |
-| `FRONTEND_BILLING_CHECKOUT_SUCCESS_URL` | — | Para onde o checkout volta depois do pagamento. |
-| `FRONTEND_BILLING_CHECKOUT_CANCEL_URL` | — | Para onde o checkout volta se o cliente desistir. |
+| `FRONTEND_BILLING_CHECKOUT_SUCCESS_URL` | `http://localhost:3000/cobranca/checkout/sucesso` fora de produção; vazio em produção, sem padrão | Para onde o checkout volta depois do pagamento. Em produção, defina a variável. |
+| `FRONTEND_BILLING_CHECKOUT_CANCEL_URL` | `http://localhost:3000/cobranca/checkout/cancelado` fora de produção; vazio em produção, sem padrão | Para onde o checkout volta se o cliente desistir. Em produção, defina a variável. |
 | `BILLING_FREE_PLAN_MEMBER_LIMIT` | `3` | Limite de membros do plano gratuito, gravado quando o plano é criado. |
 | `BILLING_RECONCILE_WINDOW_HOURS` | `72` | Janela, em horas, em que a reconciliação busca eventos no gateway. |
 | `BILLING_EVENT_MAX_ATTEMPTS` | `10` | Tentativas de processamento de um evento antes de a reconciliação desistir dele. |
@@ -41,10 +41,13 @@ Um preço anual, por exemplo, é outro plano, com o mesmo `rank` do mensal. Mesm
 No admin Django, em **Planos**, cadastre cada plano pago com:
 
 - **Nome** e **slug**: o slug é o identificador que o frontend envia em
-  `{"plan": "<slug>"}`. Ele é único.
+  `{"plan": "<slug>"}`. Ele é único e, depois de salvo, não muda.
 - **Ordem** (`rank`): posição na escala. O maior rank é o plano superior, e é
-  ele que decide entre upgrade e downgrade.
-- **Limite de membros**: máximo de vínculos ativos neste plano.
+  ele que decide entre upgrade e downgrade. Depois de salvo, não muda.
+- **Limite de membros**: máximo de vínculos ativos neste plano. Continua
+  editável depois de salvo.
+- **Gratuito**: só o plano gratuito é marcado com este campo. Depois de salvo,
+  não muda, para que sempre exista exatamente um plano gratuito.
 - **Valor** (em centavos) e **ciclo de cobrança**: só para exibição e para o
   catálogo.
 - **ID do preço no gateway**: o `price_...` copiado do Stripe. Este campo só é
@@ -59,8 +62,7 @@ O plano **gratuito não se cadastra**: o sistema o cria ao final de cada
 tem preço no gateway.
 
 Para desativar um plano, marque **Ativo** como falso ou use a ação
-**Inativar registros selecionados**. Não use a ação de clonar: ela não se aplica
-ao catálogo.
+**Inativar registros selecionados**.
 
 ## Configurar o webhook no Stripe
 
@@ -135,9 +137,12 @@ produção, o Sentry captura esse erro. Esse caso pede investigação manual.
 
 ## Verificar a assinatura de uma organização
 
-No admin, em **Assinaturas**, o espelho também é só leitura: status, plano,
-plano agendado, período e data de sincronização. Nenhum registro é criado,
-alterado ou apagado por ali; a escrita vem só da sincronização.
+No admin, em **Assinaturas**, o staff vê uma organização por vez. Escolha a
+organização no filtro **Organização** da listagem; a escolha fica na sessão para
+as telas de detalhe. Sem filtro nem escolha anterior, é usada a primeira
+organização cadastrada. O espelho é só leitura: status, plano, plano agendado,
+período e data de sincronização. Nenhum registro é criado, alterado ou apagado
+por ali; a escrita vem só da sincronização.
 
 Se uma assinatura parecer desatualizada, confirme primeiro que os eventos
 correspondentes estão aplicados em **Eventos de cobrança**. Para forçar a
@@ -155,6 +160,29 @@ reprocessa eventos.
 ## Organização encerrada
 
 Ao encerrar uma organização, a cobrança cancela a assinatura paga **imediatamente**
-no gateway, depois do commit do encerramento. A repetição é segura: a chave de
-idempotência é fixa por organização. Enquanto a organização estiver encerrada,
-a sincronização não reativa vínculos suspensos pelo limite do plano.
+no gateway, depois do commit do encerramento, pela tarefa
+`billing.cancel_closed_organization`. A chave de idempotência é fixa por
+organização, então repetir a tarefa não cancela duas vezes. Enquanto a
+organização estiver encerrada, a sincronização não reativa vínculos suspensos
+pelo limite do plano.
+
+Essa tarefa só repete automaticamente uma falha **temporária** do gateway, até 5
+vezes, com espera exponencial de 30 segundos, limitada a 15 minutos. Dois casos
+não têm recuperação automática:
+
+- uma recusa permanente do gateway: a tarefa falha, sem nova tentativa;
+- o esgotamento das 5 tentativas.
+
+Nesses casos a assinatura paga continua ativa no gateway e o espelho não muda:
+continua mostrando o plano pago, com status ativo e sem cancelamento agendado.
+Nada na reconciliação corrige isso, porque o encerramento não gera um evento.
+
+O que fazer:
+
+1. Veja nos logs do worker a falha de `billing.cancel_closed_organization` da
+   organização, e confira no admin, em **Assinaturas**, que o espelho ainda está
+   com o plano pago.
+2. Cancele a assinatura imediatamente no painel do Stripe.
+3. O evento de cancelamento chega pelo webhook e devolve o espelho ao gratuito.
+   Se o webhook não estiver recebendo eventos, rode a sincronização manual
+   descrita acima.

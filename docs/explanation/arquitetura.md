@@ -54,9 +54,10 @@ anexado à requisição.
 da verdade: o app guarda um espelho da assinatura e decide apenas se a
 organização tem acesso ao plano pago e quantos membros cabem nele.
 
-- `Plan` (`BaseTenantless`) é o catálogo. Exatamente um plano é o gratuito, e o
-  `gateway_price_id` de um plano pago não muda depois de salvo: preço novo vira
-  plano novo.
+- `Plan` (`BaseTenantless`) é o catálogo. Exatamente um plano é o gratuito,
+  garantido pelo `post_migrate`; depois de salvo, o admin não altera `is_free`,
+  `slug`, `rank` nem `gateway_price_id`, e o `gateway_price_id` de um plano pago
+  não muda: preço novo vira plano novo.
 - `Subscription` (`Base`, sob RLS) é o espelho da assinatura da organização. Não
   há campo "tem acesso" gravado: o acesso é derivado do status.
 - `BillingEvent` (`BaseTenantless`) é a caixa de entrada dos eventos do gateway.
@@ -77,9 +78,11 @@ aplicados há mais de 90 dias.
 Os limites de membros ficam em `apps.billing.members`. Quando o plano efetivo
 não comporta todos os vínculos ativos, a cobrança suspende os mais recentes,
 nunca o proprietário, e marca `plan_limit_suspended_at` no vínculo; quando cabe
-de novo, reativa só esses. `apps.organizacoes` depende do billing apenas para a
-checagem de capacidade em convites, aceites e reativações de vínculo, e para
-disparar o cancelamento quando a organização é encerrada.
+de novo, reativa só esses. `apps.organizacoes` depende do billing em três pontos
+apenas: a checagem de capacidade em convites, aceites e reativações de vínculo; a
+criação da assinatura gratuita (`Subscriptions.ensure_free`) no onboarding da
+organização (`apps/organizacoes/onboarding.py`); e o disparo do cancelamento
+quando a organização é encerrada.
 
 As rotas de escrita chamam o gateway fora da transação da request e exigem o
 header `Idempotency-Key`, repassado à biblioteca. Uma falha que deixa o resultado
