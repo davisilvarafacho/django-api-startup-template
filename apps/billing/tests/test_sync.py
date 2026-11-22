@@ -7,7 +7,6 @@ from django.db import connection
 from django.utils import timezone
 
 import pytest
-from django_checkouts.client import CheckoutClient
 from django_checkouts.enums import CancellationTiming
 from django_checkouts.enums import SubscriptionStatus as RemoteStatus
 from django_checkouts.gateways.commands import CancelRemoteSubscription, RetrieveSubscription
@@ -18,7 +17,7 @@ from apps.billing.members import MemberLimits
 from apps.billing.models import Plan, Subscription, SubscriptionStatus
 from apps.billing.subscriptions import ReferenceMismatch, Subscriptions
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
-from tests.support.billing import fake_gateway, remote_subscription
+from tests.support.billing import patch_billing_gateway, remote_subscription
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
@@ -51,12 +50,6 @@ def _memberships(organization, quantity):
     return [Vinculo.objects.create(organizacao=organization, usuario=criar_usuario(), papel=Papel.MEMBRO) for _ in range(quantity)]
 
 
-def _gateway(monkeypatch, results):
-    gateway = fake_gateway(results)
-    monkeypatch.setattr("apps.billing.subscriptions.get_client", lambda: CheckoutClient(gateway))
-    return gateway
-
-
 def _remote_with_price(organization, price_id):
     item = SubscriptionItem(external_id="si_2", price_id=price_id, quantity=1, unit_amount=None, currency=None, billing_cycle=None, raw={})
     return remote_subscription(reference_id=str(organization.pk), items=(item,))
@@ -81,7 +74,7 @@ def test_sync_free_without_external_id_only_applies_limit(monkeypatch):
     Subscriptions.ensure_free(organization.pk)
     limit = Plan.get_free().member_limit
     _memberships(organization, limit + 2)
-    gateway = _gateway(monkeypatch, {})
+    gateway = patch_billing_gateway(monkeypatch, {})
 
     Subscriptions.sync(organization.pk)
 
@@ -95,7 +88,7 @@ def test_sync_maps_price_to_plan_and_status(monkeypatch):
     pro = _plan("pro", price="price_pro", rank=2)
     _linked_subscription(organization, basic)
     end = timezone.now() + timedelta(days=30)
-    _gateway(
+    patch_billing_gateway(
         monkeypatch,
         {
             RetrieveSubscription: remote_subscription(
@@ -123,7 +116,7 @@ def test_sync_clears_pending_plan_when_applied(monkeypatch):
     basic = _plan("basico", price="price_basico", rank=1)
     pro = _plan("pro", price="price_pro", rank=2)
     _linked_subscription(organization, basic, pending_plan=pro)
-    _gateway(monkeypatch, {RetrieveSubscription: remote_subscription(reference_id=str(organization.pk))})
+    patch_billing_gateway(monkeypatch, {RetrieveSubscription: remote_subscription(reference_id=str(organization.pk))})
 
     Subscriptions.sync(organization.pk)
 
@@ -136,7 +129,7 @@ def test_sync_terminal_resets_to_free(monkeypatch):
     organization = _organization()
     pro = _plan("pro", price="price_pro", rank=2)
     _linked_subscription(organization, pro, cancel_at=timezone.now() + timedelta(days=5))
-    _gateway(
+    patch_billing_gateway(
         monkeypatch,
         {RetrieveSubscription: remote_subscription(reference_id=str(organization.pk), status=RemoteStatus.CANCELED)},
     )
@@ -154,7 +147,7 @@ def test_sync_unpaid_cancels_remote_and_resets(monkeypatch):
     organization = _organization()
     pro = _plan("pro", price="price_pro", rank=2)
     _linked_subscription(organization, pro)
-    gateway = _gateway(
+    gateway = patch_billing_gateway(
         monkeypatch,
         {
             RetrieveSubscription: remote_subscription(reference_id=str(organization.pk), status=RemoteStatus.UNPAID),
@@ -178,7 +171,7 @@ def test_sync_unknown_price_keeps_plan_and_logs(monkeypatch, caplog):
     organization = _organization()
     pro = _plan("pro", price="price_pro", rank=2)
     _linked_subscription(organization, pro)
-    _gateway(monkeypatch, {RetrieveSubscription: _remote_with_price(organization, "price_desconhecido")})
+    patch_billing_gateway(monkeypatch, {RetrieveSubscription: _remote_with_price(organization, "price_desconhecido")})
 
     with caplog.at_level(logging.ERROR, logger="apps.billing"):
         Subscriptions.sync(organization.pk)
@@ -191,7 +184,7 @@ def test_sync_rejects_reference_mismatch(monkeypatch):
     organization = _organization()
     pro = _plan("pro", price="price_pro", rank=2)
     _linked_subscription(organization, pro)
-    _gateway(monkeypatch, {RetrieveSubscription: remote_subscription(reference_id="999", status=RemoteStatus.CANCELED)})
+    patch_billing_gateway(monkeypatch, {RetrieveSubscription: remote_subscription(reference_id="999", status=RemoteStatus.CANCELED)})
 
     with pytest.raises(ReferenceMismatch):
         Subscriptions.sync(organization.pk)
@@ -206,7 +199,7 @@ def test_sync_rejects_reference_mismatch_before_unpaid_cancel(monkeypatch):
     organization = _organization()
     pro = _plan("pro", price="price_pro", rank=2)
     _linked_subscription(organization, pro)
-    gateway = _gateway(
+    gateway = patch_billing_gateway(
         monkeypatch,
         {
             RetrieveSubscription: remote_subscription(reference_id="999", status=RemoteStatus.UNPAID),
@@ -241,7 +234,7 @@ def test_sync_reads_remote_inside_lock(monkeypatch):
         assert any("FOR UPDATE" in sql and "billing_subscription" in sql for sql in executed_sql)
         return remote_subscription(reference_id=str(organization.pk))
 
-    _gateway(monkeypatch, {RetrieveSubscription: fake_retrieve})
+    patch_billing_gateway(monkeypatch, {RetrieveSubscription: fake_retrieve})
 
     with connection.execute_wrapper(record_sql):
         Subscriptions.sync(organization.pk)
@@ -254,7 +247,7 @@ def test_sync_loss_of_access_suspends_members(monkeypatch):
     pro = _plan("pro", price="price_pro", rank=2, limit=5)
     _linked_subscription(organization, pro)
     _memberships(organization, 5)
-    _gateway(
+    patch_billing_gateway(
         monkeypatch,
         {RetrieveSubscription: remote_subscription(reference_id=str(organization.pk), status=RemoteStatus.CANCELED)},
     )

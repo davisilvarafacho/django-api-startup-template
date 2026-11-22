@@ -3,9 +3,10 @@
 from uuid import uuid4
 
 from django_checkouts.client import CheckoutClient
-from django_checkouts.enums import Gateway, SubscriptionStatus
+from django_checkouts.enums import CheckoutMode, CheckoutStatus, Gateway, SubscriptionStatus
 from django_checkouts.gateways.stripe.capabilities import STRIPE_CAPABILITIES
 from django_checkouts.testing.fakes import FakeCheckoutGateway
+from django_checkouts.types.checkouts import Checkout
 from django_checkouts.types.subscriptions import Subscription, SubscriptionItem
 
 from apps.billing.context import organization_scope
@@ -29,6 +30,33 @@ def fake_gateway(results: dict) -> FakeCheckoutGateway:
 def fake_client(results: dict) -> CheckoutClient:
     """Cria um cliente sobre um gateway fake que responde `results` por tipo de comando."""
     return CheckoutClient(fake_gateway(results))
+
+
+def patch_billing_gateway(monkeypatch, results: dict) -> FakeCheckoutGateway:
+    """Troca o cliente da cobrança por um fake que responde `results` e devolve o fake para inspeção."""
+    gateway = fake_gateway(results)
+    monkeypatch.setattr("apps.billing.subscriptions.get_client", lambda: CheckoutClient(gateway))
+    return gateway
+
+
+def fake_checkout(url: str = "https://checkout.example/sessao") -> Checkout:
+    """Cria um checkout de assinatura pendente, com a URL informada."""
+    return Checkout(
+        external_id="cs_1",
+        gateway=Gateway.STRIPE,
+        variant="stripe",
+        status=CheckoutStatus.PENDING,
+        mode=CheckoutMode.SUBSCRIPTION,
+        url=url,
+        amount_total=0,
+        currency="BRL",
+        customer=None,
+        reference_id=None,
+        subscription_id=None,
+        expires_at=None,
+        created_at=None,
+        raw={},
+    )
 
 
 def remote_subscription(**overrides) -> Subscription:

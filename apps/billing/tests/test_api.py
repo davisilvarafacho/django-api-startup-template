@@ -4,20 +4,19 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 import pytest
-from django_checkouts.client import CheckoutClient
-from django_checkouts.enums import CheckoutMode, Gateway
+from django_checkouts.enums import Gateway
 from django_checkouts.exceptions import GatewayTemporaryError
 from django_checkouts.gateways.commands import CreateCheckout
-from django_checkouts.types.checkouts import Checkout
 from knox.models import get_token_model
 
+from apps.api.autenticacao.errors import AuthErrorCode
 from apps.api.autenticacao.models import TokenMetaData, TokenType
 from apps.billing.models import Plan
 from apps.billing.subscriptions import Subscriptions
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
 from apps.organizacoes.models import Organizacao, Papel, Vinculo
 from internal_frameworks.context import ContextVariable
-from tests.support.billing import fake_gateway
+from tests.support.billing import fake_checkout, patch_billing_gateway
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
@@ -27,26 +26,26 @@ IDEMPOTENCY_HEADER = "HTTP_IDEMPOTENCY_KEY"
 
 
 @pytest.fixture(autouse=True)
-def configurar_request_de_teste(settings):
+def configure_test_request(settings):
     settings.ALLOWED_HOSTS = ["testserver"]
     ContextVariable.clear_context()
     yield
     ContextVariable.clear_context()
 
 
-def client_autenticado(usuario):
-    _, token = AuthToken.objects.create(user=usuario)
+def authenticated_client(user):
+    _, token = AuthToken.objects.create(user=user)
     client = APIClient()
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
     return client
 
 
-def client_com_api_key(usuario, scopes, organizacao):
+def api_key_client(user, scopes, organization):
     instance, token = AuthToken.objects.create(
-        responsavel=usuario,
+        responsavel=user,
         type=TokenType.API_KEY,
-        created_by=usuario,
-        organization=organizacao,
+        created_by=user,
+        organization=organization,
         name="Integração de teste",
         scopes=scopes,
     )
@@ -56,76 +55,53 @@ def client_com_api_key(usuario, scopes, organizacao):
     return client
 
 
-def _organizacao(slug="acme"):
+def _organization(slug="acme"):
     return Organizacao.objects.create(nome=slug, slug=slug)
 
 
-def _vincular(usuario, organizacao, papel):
-    return Vinculo.objects.create(usuario=usuario, organizacao=organizacao, papel=papel)
+def _link(user, organization, role):
+    return Vinculo.objects.create(usuario=user, organizacao=organization, papel=role)
 
 
-def _plano_pago(slug="pro", *, rank=2, price="price_pro"):
+def _paid_plan(slug="pro", *, rank=2, price="price_pro"):
     return Plan.objects.create(name=slug, slug=slug, rank=rank, member_limit=10, gateway_price_id=price)
 
 
-def _gateway(monkeypatch, results):
-    monkeypatch.setattr("apps.billing.subscriptions.get_client", lambda: CheckoutClient(fake_gateway(results)))
-
-
-def _checkout(url="https://checkout.example/sessao"):
-    return Checkout(
-        external_id="cs_1",
-        gateway=Gateway.STRIPE,
-        variant="stripe",
-        status="pending",
-        mode=CheckoutMode.SUBSCRIPTION,
-        url=url,
-        amount_total=0,
-        currency="BRL",
-        customer=None,
-        reference_id=None,
-        subscription_id=None,
-        expires_at=None,
-        created_at=None,
-        raw={},
-    )
-
-
 def test_plans_list_without_organization_header():
-    usuario = criar_usuario()
-    _plano_pago("pro")
-    _plano_pago("inativo", rank=3, price="price_inativo")
+    user = criar_usuario()
+    _paid_plan("pro")
+    _paid_plan("inativo", rank=3, price="price_inativo")
     Plan.objects.filter(slug="inativo").update(is_active=False)
 
-    response = client_autenticado(usuario).get("/cobranca/planos/")
+    response = authenticated_client(user).get("/cobranca/planos/")
 
     assert response.status_code == status.HTTP_200_OK
-    slugs = [plano["slug"] for plano in response.json()["resultados"]]
+    slugs = [plan["slug"] for plan in response.json()["resultados"]]
     assert "pro" in slugs
     assert "inativo" not in slugs
 
 
 def test_subscription_requires_admin():
-    organizacao = _organizacao()
-    membro = criar_usuario()
-    administrador = criar_usuario()
-    _vincular(membro, organizacao, Papel.MEMBRO)
-    _vincular(administrador, organizacao, Papel.ADMINISTRADOR)
-    Subscriptions.ensure_free(organizacao.pk)
+    organization = _organization()
+    member = criar_usuario()
+    admin = criar_usuario()
+    _link(member, organization, Papel.MEMBRO)
+    _link(admin, organization, Papel.ADMINISTRADOR)
+    Subscriptions.ensure_free(organization.pk)
 
-    negado = client_autenticado(membro).get("/cobranca/assinatura/", **{META_HEADER_ORGANIZACAO: "acme"})
-    permitido = client_autenticado(administrador).get("/cobranca/assinatura/", **{META_HEADER_ORGANIZACAO: "acme"})
+    denied = authenticated_client(member).get("/cobranca/assinatura/", **{META_HEADER_ORGANIZACAO: "acme"})
+    allowed = authenticated_client(admin).get("/cobranca/assinatura/", **{META_HEADER_ORGANIZACAO: "acme"})
 
-    assert negado.status_code == status.HTTP_403_FORBIDDEN
-    assert permitido.status_code == status.HTTP_200_OK
-    corpo = permitido.json()
-    assert corpo["plan"]["is_free"] is True
-    assert corpo["has_access"] is True
-    assert corpo["members"] == {"active": 2, "limit": Plan.get_free().member_limit}
+    assert denied.status_code == status.HTTP_403_FORBIDDEN
+    assert allowed.status_code == status.HTTP_200_OK
+    body = allowed.json()
+    assert body["plan"]["is_free"] is True
+    assert body["has_access"] is True
+    assert body["members"] == {"active": 2, "limit": Plan.get_free().member_limit}
 
 
 @pytest.mark.parametrize(
-    ("metodo", "caminho"),
+    ("method", "path"),
     [
         ("post", "/cobranca/assinatura/checkout/"),
         ("post", "/cobranca/assinatura/alteracao/"),
@@ -133,20 +109,20 @@ def test_subscription_requires_admin():
         ("delete", "/cobranca/assinatura/cancelamento/"),
     ],
 )
-def test_mutations_require_owner(metodo, caminho):
-    organizacao = _organizacao()
-    administrador = criar_usuario()
-    _vincular(administrador, organizacao, Papel.ADMINISTRADOR)
-    Subscriptions.ensure_free(organizacao.pk)
-    cliente = client_autenticado(administrador)
+def test_mutations_require_owner(method, path):
+    organization = _organization()
+    admin = criar_usuario()
+    _link(admin, organization, Papel.ADMINISTRADOR)
+    Subscriptions.ensure_free(organization.pk)
+    client = authenticated_client(admin)
 
-    response = getattr(cliente, metodo)(caminho, {"plan": "pro"}, format="json", **{META_HEADER_ORGANIZACAO: "acme", IDEMPOTENCY_HEADER: "k"})
+    response = getattr(client, method)(path, {"plan": "pro"}, format="json", **{META_HEADER_ORGANIZACAO: "acme", IDEMPOTENCY_HEADER: "k"})
 
     assert response.status_code == status.HTTP_403_FORBIDDEN
 
 
 @pytest.mark.parametrize(
-    ("metodo", "caminho"),
+    ("method", "path"),
     [
         ("post", "/cobranca/assinatura/checkout/"),
         ("post", "/cobranca/assinatura/alteracao/"),
@@ -154,26 +130,29 @@ def test_mutations_require_owner(metodo, caminho):
         ("delete", "/cobranca/assinatura/cancelamento/"),
     ],
 )
-def test_mutations_reject_api_keys(metodo, caminho):
-    organizacao = _organizacao()
-    proprietario = criar_usuario()
-    _vincular(proprietario, organizacao, Papel.PROPRIETARIO)
-    Subscriptions.ensure_free(organizacao.pk)
-    cliente = client_com_api_key(proprietario, ["organizations:read"], organizacao)
+def test_mutations_reject_api_keys(method, path):
+    organization = _organization()
+    owner = criar_usuario()
+    _link(owner, organization, Papel.PROPRIETARIO)
+    Subscriptions.ensure_free(organization.pk)
+    client = api_key_client(owner, ["organizations:read"], organization)
 
-    response = getattr(cliente, metodo)(caminho, {"plan": "pro"}, format="json", **{IDEMPOTENCY_HEADER: "k"})
+    response = getattr(client, method)(path, {"plan": "pro"}, format="json", **{IDEMPOTENCY_HEADER: "k"})
 
     assert response.status_code == status.HTTP_403_FORBIDDEN
+    # Só `session_only` recusa a API key antes da checagem de escopos. Sem ele, a view não
+    # declara escopo e a recusa viria como `auth.insufficient_scope`.
+    assert response.json()["errors"][0]["code"] == AuthErrorCode.PERMISSION_DENIED
 
 
 def test_mutation_requires_idempotency_key():
-    organizacao = _organizacao()
-    proprietario = criar_usuario()
-    _vincular(proprietario, organizacao, Papel.PROPRIETARIO)
-    Subscriptions.ensure_free(organizacao.pk)
-    _plano_pago()
+    organization = _organization()
+    owner = criar_usuario()
+    _link(owner, organization, Papel.PROPRIETARIO)
+    Subscriptions.ensure_free(organization.pk)
+    _paid_plan()
 
-    response = client_autenticado(proprietario).post(
+    response = authenticated_client(owner).post(
         "/cobranca/assinatura/checkout/",
         {"plan": "pro"},
         format="json",
@@ -185,14 +164,14 @@ def test_mutation_requires_idempotency_key():
 
 
 def test_checkout_returns_url(monkeypatch):
-    organizacao = _organizacao()
-    proprietario = criar_usuario()
-    _vincular(proprietario, organizacao, Papel.PROPRIETARIO)
-    Subscriptions.ensure_free(organizacao.pk)
-    _plano_pago()
-    _gateway(monkeypatch, {CreateCheckout: _checkout()})
+    organization = _organization()
+    owner = criar_usuario()
+    _link(owner, organization, Papel.PROPRIETARIO)
+    Subscriptions.ensure_free(organization.pk)
+    _paid_plan()
+    patch_billing_gateway(monkeypatch, {CreateCheckout: fake_checkout()})
 
-    response = client_autenticado(proprietario).post(
+    response = authenticated_client(owner).post(
         "/cobranca/assinatura/checkout/",
         {"plan": "pro"},
         format="json",
@@ -204,18 +183,18 @@ def test_checkout_returns_url(monkeypatch):
 
 
 def test_gateway_temporary_error_returns_503(monkeypatch):
-    organizacao = _organizacao()
-    proprietario = criar_usuario()
-    _vincular(proprietario, organizacao, Papel.PROPRIETARIO)
-    Subscriptions.ensure_free(organizacao.pk)
-    _plano_pago()
+    organization = _organization()
+    owner = criar_usuario()
+    _link(owner, organization, Papel.PROPRIETARIO)
+    Subscriptions.ensure_free(organization.pk)
+    _paid_plan()
 
-    def falha_temporaria(command):
+    def temporary_failure(command):
         raise GatewayTemporaryError("indisponível", gateway=Gateway.STRIPE, variant="stripe")
 
-    _gateway(monkeypatch, {CreateCheckout: falha_temporaria})
+    patch_billing_gateway(monkeypatch, {CreateCheckout: temporary_failure})
 
-    response = client_autenticado(proprietario).post(
+    response = authenticated_client(owner).post(
         "/cobranca/assinatura/checkout/",
         {"plan": "pro"},
         format="json",
