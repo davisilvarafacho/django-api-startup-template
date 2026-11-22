@@ -71,7 +71,7 @@ dependencies = [
     "sqlparse==0.5.3",
     "starlette>=1.6.0,<2",
     "tablib==3.9.0",
-    "tomli==2.3.0",
+    "tomli==2.4.1",
     "typing-extensions==4.15.0",
     "tzdata==2025.2",
     "ua-parser==1.0.1",
