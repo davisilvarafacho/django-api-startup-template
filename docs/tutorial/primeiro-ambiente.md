@@ -14,6 +14,10 @@ administrador que criou o volume e mantenha `DATABASE_USER` distinto dele.
 Use `demo@example.com` / `demo123456` no login e envie
 `X-Organization: demo` nas rotas isoladas por tenant.
 
+A cobrança funciona sem Stripe: `migrate` cria o plano gratuito e `seed_demo` dá à
+organização demo a assinatura gratuita. Checkout, troca de plano e cancelamento
+exigem as variáveis `STRIPE_*`; veja o [guia de operação da cobrança](../how-to/operar-cobranca.md).
+
 Consulte a referência interativa em `/api/docs/` quando a aplicação estiver em
 execução.
 
@@ -29,3 +33,5 @@ Com Docker e uma ferramenta compatível com a especificação Dev Containers:
 
 PostgreSQL, Redis e o worker Celery já acompanham o ambiente. Migrações, seed e
 servidor permanecem explícitos; abrir o container não grava dados da aplicação.
+O beat do Celery não sobe com o devcontainer; para a reconciliação da cobrança,
+rode `make beat`.

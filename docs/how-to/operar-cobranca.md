@@ -87,6 +87,20 @@ O webhook é público e não usa token: a autenticidade vem só da assinatura do
 gateway. Ele apenas grava o evento e enfileira o processamento; a aplicação ao
 espelho acontece no worker.
 
+**Em desenvolvimento local**, o Stripe não alcança `localhost`. Com a Stripe CLI,
+encaminhe os eventos para a rota local da variante configurada:
+
+```bash
+stripe listen --forward-to localhost:8000/cobranca/webhooks/stripe/
+```
+
+O comando imprime um segredo de assinatura (`whsec_...`). Copie-o para
+`STRIPE_WEBHOOK_SECRET` e reinicie o servidor para que o valor seja carregado. Em
+ambientes conteinerizados, a API fica atrás do nginx, que atende em
+`http://localhost:8000` (ver [proxy reverso com nginx](proxy-nginx.md)). Com o
+worker e o beat rodando (`make worker` e `make beat`), os eventos são aplicados e a
+reconciliação executa.
+
 ## Subir os processos
 
 A cobrança depende de três tarefas Celery:

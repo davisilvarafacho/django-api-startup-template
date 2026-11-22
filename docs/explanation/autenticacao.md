@@ -527,8 +527,8 @@ sinal que chega a quem teve a conta invadida e não fez a troca.
 
 A desativação é reversível, mas encerra imediatamente a confiança existente:
 marca a conta inativa, revoga sessões, tokens, API keys pessoais e dispositivos
-confiáveis, e suspende os vínculos. O vínculo não é removido e continua
-consumindo seat. A operação bloqueia a conta, as organizações e seus vínculos
+confiáveis, e suspende os vínculos. O vínculo não é removido, mas deixa de ocupar
+vaga no limite de membros da organização enquanto a conta estiver desativada. A operação bloqueia a conta, as organizações e seus vínculos
 de proprietário em ordem estável; assim, duas saídas concorrentes não conseguem
 deixar uma organização ativa sem proprietário.
 

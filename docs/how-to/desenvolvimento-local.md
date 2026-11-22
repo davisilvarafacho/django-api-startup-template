@@ -43,6 +43,13 @@ O seed é idempotente e não substitui dados existentes. Em produção, ele é
 bloqueado por padrão; `--allow-production` exige confirmação deliberada do
 operador e não deve aparecer em scripts de deploy.
 
+A cobrança não exige chave do Stripe para esse fluxo: o `migrate` cria o plano
+gratuito e o `seed_demo` cria a assinatura gratuita da organização demo. Sem
+`STRIPE_SECRET_KEY`, checkout, troca de plano e cancelamento ficam indisponíveis
+fora de produção. Para testar eventos do gateway e a reconciliação, rode também o
+worker (`make worker`) e o beat (`make beat`). Veja o
+[guia de operação da cobrança](operar-cobranca.md).
+
 Antes de enviar uma alteração, rode:
 
 ```bash

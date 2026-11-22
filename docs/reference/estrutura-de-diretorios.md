@@ -78,11 +78,13 @@ Código de produção nunca importa `tests`. Fixture específica de um app fica 
   base), `core` (registries, cache, erros, health, management commands),
   `autenticacao`, `mcp_server` e `metadata`. É o que o template entrega pronto.
 - **Identidade, tenancy e domínio** (`apps/organizacoes/`, `apps/usuarios/`,
-  `apps/workspaces/`, `apps/logs/`) — os apps que herdam de `BaseTenantless` por
-  serem lidos antes de existir contexto RLS, o app de subtenancy de Workspaces
-  e o app de trilha de auditoria. Workspaces usa models tenantless para
-  representar a própria fronteira e é aplicado às entidades de negócio por
-  `Base`.
+  `apps/workspaces/`, `apps/logs/`, `apps/billing/`) — os apps que herdam de
+  `BaseTenantless` por serem lidos antes de existir contexto RLS, o app de
+  subtenancy de Workspaces e o app de trilha de auditoria. Workspaces usa models
+  tenantless para representar a própria fronteira e é aplicado às entidades de
+  negócio por `Base`. `apps/billing/` é a cobrança (planos, assinatura e eventos
+  do gateway): `Plan` e `BillingEvent` herdam de `BaseTenantless`, e `Subscription`,
+  de `Base`.
 
 Apps de negócio novos nascem no primeiro nível de `apps/`, ao lado de
 `organizacoes/` e `usuarios/`.
@@ -101,8 +103,10 @@ BUSINESS_APPS = [
     "apps.api.core",
     "apps.api.mcp_server",
     "apps.api.metadata",
+    "apps.billing",
     "apps.logs",
     "apps.organizacoes",
+    # "apps.parametros",  # TODO: reativar depois de corrigir apps/parametros/models.py (Parametro.value)
     "apps.usuarios",
     "apps.workspaces",
 ]

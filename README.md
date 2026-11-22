@@ -154,6 +154,12 @@ para a aplicação. `make migrate` roda com a credencial admin (`DATABASE_ADMIN_
 porque o login web não tem permissão de DDL. Em um volume novo o container do
 PostgreSQL já executa o script na inicialização.
 
+O `make migrate` cria o plano gratuito da cobrança, e o `seed_demo` cria a assinatura
+gratuita da organização demo; nada disso exige chave do Stripe. Sem
+`STRIPE_SECRET_KEY` (fora de produção), o checkout, a troca de plano e o cancelamento
+ficam indisponíveis localmente. Para usá-los, preencha as variáveis `STRIPE_*` do
+`.env.example`. Detalhes em [o guia de operação da cobrança](docs/how-to/operar-cobranca.md).
+
 Subir a stack completa (web + worker + beat) em containers:
 
 ```bash
@@ -164,6 +170,10 @@ docker compose up --build
 
 - Worker: `celery -A api worker -l info`
 - Beat (agendador via banco): `celery -A api beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler`
+- A cobrança precisa do worker para aplicar os eventos do gateway
+  (`billing.process_event`) e cancelar organizações encerradas
+  (`billing.cancel_closed_organization`), e do beat para a reconciliação
+  (`billing.reconcile`, a cada 15 minutos).
 - Em testes, as tasks rodam de forma síncrona (`CELERY_TASK_ALWAYS_EAGER`).
 
 ### Cache
