@@ -8,19 +8,19 @@ from django_checkouts.types.subscriptions import Subscription as RemoteSubscript
 from apps.billing.models import BillingEvent
 
 
-def _assinatura_do_recurso(recurso) -> str | None:
+def _subscription_external_id(resource) -> str | None:
     """Extrai o id da assinatura no gateway a partir do recurso do evento.
 
     Args:
-        recurso: Recurso normalizado do evento (checkout, assinatura, fatura ou outro).
+        resource: Recurso normalizado do evento (checkout, assinatura, fatura ou outro).
 
     Returns:
         str | None: O id da assinatura, ou `None` se o recurso não pertence a uma assinatura.
     """
-    if isinstance(recurso, RemoteSubscription):
-        return recurso.external_id or None
-    if isinstance(recurso, (Checkout, Invoice)):
-        return recurso.subscription_id or None
+    if isinstance(resource, RemoteSubscription):
+        return resource.external_id or None
+    if isinstance(resource, (Checkout, Invoice)):
+        return resource.subscription_id or None
     return None
 
 
@@ -39,15 +39,15 @@ def record_event(event: WebhookEvent, *, variant: str) -> tuple[BillingEvent, bo
     Returns:
         tuple[BillingEvent, bool]: O registro e se ele foi criado nesta chamada.
     """
-    novo = BillingEvent(
+    new_row = BillingEvent(
         gateway_variant=variant,
         event_id=event.event_id,
         event_type=event.event_type,
         resource_kind=event.resource_kind or "",
         resource_id=event.resource_id or "",
-        subscription_external_id=_assinatura_do_recurso(event.resource),
+        subscription_external_id=_subscription_external_id(event.resource),
         occurred_at=event.occurred_at,
     )
-    BillingEvent.all_objects.bulk_create([novo], ignore_conflicts=True)
-    registro = BillingEvent.all_objects.get(gateway_variant=variant, event_id=event.event_id)
-    return registro, registro.created_at == novo.created_at
+    BillingEvent.all_objects.bulk_create([new_row], ignore_conflicts=True)
+    record = BillingEvent.all_objects.get(gateway_variant=variant, event_id=event.event_id)
+    return record, record.created_at == new_row.created_at

@@ -22,7 +22,7 @@ WEBHOOK_URL = "/cobranca/webhooks/stripe/"
 PAYLOAD = b'{"id": "evt_1"}'
 
 
-def _evento(*, event_id="evt_1", event_type=EventType.CHECKOUT_PAID, resource=None, resource_kind=ResourceKind.CHECKOUT, resource_id="cs_1"):
+def _event(*, event_id="evt_1", event_type=EventType.CHECKOUT_PAID, resource=None, resource_kind=ResourceKind.CHECKOUT, resource_id="cs_1"):
     """Evento já verificado, como o gateway o entregaria à biblioteca."""
     return WebhookEvent(
         gateway=Gateway.STRIPE,
@@ -39,83 +39,83 @@ def _evento(*, event_id="evt_1", event_type=EventType.CHECKOUT_PAID, resource=No
     )
 
 
-def _verificador(monkeypatch, resultado):
-    """Troca o cliente da view por um gateway que devolve `resultado` (ou levanta, se for exceção)."""
+def _verifier(monkeypatch, result):
+    """Troca o cliente da view por um gateway que devolve `result` (ou levanta, se for exceção)."""
 
-    def responder(comando):
-        if isinstance(resultado, Exception):
-            raise resultado
-        return resultado
+    def respond(command):
+        if isinstance(result, Exception):
+            raise result
+        return result
 
-    gateway = fake_gateway({VerifyWebhook: responder})
+    gateway = fake_gateway({VerifyWebhook: respond})
     monkeypatch.setattr("apps.billing.views.get_client", lambda: CheckoutClient(gateway))
     return gateway
 
 
-class _EnfileiradorFalso:
+class _FakeEnqueuer:
     """Registra os ids enfileirados em vez de executar a tarefa."""
 
     def __init__(self):
-        self.enfileirados = []
+        self.enqueued = []
 
     def delay(self, event_pk):
-        self.enfileirados.append(event_pk)
+        self.enqueued.append(event_pk)
 
 
 @pytest.fixture
-def enfileirador(monkeypatch):
-    falso = _EnfileiradorFalso()
-    monkeypatch.setattr("apps.billing.views.process_billing_event", falso)
-    return falso
+def enqueuer(monkeypatch):
+    fake = _FakeEnqueuer()
+    monkeypatch.setattr("apps.billing.views.process_billing_event", fake)
+    return fake
 
 
-def test_webhook_invalid_signature_returns_400(client, monkeypatch, enfileirador):
-    _verificador(monkeypatch, WebhookVerificationError("assinatura inválida"))
+def test_webhook_invalid_signature_returns_400(client, monkeypatch, enqueuer):
+    _verifier(monkeypatch, WebhookVerificationError("assinatura inválida"))
 
     response = client.post(WEBHOOK_URL, data=PAYLOAD, content_type="application/json")
 
     assert response.status_code == 400
     assert response.json()["errors"][0]["code"] == "billing.webhook_invalid"
     assert BillingEvent.all_objects.count() == 0
-    assert enfileirador.enfileirados == []
+    assert enqueuer.enqueued == []
 
 
-def test_webhook_unknown_variant_returns_404(client, monkeypatch, enfileirador):
-    gateway = _verificador(monkeypatch, _evento())
+def test_webhook_unknown_variant_returns_404(client, monkeypatch, enqueuer):
+    gateway = _verifier(monkeypatch, _event())
 
     response = client.post("/cobranca/webhooks/outra/", data=PAYLOAD, content_type="application/json")
 
     assert response.status_code == 404
     assert gateway.commands == []
     assert BillingEvent.all_objects.count() == 0
-    assert enfileirador.enfileirados == []
+    assert enqueuer.enqueued == []
 
 
-def test_webhook_records_and_enqueues_once(client, monkeypatch, enfileirador, django_capture_on_commit_callbacks):
-    _verificador(monkeypatch, _evento(resource=replace(fake_checkout(), subscription_id="sub_1")))
+def test_webhook_records_and_enqueues_once(client, monkeypatch, enqueuer, django_capture_on_commit_callbacks):
+    _verifier(monkeypatch, _event(resource=replace(fake_checkout(), subscription_id="sub_1")))
 
-    with django_capture_on_commit_callbacks() as primeiros:
-        primeira = client.post(WEBHOOK_URL, data=PAYLOAD, content_type="application/json")
+    with django_capture_on_commit_callbacks() as first_callbacks:
+        first = client.post(WEBHOOK_URL, data=PAYLOAD, content_type="application/json")
     # O enfileiramento é adiado até o commit: nada foi enviado ainda.
-    assert enfileirador.enfileirados == []
-    for callback in primeiros:
+    assert enqueuer.enqueued == []
+    for callback in first_callbacks:
         callback()
 
-    with django_capture_on_commit_callbacks() as repetidos:
-        segunda = client.post(WEBHOOK_URL, data=PAYLOAD, content_type="application/json")
-    for callback in repetidos:
+    with django_capture_on_commit_callbacks() as second_callbacks:
+        second = client.post(WEBHOOK_URL, data=PAYLOAD, content_type="application/json")
+    for callback in second_callbacks:
         callback()
 
-    assert primeira.status_code == 200
-    assert segunda.status_code == 200
-    registro = BillingEvent.all_objects.get(gateway_variant="stripe", event_id="evt_1")
+    assert first.status_code == 200
+    assert second.status_code == 200
+    record = BillingEvent.all_objects.get(gateway_variant="stripe", event_id="evt_1")
     assert BillingEvent.all_objects.filter(event_id="evt_1").count() == 1
-    assert enfileirador.enfileirados == [registro.pk]
-    assert registro.subscription_external_id == "sub_1"
-    assert registro.resource_kind == ResourceKind.CHECKOUT
+    assert enqueuer.enqueued == [record.pk]
+    assert record.subscription_external_id == "sub_1"
+    assert record.resource_kind == ResourceKind.CHECKOUT
 
 
-def test_record_event_extrai_id_da_assinatura_do_recurso():
+def test_record_event_extracts_subscription_id_from_resource():
     invoice = Invoice(
         external_id="in_1",
         gateway=Gateway.STRIPE,
@@ -137,14 +137,14 @@ def test_record_event_extrai_id_da_assinatura_do_recurso():
         reference_id=None,
         raw={},
     )
-    casos = [
-        (_evento(resource=replace(fake_checkout(), subscription_id="sub_checkout")), "sub_checkout"),
-        (_evento(resource=remote_subscription(external_id="sub_direta"), resource_kind=ResourceKind.SUBSCRIPTION), "sub_direta"),
-        (_evento(resource=invoice, resource_kind=ResourceKind.INVOICE, event_type=EventType.INVOICE_PAID), "sub_fatura"),
-        (_evento(resource=None, resource_kind=None, resource_id=None), None),
+    cases = [
+        (_event(resource=replace(fake_checkout(), subscription_id="sub_checkout")), "sub_checkout"),
+        (_event(resource=remote_subscription(external_id="sub_direta"), resource_kind=ResourceKind.SUBSCRIPTION), "sub_direta"),
+        (_event(resource=invoice, resource_kind=ResourceKind.INVOICE, event_type=EventType.INVOICE_PAID), "sub_fatura"),
+        (_event(resource=None, resource_kind=None, resource_id=None), None),
     ]
 
-    for indice, (evento, esperado) in enumerate(casos):
-        registro, criado = record_event(replace(evento, event_id=f"evt_{indice}"), variant="stripe")
-        assert criado is True
-        assert registro.subscription_external_id == esperado
+    for index, (event, expected) in enumerate(cases):
+        record, created = record_event(replace(event, event_id=f"evt_{index}"), variant="stripe")
+        assert created is True
+        assert record.subscription_external_id == expected

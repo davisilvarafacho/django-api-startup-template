@@ -152,16 +152,16 @@ class WebhookView(APIView):
     authentication_classes = []
     permission_classes = []
 
-    def post(self, request, variante: str):
-        if variante != settings.BILLING_GATEWAY_VARIANT:
+    def post(self, request, variant: str):
+        if variant != settings.BILLING_GATEWAY_VARIANT:
             raise APIError(CoreErrorCode.NOT_FOUND, status_code=404)
         try:
-            evento = get_client().webhooks.verify(request.body, request.headers)
-        except WebhookVerificationError as erro:
-            raise APIError(BillingErrorCode.WEBHOOK_INVALID, status_code=400) from erro
-        registro, criado = record_event(evento, variant=variante)
-        if criado:
-            transaction.on_commit(lambda: process_billing_event.delay(registro.pk))
+            event = get_client().webhooks.verify(request.body, request.headers)
+        except WebhookVerificationError as error:
+            raise APIError(BillingErrorCode.WEBHOOK_INVALID, status_code=400) from error
+        record, created = record_event(event, variant=variant)
+        if created:
+            transaction.on_commit(lambda: process_billing_event.delay(record.pk))
         return Response(status=status.HTTP_200_OK)
 
 

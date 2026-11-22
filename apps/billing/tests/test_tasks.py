@@ -13,22 +13,22 @@ from django_checkouts.types.subscriptions import SubscriptionItem
 from apps.billing.context import organization_scope
 from apps.billing.models import BillingEvent, Plan, Subscription, SubscriptionStatus
 from apps.billing.subscriptions import Subscriptions
-from apps.billing.tasks import process_billing_event
+from apps.billing.tasks import MISSING_ORGANIZATION_MESSAGE, MISSING_REFERENCE_MESSAGE, process_billing_event
 from apps.organizacoes.models import Organizacao
-from tests.support.billing import fake_gateway, remote_subscription
+from tests.support.billing import patch_billing_gateway, remote_subscription
 
 pytestmark = pytest.mark.django_db
 
 
-def _organizacao(slug="acme"):
+def _organization(slug="acme"):
     return Organizacao.objects.create(nome=slug, slug=slug)
 
 
-def _plano_pro():
+def _pro_plan():
     return Plan.objects.create(name="Pro", slug="pro", rank=2, member_limit=10, gateway_price_id="price_pro")
 
 
-def _evento_registrado(*, event_id="evt_1", subscription_external_id="sub_1", resource_kind="subscription"):
+def _registered_event(*, event_id="evt_1", subscription_external_id="sub_1", resource_kind="subscription"):
     return BillingEvent.all_objects.create(
         gateway_variant="stripe",
         event_id=event_id,
@@ -40,160 +40,202 @@ def _evento_registrado(*, event_id="evt_1", subscription_external_id="sub_1", re
     )
 
 
-def _remota(organizacao, external_id="sub_1", price_id="price_pro"):
+def _remote(organization, external_id="sub_1", price_id="price_pro"):
     """Assinatura remota da organização, no preço informado."""
     item = SubscriptionItem(external_id="si_1", price_id=price_id, quantity=1, unit_amount=None, currency=None, billing_cycle=None, raw={})
-    return remote_subscription(external_id=external_id, reference_id=str(organizacao.pk), items=(item,))
+    return remote_subscription(external_id=external_id, reference_id=str(organization.pk), items=(item,))
 
 
-def _gateway(monkeypatch, results):
-    """Gateway fake, com as respostas por comando, usado tanto pela tarefa quanto pelo serviço de assinatura."""
-    gateway = fake_gateway(results)
-    cliente = CheckoutClient(gateway)
-    monkeypatch.setattr("apps.billing.tasks.get_client", lambda: cliente)
-    monkeypatch.setattr("apps.billing.subscriptions.get_client", lambda: cliente)
+def _patch_gateway(monkeypatch, results):
+    """Gateway fake usado pela tarefa e pelo serviço de assinatura: o mesmo cliente nos dois."""
+    gateway = patch_billing_gateway(monkeypatch, results)
+    monkeypatch.setattr("apps.billing.tasks.get_client", lambda: CheckoutClient(gateway))
     return gateway
 
 
-def _falha(erro):
-    """Resposta do gateway fake que levanta `erro` no lugar de devolver um resultado."""
+def _raising(error):
+    """Resposta do gateway fake que levanta `error` no lugar de devolver um resultado."""
 
-    def responder(comando):
-        raise erro
+    def respond(command):
+        raise error
 
-    return responder
-
-
-def _espelho(organizacao):
-    with organization_scope(organizacao.pk):
-        return Subscription.all_objects.get(organizacao_id=organizacao.pk)
+    return respond
 
 
-def _registro(evento):
-    return BillingEvent.all_objects.get(pk=evento.pk)
+def _mirror(organization):
+    with organization_scope(organization.pk):
+        return Subscription.all_objects.get(organizacao_id=organization.pk)
+
+
+def _record(event):
+    return BillingEvent.all_objects.get(pk=event.pk)
 
 
 def test_process_event_without_subscription_marks_processed(monkeypatch):
-    evento = _evento_registrado(subscription_external_id=None, resource_kind="checkout")
-    gateway = _gateway(monkeypatch, {})
+    event = _registered_event(subscription_external_id=None, resource_kind="checkout")
+    gateway = _patch_gateway(monkeypatch, {})
 
-    process_billing_event(evento.pk)
+    process_billing_event(event.pk)
 
-    assert _registro(evento).processed_at is not None
+    assert _record(event).processed_at is not None
     assert gateway.commands == []
 
 
 def test_process_already_processed_event_does_nothing(monkeypatch):
-    evento = _evento_registrado()
-    BillingEvent.all_objects.filter(pk=evento.pk).update(processed_at=timezone.now())
-    gateway = _gateway(monkeypatch, {})
+    event = _registered_event()
+    BillingEvent.all_objects.filter(pk=event.pk).update(processed_at=timezone.now())
+    gateway = _patch_gateway(monkeypatch, {})
 
-    process_billing_event(evento.pk)
+    process_billing_event(event.pk)
 
     assert gateway.commands == []
 
 
 def test_process_checkout_paid_links_and_syncs(monkeypatch):
-    organizacao = _organizacao()
-    Subscriptions.ensure_free(organizacao.pk)
-    plano = _plano_pro()
-    _gateway(monkeypatch, {RetrieveSubscription: lambda comando: _remota(organizacao)})
-    evento = _evento_registrado(resource_kind="checkout")
+    organization = _organization()
+    Subscriptions.ensure_free(organization.pk)
+    plan = _pro_plan()
+    _patch_gateway(monkeypatch, {RetrieveSubscription: lambda command: _remote(organization)})
+    event = _registered_event(resource_kind="checkout")
 
-    process_billing_event(evento.pk)
+    process_billing_event(event.pk)
 
-    espelho = _espelho(organizacao)
-    assert espelho.external_id == "sub_1"
-    assert espelho.gateway_variant == "stripe"
-    assert espelho.plan == plano
-    assert espelho.status == SubscriptionStatus.ACTIVE
-    assert _registro(evento).processed_at is not None
-    assert _registro(evento).attempts == 0
+    mirror = _mirror(organization)
+    assert mirror.external_id == "sub_1"
+    assert mirror.gateway_variant == "stripe"
+    assert mirror.plan == plan
+    assert mirror.status == SubscriptionStatus.ACTIVE
+    assert _record(event).processed_at is not None
+    assert _record(event).attempts == 0
 
 
 def test_process_subscription_event_before_checkout_links_and_syncs(monkeypatch):
     # O evento de assinatura chega antes do checkout.paid: a organização vem do `reference_id`.
-    organizacao = _organizacao()
-    Subscriptions.ensure_free(organizacao.pk)
-    plano = _plano_pro()
-    gateway = _gateway(monkeypatch, {RetrieveSubscription: lambda comando: _remota(organizacao)})
-    evento = _evento_registrado(resource_kind="subscription")
+    organization = _organization()
+    Subscriptions.ensure_free(organization.pk)
+    plan = _pro_plan()
+    gateway = _patch_gateway(monkeypatch, {RetrieveSubscription: lambda command: _remote(organization)})
+    event = _registered_event(resource_kind="subscription")
 
-    process_billing_event(evento.pk)
+    process_billing_event(event.pk)
 
-    espelho = _espelho(organizacao)
-    assert espelho.external_id == "sub_1"
-    assert espelho.plan == plano
-    assert _registro(evento).processed_at is not None
-    assert all(comando.external_id == "sub_1" for comando in gateway.commands)
+    mirror = _mirror(organization)
+    assert mirror.external_id == "sub_1"
+    assert mirror.plan == plan
+    assert _record(event).processed_at is not None
+    assert all(command.external_id == "sub_1" for command in gateway.commands)
+
+
+def test_process_reference_to_organization_without_subscription_links_and_syncs(monkeypatch):
+    # A organização existe, mas ainda não tem linha de assinatura local: a tarefa cria a gratuita antes de vincular.
+    organization = _organization()
+    plan = _pro_plan()
+    _patch_gateway(monkeypatch, {RetrieveSubscription: lambda command: _remote(organization)})
+    event = _registered_event()
+
+    process_billing_event(event.pk)
+
+    mirror = _mirror(organization)
+    assert mirror.external_id == "sub_1"
+    assert mirror.plan == plan
+    assert _record(event).processed_at is not None
+    assert _record(event).attempts == 0
 
 
 def test_process_missing_reference_records_error(monkeypatch):
-    organizacao = _organizacao()
-    Subscriptions.ensure_free(organizacao.pk)
-    remota = remote_subscription(external_id="sub_1", reference_id=None)
-    _gateway(monkeypatch, {RetrieveSubscription: remota})
-    evento = _evento_registrado()
+    organization = _organization()
+    Subscriptions.ensure_free(organization.pk)
+    remote = remote_subscription(external_id="sub_1", reference_id=None)
+    _patch_gateway(monkeypatch, {RetrieveSubscription: remote})
+    event = _registered_event()
 
-    process_billing_event(evento.pk)
+    process_billing_event(event.pk)
 
-    registro = _registro(evento)
-    assert registro.last_error == "missing reference_id"
-    assert registro.attempts == 1
-    assert registro.processed_at is None
-    assert _espelho(organizacao).external_id is None
+    record = _record(event)
+    assert record.last_error == MISSING_REFERENCE_MESSAGE == "assinatura do gateway sem referência à organização"
+    assert record.attempts == 1
+    assert record.processed_at is None
+    assert _mirror(organization).external_id is None
+
+
+@pytest.mark.parametrize("reference_id", ["²", "abc"])
+def test_process_malformed_reference_records_error(monkeypatch, reference_id):
+    # '²' passa em `isdigit` e quebra `int()`: tem de virar erro registrado, não exceção.
+    _patch_gateway(monkeypatch, {RetrieveSubscription: remote_subscription(external_id="sub_1", reference_id=reference_id)})
+    event = _registered_event()
+
+    process_billing_event(event.pk)
+
+    record = _record(event)
+    assert record.last_error == MISSING_REFERENCE_MESSAGE
+    assert record.attempts == 1
+    assert record.processed_at is None
+
+
+@pytest.mark.parametrize("reference_id", ["999999", "99999999999999999999"])
+def test_process_reference_to_nonexistent_organization_records_error(monkeypatch, reference_id):
+    _patch_gateway(monkeypatch, {RetrieveSubscription: remote_subscription(external_id="sub_1", reference_id=reference_id)})
+    event = _registered_event()
+
+    # Sem nova tentativa: a chamada volta normalmente, sem `Retry` nem exceção.
+    process_billing_event(event.pk)
+
+    record = _record(event)
+    assert record.last_error == MISSING_ORGANIZATION_MESSAGE
+    assert record.attempts == 1
+    assert record.processed_at is None
 
 
 def test_process_temporary_error_retries(monkeypatch):
-    _gateway(monkeypatch, {RetrieveSubscription: _falha(GatewayTemporaryError("indisponível", gateway=Gateway.STRIPE, variant="stripe"))})
-    evento = _evento_registrado()
+    _patch_gateway(monkeypatch, {RetrieveSubscription: _raising(GatewayTemporaryError("indisponível", gateway=Gateway.STRIPE, variant="stripe"))})
+    event = _registered_event()
 
     # Chamada direta da tarefa: a retentativa levanta `Retry` em vez de reenfileirar.
     with pytest.raises(Retry):
-        process_billing_event(evento.pk)
+        process_billing_event(event.pk)
 
-    registro = _registro(evento)
-    assert registro.attempts == 1
-    assert "indisponível" in registro.last_error
-    assert registro.processed_at is None
+    record = _record(event)
+    assert record.attempts == 1
+    assert "indisponível" in record.last_error
+    assert record.processed_at is None
 
 
 def test_process_permanent_gateway_error_records_without_retry(monkeypatch):
-    _gateway(monkeypatch, {RetrieveSubscription: _falha(GatewayPermanentError("recusado", gateway=Gateway.STRIPE, variant="stripe"))})
-    evento = _evento_registrado()
+    _patch_gateway(monkeypatch, {RetrieveSubscription: _raising(GatewayPermanentError("recusado", gateway=Gateway.STRIPE, variant="stripe"))})
+    event = _registered_event()
 
-    process_billing_event(evento.pk)
+    process_billing_event(event.pk)
 
-    registro = _registro(evento)
-    assert registro.attempts == 1
-    assert "recusado" in registro.last_error
-    assert registro.processed_at is None
+    record = _record(event)
+    assert record.attempts == 1
+    assert "recusado" in record.last_error
+    assert record.processed_at is None
 
 
 def test_process_reference_mismatch_records_error(monkeypatch):
     # O espelho local já aponta para `sub_antiga`, que pertence a outra organização.
-    organizacao = _organizacao()
-    outra = _organizacao("outra")
-    Subscriptions.ensure_free(organizacao.pk)
-    with organization_scope(organizacao.pk):
-        Subscription.all_objects.filter(organizacao_id=organizacao.pk).update(external_id="sub_antiga", gateway_variant="stripe")
-    antes = _espelho(organizacao)
+    organization = _organization()
+    other = _organization("outra")
+    Subscriptions.ensure_free(organization.pk)
+    with organization_scope(organization.pk):
+        Subscription.all_objects.filter(organizacao_id=organization.pk).update(external_id="sub_antiga", gateway_variant="stripe")
+    before = _mirror(organization)
 
-    def retrieve(comando):
-        if comando.external_id == "sub_nova":
-            return _remota(organizacao, external_id="sub_nova")
-        return _remota(outra, external_id="sub_antiga")
+    def retrieve(command):
+        if command.external_id == "sub_nova":
+            return _remote(organization, external_id="sub_nova")
+        return _remote(other, external_id="sub_antiga")
 
-    _gateway(monkeypatch, {RetrieveSubscription: retrieve})
-    evento = _evento_registrado(subscription_external_id="sub_nova")
+    _patch_gateway(monkeypatch, {RetrieveSubscription: retrieve})
+    event = _registered_event(subscription_external_id="sub_nova")
 
-    process_billing_event(evento.pk)
+    process_billing_event(event.pk)
 
-    registro = _registro(evento)
-    assert registro.attempts == 1
-    assert "não pertence" in registro.last_error
-    assert registro.processed_at is None
-    depois = _espelho(organizacao)
-    assert depois.external_id == "sub_antiga"
-    assert depois.status == antes.status
-    assert depois.plan_id == antes.plan_id
+    record = _record(event)
+    assert record.attempts == 1
+    assert "não pertence" in record.last_error
+    assert record.processed_at is None
+    after = _mirror(organization)
+    assert after.external_id == "sub_antiga"
+    assert after.status == before.status
+    assert after.plan_id == before.plan_id
