@@ -17,44 +17,21 @@ from django_checkouts.types import CatalogPrice
 from django_checkouts.types.subscriptions import SubscriptionItem
 
 from apps.api.core.errors import APIError
-from apps.billing.context import organization_scope
 from apps.billing.errors import BillingErrorCode
-from apps.billing.models import Plan, Subscription, SubscriptionStatus
+from apps.billing.models import Plan, SubscriptionStatus
 from apps.billing.subscriptions import Subscriptions
-from apps.organizacoes.models import Organizacao, Papel, Vinculo
-from tests.support.billing import fake_checkout, patch_billing_gateway, remote_subscription
-from tests.support.usuarios import criar_usuario
+from tests.support.billing import (
+    create_linked_subscription,
+    create_memberships,
+    create_organization,
+    create_plan,
+    fake_checkout,
+    patch_billing_gateway,
+    read_subscription,
+    remote_subscription,
+)
 
 pytestmark = pytest.mark.django_db
-
-
-def _organization(slug="acme"):
-    return Organizacao.objects.create(nome=slug, slug=slug)
-
-
-def _plan(slug, *, price=None, rank=1, limit=5, is_active=True):
-    return Plan.objects.create(name=slug, slug=slug, rank=rank, member_limit=limit, gateway_price_id=price, is_active=is_active)
-
-
-def _linked_subscription(organization, plan):
-    """Assinatura paga local, ligada à assinatura remota `sub_1`."""
-    with organization_scope(organization.pk):
-        return Subscription.all_objects.create(
-            organizacao=organization,
-            plan=plan,
-            status=SubscriptionStatus.ACTIVE,
-            external_id="sub_1",
-            gateway_variant="stripe",
-        )
-
-
-def _state(organization):
-    with organization_scope(organization.pk):
-        return Subscription.all_objects.select_related("plan", "pending_plan").get(organizacao_id=organization.pk)
-
-
-def _memberships(organization, quantity):
-    return [Vinculo.objects.create(organizacao=organization, usuario=criar_usuario(), papel=Papel.MEMBRO) for _ in range(quantity)]
 
 
 def _remote_with_price(organization, price_id, **overrides):
@@ -71,9 +48,9 @@ def _remote_with_price(organization, price_id, **overrides):
 
 
 def test_subscribe_requires_free(monkeypatch):
-    organization = _organization()
-    _linked_subscription(organization, _plan("basic", price="price_basico"))
-    pro = _plan("pro", price="price_pro", rank=2)
+    organization = create_organization()
+    create_linked_subscription(organization, create_plan("basic", price="price_basic"))
+    pro = create_plan("pro", price="price_pro", rank=2)
     patch_billing_gateway(monkeypatch, {})
 
     with pytest.raises(APIError) as excinfo:
@@ -84,9 +61,9 @@ def test_subscribe_requires_free(monkeypatch):
 
 
 def test_subscribe_rejects_free_or_inactive_plan(monkeypatch):
-    organization = _organization()
+    organization = create_organization()
     Subscriptions.ensure_free(organization.pk)
-    inactive = _plan("antigo", price="price_antigo", is_active=False)
+    inactive = create_plan("antigo", price="price_antigo", is_active=False)
     patch_billing_gateway(monkeypatch, {})
 
     for plan in (Plan.get_free(), inactive):
@@ -97,9 +74,9 @@ def test_subscribe_rejects_free_or_inactive_plan(monkeypatch):
 
 
 def test_subscribe_sends_reference_id_and_catalog_price(monkeypatch, settings):
-    organization = _organization()
+    organization = create_organization()
     Subscriptions.ensure_free(organization.pk)
-    pro = _plan("pro", price="price_pro", rank=2)
+    pro = create_plan("pro", price="price_pro", rank=2)
     gateway = patch_billing_gateway(monkeypatch, {CreateCheckout: fake_checkout()})
 
     url = Subscriptions.subscribe(
@@ -123,10 +100,10 @@ def test_subscribe_sends_reference_id_and_catalog_price(monkeypatch, settings):
 
 
 def test_upgrade_is_immediate_with_invoice_proration(monkeypatch):
-    organization = _organization()
-    basic = _plan("basic", price="price_basico", rank=1)
-    pro = _plan("pro", price="price_pro", rank=2)
-    _linked_subscription(organization, basic)
+    organization = create_organization()
+    basic = create_plan("basic", price="price_basic", rank=1)
+    pro = create_plan("pro", price="price_pro", rank=2)
+    create_linked_subscription(organization, basic)
     gateway = patch_billing_gateway(
         monkeypatch,
         {
@@ -144,15 +121,15 @@ def test_upgrade_is_immediate_with_invoice_proration(monkeypatch):
     assert change.request.changes[0].item_id == "si_2"
     assert change.request.changes[0].price == CatalogPrice(external_id="price_pro")
     assert subscription.plan_id == pro.pk
-    assert _state(organization).pending_plan is None
+    assert read_subscription(organization).pending_plan is None
 
 
 def test_downgrade_is_next_cycle_and_sets_pending_plan(monkeypatch):
-    organization = _organization()
-    basic = _plan("basic", price="price_basico", rank=1, limit=3)
-    pro = _plan("pro", price="price_pro", rank=2, limit=10)
-    _linked_subscription(organization, pro)
-    _memberships(organization, 2)
+    organization = create_organization()
+    basic = create_plan("basic", price="price_basic", rank=1, limit=3)
+    pro = create_plan("pro", price="price_pro", rank=2, limit=10)
+    create_linked_subscription(organization, pro)
+    create_memberships(organization, 2)
     gateway = patch_billing_gateway(
         monkeypatch,
         {
@@ -166,17 +143,17 @@ def test_downgrade_is_next_cycle_and_sets_pending_plan(monkeypatch):
     change = next(command for command in gateway.commands if isinstance(command, ChangeRemoteSubscription))
     assert change.request.timing == ChangeTiming.NEXT_CYCLE
     assert change.request.proration == ProrationBehavior.NONE
-    state = _state(organization)
+    state = read_subscription(organization)
     assert state.plan_id == pro.pk
     assert state.pending_plan_id == basic.pk
 
 
 def test_downgrade_blocked_above_target_limit(monkeypatch):
-    organization = _organization()
-    basic = _plan("basic", price="price_basico", rank=1, limit=3)
-    pro = _plan("pro", price="price_pro", rank=2, limit=10)
-    _linked_subscription(organization, pro)
-    _memberships(organization, 4)
+    organization = create_organization()
+    basic = create_plan("basic", price="price_basic", rank=1, limit=3)
+    pro = create_plan("pro", price="price_pro", rank=2, limit=10)
+    create_linked_subscription(organization, pro)
+    create_memberships(organization, 4)
     gateway = patch_billing_gateway(monkeypatch, {RetrieveSubscription: _remote_with_price(organization, "price_pro")})
 
     with pytest.raises(APIError) as excinfo:
@@ -189,10 +166,10 @@ def test_downgrade_blocked_above_target_limit(monkeypatch):
 
 
 def test_same_rank_counts_as_upgrade(monkeypatch):
-    organization = _organization()
-    monthly = _plan("monthly", price="price_mensal", rank=2)
-    annual = _plan("annual", price="price_anual", rank=2)
-    _linked_subscription(organization, monthly)
+    organization = create_organization()
+    monthly = create_plan("monthly", price="price_mensal", rank=2)
+    annual = create_plan("annual", price="price_anual", rank=2)
+    create_linked_subscription(organization, monthly)
     gateway = patch_billing_gateway(
         monkeypatch,
         {
@@ -209,9 +186,9 @@ def test_same_rank_counts_as_upgrade(monkeypatch):
 
 
 def test_change_to_free_cancels(monkeypatch):
-    organization = _organization()
-    pro = _plan("pro", price="price_pro", rank=2)
-    _linked_subscription(organization, pro)
+    organization = create_organization()
+    pro = create_plan("pro", price="price_pro", rank=2)
+    create_linked_subscription(organization, pro)
     gateway = patch_billing_gateway(
         monkeypatch,
         {
@@ -228,9 +205,9 @@ def test_change_to_free_cancels(monkeypatch):
 
 
 def test_change_requires_paid_subscription(monkeypatch):
-    organization = _organization()
+    organization = create_organization()
     Subscriptions.ensure_free(organization.pk)
-    pro = _plan("pro", price="price_pro", rank=2)
+    pro = create_plan("pro", price="price_pro", rank=2)
     patch_billing_gateway(monkeypatch, {})
 
     with pytest.raises(APIError) as excinfo:
@@ -241,9 +218,9 @@ def test_change_requires_paid_subscription(monkeypatch):
 
 
 def test_change_to_same_plan_is_rejected(monkeypatch):
-    organization = _organization()
-    pro = _plan("pro", price="price_pro", rank=2)
-    _linked_subscription(organization, pro)
+    organization = create_organization()
+    pro = create_plan("pro", price="price_pro", rank=2)
+    create_linked_subscription(organization, pro)
     patch_billing_gateway(monkeypatch, {})
 
     with pytest.raises(APIError) as excinfo:
@@ -254,11 +231,11 @@ def test_change_to_same_plan_is_rejected(monkeypatch):
 
 
 def test_cancel_blocked_above_free_limit(monkeypatch):
-    organization = _organization()
-    pro = _plan("pro", price="price_pro", rank=2)
-    _linked_subscription(organization, pro)
+    organization = create_organization()
+    pro = create_plan("pro", price="price_pro", rank=2)
+    create_linked_subscription(organization, pro)
     limit = Plan.get_free().member_limit
-    _memberships(organization, limit + 1)
+    create_memberships(organization, limit + 1)
     gateway = patch_billing_gateway(monkeypatch, {RetrieveSubscription: _remote_with_price(organization, "price_pro")})
 
     with pytest.raises(APIError) as excinfo:
@@ -270,9 +247,9 @@ def test_cancel_blocked_above_free_limit(monkeypatch):
 
 
 def test_cancel_at_period_end_then_resume(monkeypatch):
-    organization = _organization()
-    pro = _plan("pro", price="price_pro", rank=2)
-    _linked_subscription(organization, pro)
+    organization = create_organization()
+    pro = create_plan("pro", price="price_pro", rank=2)
+    create_linked_subscription(organization, pro)
     end = timezone.now() + timedelta(days=5)
 
     gateway = patch_billing_gateway(
@@ -288,7 +265,7 @@ def test_cancel_at_period_end_then_resume(monkeypatch):
     assert cancel.timing == CancellationTiming.PERIOD_END
     assert cancel.idempotency_key == "idem-10"
     assert cancelled.cancel_at == end
-    assert _state(organization).is_cancel_scheduled is True
+    assert read_subscription(organization).is_cancel_scheduled is True
 
     gateway = patch_billing_gateway(
         monkeypatch,
@@ -302,15 +279,15 @@ def test_cancel_at_period_end_then_resume(monkeypatch):
     assert isinstance(gateway.commands[0], ResumeSubscription)
     assert gateway.commands[0].idempotency_key == "idem-11"
     assert resumed.cancel_at is None
-    state = _state(organization)
+    state = read_subscription(organization)
     assert state.cancel_at is None
     assert state.status == SubscriptionStatus.ACTIVE
 
 
 def test_second_checkout_refused_once_first_subscription_is_linked(monkeypatch):
-    organization = _organization()
+    organization = create_organization()
     Subscriptions.ensure_free(organization.pk)
-    pro = _plan("pro", price="price_pro", rank=2)
+    pro = create_plan("pro", price="price_pro", rank=2)
     patch_billing_gateway(monkeypatch, {CreateCheckout: fake_checkout()})
     Subscriptions.subscribe(organization.pk, plan=pro, idempotency_key="idem-1", customer_email=None)
     # O webhook do primeiro checkout chegou e ligou o espelho à assinatura remota.
@@ -324,9 +301,9 @@ def test_second_checkout_refused_once_first_subscription_is_linked(monkeypatch):
 
 
 def test_checkout_refused_when_linked_subscription_mirrors_free_plan(monkeypatch):
-    organization = _organization()
-    _linked_subscription(organization, Plan.get_free())
-    pro = _plan("pro", price="price_pro", rank=2)
+    organization = create_organization()
+    create_linked_subscription(organization, Plan.get_free())
+    pro = create_plan("pro", price="price_pro", rank=2)
     patch_billing_gateway(monkeypatch, {})
 
     with pytest.raises(APIError) as excinfo:
@@ -336,11 +313,11 @@ def test_checkout_refused_when_linked_subscription_mirrors_free_plan(monkeypatch
 
 
 def test_cancel_reaches_gateway_when_plan_price_is_unknown(monkeypatch):
-    organization = _organization()
-    _linked_subscription(organization, Plan.get_free())
-    agora = timezone.now()
+    organization = create_organization()
+    create_linked_subscription(organization, Plan.get_free())
+    moment = timezone.now()
     # Preço desconhecido no catálogo: o espelho mantém o gratuito, mas a assinatura continua cobrando.
-    remote = _remote_with_price(organization, "price_desconhecido", cancel_at=agora + timedelta(days=30))
+    remote = _remote_with_price(organization, "price_desconhecido", cancel_at=moment + timedelta(days=30))
     gateway = patch_billing_gateway(
         monkeypatch,
         {
@@ -359,9 +336,9 @@ def test_cancel_reaches_gateway_when_plan_price_is_unknown(monkeypatch):
 
 
 def test_change_to_paid_plan_refused_when_current_plan_is_unknown(monkeypatch):
-    organization = _organization()
-    _linked_subscription(organization, Plan.get_free())
-    pro = _plan("pro", price="price_pro", rank=2)
+    organization = create_organization()
+    create_linked_subscription(organization, Plan.get_free())
+    pro = create_plan("pro", price="price_pro", rank=2)
     gateway = patch_billing_gateway(monkeypatch, {})
 
     with pytest.raises(APIError) as excinfo:

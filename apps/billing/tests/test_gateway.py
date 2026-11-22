@@ -39,12 +39,12 @@ def test_translate_permanent_error_returns_502():
     [RetryDisposition.RETRY, RetryDisposition.RETRY_SAME_KEY, RetryDisposition.RECONCILE_FIRST],
 )
 def test_translate_error_with_retryable_advice_returns_503(disposition):
-    erro = CheckoutError("falha")
-    erro.retry_advice = RetryAdvice(disposition=disposition)
+    error = CheckoutError("falha")
+    error.retry_advice = RetryAdvice(disposition=disposition)
 
     with pytest.raises(APIError) as excinfo:
         with translate_gateway_errors():
-            raise erro
+            raise error
 
     assert excinfo.value.status_code == 503
     assert excinfo.value.code == "billing.gateway_uncertain"

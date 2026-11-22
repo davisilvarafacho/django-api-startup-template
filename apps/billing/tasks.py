@@ -63,11 +63,11 @@ def process_billing_event(self, event_pk: int) -> None:
             return
         # Checagem explícita: a FK da assinatura é deferida ao commit, e `ensure_free` deixaria
         # uma linha órfã dentro da transação até o fim dela.
-        organizacao = Organizacao.all_objects.filter(pk=organization_id).first()
-        if organizacao is None:
+        organization = Organizacao.all_objects.filter(pk=organization_id).first()
+        if organization is None:
             _record_failure(event, MISSING_ORGANIZATION_MESSAGE)
             return
-        if _is_closed(organizacao):
+        if _is_closed(organization):
             _close_remote(organization_id, remote, gateway_variant=event.gateway_variant)
         else:
             Subscriptions.ensure_free(organization_id)
@@ -93,16 +93,16 @@ def process_billing_event(self, event_pk: int) -> None:
     _mark_processed(event)
 
 
-def _is_closed(organizacao: Organizacao) -> bool:
+def _is_closed(organization: Organizacao) -> bool:
     """Organização encerrada: com pedido de encerramento registrado, inativa ou excluída.
 
     Args:
-        organizacao (Organizacao): Organização lida sem filtro de exclusão.
+        organization (Organizacao): Organização lida sem filtro de exclusão.
 
     Returns:
         bool: True se a organização não pode mais receber cobrança.
     """
-    return organizacao.encerramento_solicitado_em is not None or not organizacao.is_active or organizacao.is_deleted
+    return organization.encerramento_solicitado_em is not None or not organization.is_active or organization.is_deleted
 
 
 def _close_remote(organization_id: int, remote, *, gateway_variant: str) -> None:

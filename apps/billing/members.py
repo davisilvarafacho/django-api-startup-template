@@ -24,10 +24,10 @@ class MemberLimits:
     def limit_for(cls, organization_id: int) -> int:
         """Retorna o limite de membros da organização; sem assinatura, o do plano gratuito."""
         with organization_scope(organization_id):
-            assinatura = Subscription.objects.filter(organizacao_id=organization_id).first()
-            if assinatura is None:
+            subscription = Subscription.objects.filter(organizacao_id=organization_id).first()
+            if subscription is None:
                 return Plan.get_free().member_limit
-            return assinatura.member_limit
+            return subscription.member_limit
 
     @classmethod
     def ensure_capacity(
@@ -47,12 +47,12 @@ class MemberLimits:
         Raises:
             APIError: `billing.member_limit_reached` (409) quando não há vaga.
         """
-        limite = cls.limit_for(organization_id)
-        ocupados = cls.active_count(organization_id, using=using)
+        limit = cls.limit_for(organization_id)
+        occupied = cls.active_count(organization_id, using=using)
         if count_pending_invites:
-            ocupados += cls._convites_pendentes(organization_id, using=using).count()
-        if ocupados >= limite:
-            raise APIError(BillingErrorCode.MEMBER_LIMIT_REACHED, status_code=409, context={"limit": limite})
+            occupied += cls._pending_invites(organization_id, using=using).count()
+        if occupied >= limit:
+            raise APIError(BillingErrorCode.MEMBER_LIMIT_REACHED, status_code=409, context={"limit": limit})
 
     @classmethod
     def apply(
@@ -73,43 +73,43 @@ class MemberLimits:
             now (datetime | None): Momento gravado nos vínculos suspensos; padrão, agora.
             using (str): Alias do banco.
         """
-        agora = now or timezone.now()
+        current_time = now or timezone.now()
         with transaction.atomic(using=using):
-            organizacao = Organizacao.all_objects.using(using).select_for_update().get(pk=organization_id)
-            if not organizacao.is_active or organizacao.is_deleted:
+            organization = Organizacao.all_objects.using(using).select_for_update().get(pk=organization_id)
+            if not organization.is_active or organization.is_deleted:
                 return
 
-            limite = cls.limit_for(organization_id)
-            vinculos = list(
+            limit = cls.limit_for(organization_id)
+            memberships = list(
                 Vinculo.all_objects.using(using).select_for_update().filter(organizacao_id=organization_id, is_deleted=False).order_by("pk")
             )
-            ativos = [vinculo for vinculo in vinculos if vinculo.is_active]
+            active = [membership for membership in memberships if membership.is_active]
 
-            excedente = len(ativos) - limite
-            if excedente > 0:
-                candidatos = sorted(
-                    (vinculo for vinculo in ativos if vinculo.papel != Papel.PROPRIETARIO),
-                    key=lambda vinculo: (vinculo.created_at, vinculo.pk),
+            excess = len(active) - limit
+            if excess > 0:
+                candidates = sorted(
+                    (membership for membership in active if membership.papel != Papel.PROPRIETARIO),
+                    key=lambda membership: (membership.created_at, membership.pk),
                     reverse=True,
                 )
-                for vinculo in candidatos[:excedente]:
-                    vinculo.is_active = False
-                    vinculo.plan_limit_suspended_at = agora
-                    vinculo.save(update_fields=["is_active", "plan_limit_suspended_at"])
+                for membership in candidates[:excess]:
+                    membership.is_active = False
+                    membership.plan_limit_suspended_at = current_time
+                    membership.save(update_fields=["is_active", "plan_limit_suspended_at"])
                 return
 
-            vagas = limite - len(ativos)
-            suspensos = sorted(
-                (vinculo for vinculo in vinculos if not vinculo.is_active and vinculo.plan_limit_suspended_at is not None),
-                key=lambda vinculo: (vinculo.plan_limit_suspended_at, vinculo.created_at, vinculo.pk),
+            free_slots = limit - len(active)
+            suspended = sorted(
+                (membership for membership in memberships if not membership.is_active and membership.plan_limit_suspended_at is not None),
+                key=lambda membership: (membership.plan_limit_suspended_at, membership.created_at, membership.pk),
             )
-            for vinculo in suspensos[:vagas]:
-                vinculo.is_active = True
-                vinculo.plan_limit_suspended_at = None
-                vinculo.save(update_fields=["is_active", "plan_limit_suspended_at"])
+            for membership in suspended[:free_slots]:
+                membership.is_active = True
+                membership.plan_limit_suspended_at = None
+                membership.save(update_fields=["is_active", "plan_limit_suspended_at"])
 
     @staticmethod
-    def _convites_pendentes(organization_id: int, *, using: str = "default"):
+    def _pending_invites(organization_id: int, *, using: str = "default"):
         """Convites que ainda podem ser aceitos: espelha `Convite.pendente` numa consulta."""
         return Convite.objects.using(using).filter(
             organizacao_id=organization_id,

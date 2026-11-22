@@ -310,44 +310,44 @@ def test_efetivacao_concorrente_com_rotacao_nao_deixa_api_key_viva_nem_deadlock(
 
 
 def test_closed_organization_cancels_immediately_and_reactivates_nobody(monkeypatch, django_capture_on_commit_callbacks):
-    agora = timezone.now()
-    proprietario, organizacao, _, _, _, _ = _cenario_encerramento("cancel-paid")
-    subscribe_organization(organizacao, member_limit=10)
-    Subscriptions.link_external(organizacao.pk, external_id="sub_1", gateway_variant="stripe")
+    moment = timezone.now()
+    owner, organization, _, _, _, _ = _cenario_encerramento("cancel-paid")
+    subscribe_organization(organization, member_limit=10)
+    Subscriptions.link_external(organization.pk, external_id="sub_1", gateway_variant="stripe")
     suspended = criar_usuario(email="suspended-cancela-pago@example.com")
     Vinculo.objects.create(
-        organizacao=organizacao,
+        organizacao=organization,
         usuario=suspended,
         papel=Papel.MEMBRO,
         is_active=False,
-        plan_limit_suspended_at=agora,
+        plan_limit_suspended_at=moment,
     )
-    canceled_remote = remote_subscription(external_id="sub_1", reference_id=str(organizacao.pk), status=SubscriptionStatus.CANCELED)
+    canceled_remote = remote_subscription(external_id="sub_1", reference_id=str(organization.pk), status=SubscriptionStatus.CANCELED)
     gateway = patch_billing_gateway(monkeypatch, {CancelRemoteSubscription: canceled_remote, RetrieveSubscription: canceled_remote})
 
     with django_capture_on_commit_callbacks(execute=True):
-        Organizacoes.solicitar_encerramento(organizacao, ator=proprietario, agora=agora)
+        Organizacoes.solicitar_encerramento(organization, ator=owner, agora=moment)
 
     cancellations = [command for command in gateway.commands if isinstance(command, CancelRemoteSubscription)]
     assert len(cancellations) == 1
     assert cancellations[0].timing == CancellationTiming.IMMEDIATELY
-    assert cancellations[0].idempotency_key == f"billing:close:{organizacao.pk}"
+    assert cancellations[0].idempotency_key == f"billing:close:{organization.pk}"
 
     # Nova aplicação do limite depois do encerramento: a organização inativa não pode reativar vínculos.
-    MemberLimits.apply(organizacao.pk)
+    MemberLimits.apply(organization.pk)
 
-    assert Vinculo.objects.filter(organizacao=organizacao, is_active=True).exists() is False
-    suspended_membership = Vinculo.all_objects.get(organizacao=organizacao, usuario=suspended)
+    assert Vinculo.objects.filter(organizacao=organization, is_active=True).exists() is False
+    suspended_membership = Vinculo.all_objects.get(organizacao=organization, usuario=suspended)
     assert suspended_membership.is_active is False
-    assert suspended_membership.plan_limit_suspended_at == agora
+    assert suspended_membership.plan_limit_suspended_at == moment
 
 
 def test_closure_cancel_retries_after_temporary_gateway_failure(monkeypatch, django_capture_on_commit_callbacks):
-    agora = timezone.now()
-    proprietario, organizacao, _, _, _, _ = _cenario_encerramento("repete-cancelamento")
-    subscribe_organization(organizacao, member_limit=10)
-    Subscriptions.link_external(organizacao.pk, external_id="sub_1", gateway_variant="stripe")
-    canceled_remote = remote_subscription(external_id="sub_1", reference_id=str(organizacao.pk), status=SubscriptionStatus.CANCELED)
+    moment = timezone.now()
+    owner, organization, _, _, _, _ = _cenario_encerramento("repete-cancelamento")
+    subscribe_organization(organization, member_limit=10)
+    Subscriptions.link_external(organization.pk, external_id="sub_1", gateway_variant="stripe")
+    canceled_remote = remote_subscription(external_id="sub_1", reference_id=str(organization.pk), status=SubscriptionStatus.CANCELED)
     calls = []
 
     def cancel_fails_once(command):
@@ -363,13 +363,13 @@ def test_closure_cancel_retries_after_temporary_gateway_failure(monkeypatch, dja
 
     # Em modo eager, a repetição não roda sozinha: a `Retry` chega a quem disparou a tarefa.
     with pytest.raises(Retry) as retry_exc, django_capture_on_commit_callbacks(execute=True):
-        Organizacoes.solicitar_encerramento(organizacao, ator=proprietario, agora=agora)
+        Organizacoes.solicitar_encerramento(organization, ator=owner, agora=moment)
     assert retry_exc.value.when == 30
 
     # Segunda tentativa, como o worker faria ao consumir a repetição.
-    cancel_for_closed_organization(organizacao.pk)
+    cancel_for_closed_organization(organization.pk)
 
     cancellations = [command for command in gateway.commands if isinstance(command, CancelRemoteSubscription)]
     assert len(cancellations) == 2
-    assert {command.idempotency_key for command in cancellations} == {f"billing:close:{organizacao.pk}"}
+    assert {command.idempotency_key for command in cancellations} == {f"billing:close:{organization.pk}"}
     assert {command.timing for command in cancellations} == {CancellationTiming.IMMEDIATELY}

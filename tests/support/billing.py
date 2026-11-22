@@ -12,7 +12,8 @@ from django_checkouts.types.subscriptions import Subscription, SubscriptionItem
 from apps.billing.context import organization_scope
 from apps.billing.models import Plan
 from apps.billing.models import Subscription as LocalSubscription
-from apps.organizacoes.models import Organizacao
+from apps.organizacoes.models import Organizacao, Papel, Vinculo
+from tests.support.usuarios import criar_usuario
 
 
 class FakeGatewayVariant(FakeCheckoutGateway):
@@ -107,3 +108,39 @@ def subscribe_organization(organization: Organizacao, *, member_limit: int) -> L
             defaults={"plan": plan, "status": LocalSubscription.Status.ACTIVE},
         )
     return subscription
+
+
+def create_organization(slug: str = "acme") -> Organizacao:
+    """Cria uma organização com o slug informado, que também serve de nome."""
+    return Organizacao.objects.create(nome=slug, slug=slug)
+
+
+def create_plan(slug: str, *, price: str | None = None, rank: int = 1, limit: int = 5, is_active: bool = True) -> Plan:
+    """Cria um plano pago de teste, com o preço do gateway, a posição e o limite de membros informados."""
+    return Plan.objects.create(name=slug, slug=slug, rank=rank, member_limit=limit, gateway_price_id=price, is_active=is_active)
+
+
+def create_subscription(organization: Organizacao, plan: Plan, **fields) -> LocalSubscription:
+    """Cria o espelho da assinatura da organização, ativo por padrão, com os campos extras informados."""
+    with organization_scope(organization.pk):
+        return LocalSubscription.all_objects.create(
+            organizacao=organization,
+            plan=plan,
+            **{"status": LocalSubscription.Status.ACTIVE, **fields},
+        )
+
+
+def create_linked_subscription(organization: Organizacao, plan: Plan, **fields) -> LocalSubscription:
+    """Cria o espelho já ligado à assinatura remota `sub_1`, na variante `stripe`."""
+    return create_subscription(organization, plan, external_id="sub_1", gateway_variant="stripe", **fields)
+
+
+def read_subscription(organization: Organizacao) -> LocalSubscription:
+    """Lê o espelho da organização, com o plano e o plano agendado já carregados."""
+    with organization_scope(organization.pk):
+        return LocalSubscription.all_objects.select_related("plan", "pending_plan").get(organizacao_id=organization.pk)
+
+
+def create_memberships(organization: Organizacao, quantity: int) -> list[Vinculo]:
+    """Cria `quantity` vínculos de membro, cada um com um usuário novo."""
+    return [Vinculo.objects.create(organizacao=organization, usuario=criar_usuario(), papel=Papel.MEMBRO) for _ in range(quantity)]

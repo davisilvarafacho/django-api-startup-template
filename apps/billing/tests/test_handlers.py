@@ -10,7 +10,7 @@ from apps.billing.handlers import ensure_free_plan
 from apps.billing.models import Plan
 
 
-def _apagar_plano_gratuito():
+def _delete_free_plan():
     """Remove fisicamente o gratuito semeado pelo `post_migrate` da suíte."""
     with connection.cursor() as cursor:
         cursor.execute("DELETE FROM billing_plan WHERE is_free")
@@ -24,25 +24,25 @@ def test_ensure_free_plan_is_idempotent(settings):
     ensure_free_plan(sender=sender, using="default")
     ensure_free_plan(sender=sender, using="default")
 
-    gratuitos = Plan.all_objects.filter(is_free=True)
-    assert gratuitos.count() == 1
-    assert gratuitos.get().member_limit == 3
+    free_plans = Plan.all_objects.filter(is_free=True)
+    assert free_plans.count() == 1
+    assert free_plans.get().member_limit == 3
 
 
 @pytest.mark.django_db
 def test_ensure_free_plan_creates_plan_when_missing():
-    _apagar_plano_gratuito()
+    _delete_free_plan()
 
     ensure_free_plan(sender=django_apps.get_app_config("billing"), using="default")
 
-    plano = Plan.objects.get(is_free=True)
-    assert plano.slug == "gratuito"
-    assert plano.member_limit == settings.BILLING_FREE_PLAN_MEMBER_LIMIT
+    plan = Plan.objects.get(is_free=True)
+    assert plan.slug == "gratuito"
+    assert plan.member_limit == settings.BILLING_FREE_PLAN_MEMBER_LIMIT
 
 
 @pytest.mark.django_db
 def test_ensure_free_plan_ignores_other_apps():
-    _apagar_plano_gratuito()
+    _delete_free_plan()
 
     ensure_free_plan(sender=django_apps.get_app_config("organizacoes"), using="default")
 
@@ -51,14 +51,14 @@ def test_ensure_free_plan_ignores_other_apps():
 
 @pytest.mark.django_db
 def test_ensure_free_plan_restores_soft_deleted_free_plan():
-    gratuito = Plan.all_objects.get(is_free=True)
-    gratuito.delete()
+    free_plan = Plan.all_objects.get(is_free=True)
+    free_plan.delete()
 
     ensure_free_plan(sender=django_apps.get_app_config("billing"), using="default")
 
-    gratuitos = Plan.all_objects.filter(is_free=True)
-    assert gratuitos.count() == 1
-    restaurado = gratuitos.get()
-    assert restaurado.pk == gratuito.pk
-    assert restaurado.is_deleted is False
+    free_plans = Plan.all_objects.filter(is_free=True)
+    assert free_plans.count() == 1
+    restored = free_plans.get()
+    assert restored.pk == free_plan.pk
+    assert restored.is_deleted is False
     assert Plan.objects.filter(is_free=True).exists()

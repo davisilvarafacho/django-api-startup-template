@@ -21,9 +21,9 @@ from apps.billing.context import organization_scope
 from apps.billing.models import Plan, Subscription, SubscriptionStatus
 from apps.billing.subscriptions import Subscriptions
 from apps.organizacoes.constants import META_HEADER_ORGANIZACAO
-from apps.organizacoes.models import Organizacao, Papel, Vinculo
+from apps.organizacoes.models import Papel, Vinculo
 from internal_frameworks.context import ContextVariable
-from tests.support.billing import fake_checkout, patch_billing_gateway, remote_subscription
+from tests.support.billing import create_organization, fake_checkout, patch_billing_gateway, remote_subscription
 from tests.support.usuarios import criar_usuario
 
 pytestmark = pytest.mark.django_db
@@ -62,10 +62,6 @@ def api_key_client(user, scopes, organization):
     return client
 
 
-def _organization(slug="acme"):
-    return Organizacao.objects.create(nome=slug, slug=slug)
-
-
 def _link(user, organization, role):
     return Vinculo.objects.create(usuario=user, organizacao=organization, papel=role)
 
@@ -89,7 +85,7 @@ def test_plans_list_without_organization_header():
 
 
 def test_subscription_requires_admin():
-    organization = _organization()
+    organization = create_organization()
     member = criar_usuario()
     admin = criar_usuario()
     _link(member, organization, Papel.MEMBRO)
@@ -117,7 +113,7 @@ def test_subscription_requires_admin():
     ],
 )
 def test_mutations_require_owner(method, path):
-    organization = _organization()
+    organization = create_organization()
     admin = criar_usuario()
     _link(admin, organization, Papel.ADMINISTRADOR)
     Subscriptions.ensure_free(organization.pk)
@@ -138,7 +134,7 @@ def test_mutations_require_owner(method, path):
     ],
 )
 def test_mutations_reject_api_keys(method, path):
-    organization = _organization()
+    organization = create_organization()
     owner = criar_usuario()
     _link(owner, organization, Papel.PROPRIETARIO)
     Subscriptions.ensure_free(organization.pk)
@@ -153,7 +149,7 @@ def test_mutations_reject_api_keys(method, path):
 
 
 def test_mutation_requires_idempotency_key():
-    organization = _organization()
+    organization = create_organization()
     owner = criar_usuario()
     _link(owner, organization, Papel.PROPRIETARIO)
     Subscriptions.ensure_free(organization.pk)
@@ -171,7 +167,7 @@ def test_mutation_requires_idempotency_key():
 
 
 def test_checkout_returns_url(monkeypatch):
-    organization = _organization()
+    organization = create_organization()
     owner = criar_usuario()
     _link(owner, organization, Papel.PROPRIETARIO)
     Subscriptions.ensure_free(organization.pk)
@@ -190,7 +186,7 @@ def test_checkout_returns_url(monkeypatch):
 
 
 def test_gateway_temporary_error_returns_503(monkeypatch):
-    organization = _organization()
+    organization = create_organization()
     owner = criar_usuario()
     _link(owner, organization, Papel.PROPRIETARIO)
     Subscriptions.ensure_free(organization.pk)
@@ -213,7 +209,7 @@ def test_gateway_temporary_error_returns_503(monkeypatch):
 
 
 def test_plans_list_rejects_api_keys_but_serves_sessions_without_organization_header():
-    organization = _organization()
+    organization = create_organization()
     owner = criar_usuario()
     _link(owner, organization, Papel.PROPRIETARIO)
     _paid_plan("pro")
@@ -235,7 +231,7 @@ def test_plans_list_rejects_api_keys_but_serves_sessions_without_organization_he
     ],
 )
 def test_reference_mismatch_after_gateway_call_returns_502(monkeypatch, caplog, method, path, body):
-    organization = _organization()
+    organization = create_organization()
     owner = criar_usuario()
     _link(owner, organization, Papel.PROPRIETARIO)
     basic = _paid_plan("basic", rank=1, price="price_basic")

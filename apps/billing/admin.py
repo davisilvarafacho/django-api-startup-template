@@ -11,14 +11,14 @@ from apps.billing.models import BillingEvent, Plan, Subscription
 from apps.organizacoes.context import organizacao_atual_privilegiada
 from apps.organizacoes.models import Organizacao
 
-CHAVE_SESSAO_ORGANIZACAO = "billing_admin_organizacao_id"
-PARAMETRO_ORGANIZACAO = "organizacao__id__exact"
+SESSION_ORGANIZATION_KEY = "billing_admin_organization_id"
+ORGANIZATION_FILTER_PARAM = "organizacao__id__exact"
 
 # Campos que deixam de ser editáveis depois que o plano é salvo. `is_free` precisa
 # ficar fixo: desmarcar o gratuito faria `Plan.get_free()` falhar para todas as
 # organizações. `slug` é o identificador que o frontend envia; `rank` decide upgrade
 # × downgrade. `gateway_price_id` mapeia o preço do gateway a um único plano.
-CAMPOS_FIXOS_DEPOIS_DE_SALVO = ("slug", "rank", "is_free", "gateway_price_id")
+FIELDS_LOCKED_AFTER_SAVE = ("slug", "rank", "is_free", "gateway_price_id")
 
 
 @admin.register(Plan)
@@ -34,7 +34,7 @@ class PlanAdmin(BaseModelAdmin):
     def get_readonly_fields(self, request, obj=None):
         readonly = super().get_readonly_fields(request, obj)
         if obj is not None and obj.pk is not None:
-            return (*readonly, *CAMPOS_FIXOS_DEPOIS_DE_SALVO)
+            return (*readonly, *FIELDS_LOCKED_AFTER_SAVE)
         return readonly
 
 
@@ -49,23 +49,23 @@ class OrganizacaoAdminMixin:
 
     def get_queryset(self, request):
         queryset = super().get_queryset(request)
-        organizacao_id = request.session.get(CHAVE_SESSAO_ORGANIZACAO)
-        if organizacao_id is not None:
-            queryset = queryset.filter(organizacao_id=organizacao_id)
+        organization_id = request.session.get(SESSION_ORGANIZATION_KEY)
+        if organization_id is not None:
+            queryset = queryset.filter(organizacao_id=organization_id)
         return queryset
 
     def get_urls(self):
         """Embrulha todas as views do admin no contexto de tenant, para que a renderização rode dentro dele."""
         urls = super().get_urls()
         for url in urls:
-            url.callback = self._com_organizacao(url.callback)
+            url.callback = self._with_organization(url.callback)
         return urls
 
-    def _com_organizacao(self, view):
+    def _with_organization(self, view):
         @wraps(view)
         def wrapper(request, *args, **kwargs):
-            organizacao_id = self._resolver_organizacao(request)
-            if organizacao_id is None:
+            organization_id = self._resolve_organization(request)
+            if organization_id is None:
                 self.message_user(
                     request,
                     _("Cadastre uma organização antes de acessar as assinaturas."),
@@ -73,7 +73,7 @@ class OrganizacaoAdminMixin:
                 )
                 return redirect("admin:index")
 
-            with organizacao_atual_privilegiada(organizacao_id):
+            with organizacao_atual_privilegiada(organization_id):
                 response = view(request, *args, **kwargs)
                 # Forçar a renderização mantém a query dentro do contexto de tenant.
                 if hasattr(response, "render") and callable(response.render):
@@ -82,22 +82,22 @@ class OrganizacaoAdminMixin:
 
         return wrapper
 
-    def _resolver_organizacao(self, request):
+    def _resolve_organization(self, request):
         """Organização vigente: filtro da listagem > sessão > primeira cadastrada."""
-        do_filtro = request.GET.get(PARAMETRO_ORGANIZACAO, "")
-        if do_filtro.isdigit():
-            organizacao_id = int(do_filtro)
-            request.session[CHAVE_SESSAO_ORGANIZACAO] = organizacao_id
-            return organizacao_id
+        from_filter = request.GET.get(ORGANIZATION_FILTER_PARAM, "")
+        if from_filter.isdigit():
+            organization_id = int(from_filter)
+            request.session[SESSION_ORGANIZATION_KEY] = organization_id
+            return organization_id
 
-        da_sessao = request.session.get(CHAVE_SESSAO_ORGANIZACAO)
-        if da_sessao is not None and Organizacao.objects.filter(pk=da_sessao).exists():
-            return da_sessao
+        from_session = request.session.get(SESSION_ORGANIZATION_KEY)
+        if from_session is not None and Organizacao.objects.filter(pk=from_session).exists():
+            return from_session
 
-        primeira = Organizacao.objects.values_list("pk", flat=True).first()
-        if primeira is not None:
-            request.session[CHAVE_SESSAO_ORGANIZACAO] = primeira
-        return primeira
+        first_organization = Organizacao.objects.values_list("pk", flat=True).first()
+        if first_organization is not None:
+            request.session[SESSION_ORGANIZATION_KEY] = first_organization
+        return first_organization
 
 
 @admin.register(Subscription)

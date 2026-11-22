@@ -17,7 +17,7 @@ from apps.billing.errors import BillingErrorCode
 logger = logging.getLogger("apps.billing")
 
 # Disposições em que o estado no gateway pode ter mudado sem confirmação.
-_DISPOSICOES_INCERTAS = {
+_UNCERTAIN_DISPOSITIONS = {
     RetryDisposition.RETRY,
     RetryDisposition.RETRY_SAME_KEY,
     RetryDisposition.RECONCILE_FIRST,
@@ -54,10 +54,10 @@ def translate_gateway_errors() -> Iterator[None]:
     """
     try:
         yield
-    except ReferenceMismatch as erro:
-        logger.error("Resposta do gateway recusada: %s", erro)
-        raise APIError(BillingErrorCode.GATEWAY_ERROR, status_code=502) from erro
-    except CheckoutError as erro:
-        if isinstance(erro, GatewayTemporaryError) or erro.retry_advice.disposition in _DISPOSICOES_INCERTAS:
-            raise APIError(BillingErrorCode.GATEWAY_UNCERTAIN, status_code=503) from erro
-        raise APIError(BillingErrorCode.GATEWAY_ERROR, status_code=502) from erro
+    except ReferenceMismatch as error:
+        logger.error("Resposta do gateway recusada: %s", error)
+        raise APIError(BillingErrorCode.GATEWAY_ERROR, status_code=502) from error
+    except CheckoutError as error:
+        if isinstance(error, GatewayTemporaryError) or error.retry_advice.disposition in _UNCERTAIN_DISPOSITIONS:
+            raise APIError(BillingErrorCode.GATEWAY_UNCERTAIN, status_code=503) from error
+        raise APIError(BillingErrorCode.GATEWAY_ERROR, status_code=502) from error

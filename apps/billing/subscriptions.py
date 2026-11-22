@@ -84,15 +84,15 @@ class Subscriptions:
                 subscription.gateway_variant = gateway_variant
                 subscription.save()
                 return
-            vinculada = subscription.external_id
+            linked_id = subscription.external_id
 
-        if vinculada == external_id:
+        if linked_id == external_id:
             return
         logger.error(
             "Organização %s já tem a assinatura %s no gateway; a assinatura duplicada %s foi cancelada imediatamente. "
             "Se houve cobrança dela, o reembolso é manual.",
             organization_id,
-            vinculada,
+            linked_id,
             external_id,
         )
         get_client().subscriptions.cancel(

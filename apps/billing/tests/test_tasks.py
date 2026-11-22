@@ -16,13 +16,9 @@ from apps.billing.models import BillingEvent, Plan, Subscription, SubscriptionSt
 from apps.billing.subscriptions import Subscriptions
 from apps.billing.tasks import MISSING_ORGANIZATION_MESSAGE, MISSING_REFERENCE_MESSAGE, process_billing_event
 from apps.organizacoes.models import Organizacao
-from tests.support.billing import patch_billing_gateway, remote_subscription
+from tests.support.billing import create_organization, patch_billing_gateway, remote_subscription
 
 pytestmark = pytest.mark.django_db
-
-
-def _organization(slug="acme"):
-    return Organizacao.objects.create(nome=slug, slug=slug)
 
 
 def _pro_plan():
@@ -93,7 +89,7 @@ def test_process_already_processed_event_does_nothing(monkeypatch):
 
 
 def test_process_checkout_paid_links_and_syncs(monkeypatch):
-    organization = _organization()
+    organization = create_organization()
     Subscriptions.ensure_free(organization.pk)
     plan = _pro_plan()
     _patch_gateway(monkeypatch, {RetrieveSubscription: lambda command: _remote(organization)})
@@ -112,7 +108,7 @@ def test_process_checkout_paid_links_and_syncs(monkeypatch):
 
 def test_process_subscription_event_before_checkout_links_and_syncs(monkeypatch):
     # O evento de assinatura chega antes do checkout.paid: a organização vem do `reference_id`.
-    organization = _organization()
+    organization = create_organization()
     Subscriptions.ensure_free(organization.pk)
     plan = _pro_plan()
     gateway = _patch_gateway(monkeypatch, {RetrieveSubscription: lambda command: _remote(organization)})
@@ -129,7 +125,7 @@ def test_process_subscription_event_before_checkout_links_and_syncs(monkeypatch)
 
 def test_process_reference_to_organization_without_subscription_links_and_syncs(monkeypatch):
     # A organização existe, mas ainda não tem linha de assinatura local: a tarefa cria a gratuita antes de vincular.
-    organization = _organization()
+    organization = create_organization()
     plan = _pro_plan()
     _patch_gateway(monkeypatch, {RetrieveSubscription: lambda command: _remote(organization)})
     event = _registered_event()
@@ -144,7 +140,7 @@ def test_process_reference_to_organization_without_subscription_links_and_syncs(
 
 
 def test_process_missing_reference_records_error(monkeypatch):
-    organization = _organization()
+    organization = create_organization()
     Subscriptions.ensure_free(organization.pk)
     remote = remote_subscription(external_id="sub_1", reference_id=None)
     _patch_gateway(monkeypatch, {RetrieveSubscription: remote})
@@ -215,8 +211,8 @@ def test_process_permanent_gateway_error_records_without_retry(monkeypatch):
 
 def test_process_reference_mismatch_records_error(monkeypatch):
     # O espelho local já aponta para `sub_antiga`, que pertence a outra organização.
-    organization = _organization()
-    other = _organization("outra")
+    organization = create_organization()
+    other = create_organization("outra")
     Subscriptions.ensure_free(organization.pk)
     with organization_scope(organization.pk):
         Subscription.all_objects.filter(organizacao_id=organization.pk).update(external_id="sub_antiga", gateway_variant="stripe")
@@ -250,7 +246,7 @@ def test_process_reference_mismatch_records_error(monkeypatch):
 
 
 def test_process_unexpected_error_counts_attempt_and_propagates(monkeypatch):
-    organization = _organization("inesperado")
+    organization = create_organization("inesperado")
     _patch_gateway(monkeypatch, {RetrieveSubscription: _remote(organization)})
 
     def explode(*args, **kwargs):
@@ -274,7 +270,7 @@ def test_process_unexpected_error_counts_attempt_and_propagates(monkeypatch):
 
 
 def test_process_duplicate_subscription_cancels_newcomer_and_marks_processed(monkeypatch):
-    organization = _organization()
+    organization = create_organization()
     Subscriptions.ensure_free(organization.pk)
     Subscriptions.link_external(organization.pk, external_id="sub_1", gateway_variant="stripe")
     remotes = {"sub_1": _remote(organization, external_id="sub_1"), "sub_2": _remote(organization, external_id="sub_2")}
@@ -297,7 +293,7 @@ def test_process_duplicate_subscription_cancels_newcomer_and_marks_processed(mon
 
 
 def test_process_duplicate_subscription_stays_pending_when_cancel_fails(monkeypatch):
-    organization = _organization()
+    organization = create_organization()
     Subscriptions.ensure_free(organization.pk)
     Subscriptions.link_external(organization.pk, external_id="sub_1", gateway_variant="stripe")
     remotes = {"sub_1": _remote(organization, external_id="sub_1"), "sub_2": _remote(organization, external_id="sub_2")}
@@ -329,7 +325,7 @@ def _close(organization):
 
 
 def test_late_checkout_for_closed_organization_cancels_with_close_key_without_paid_plan(monkeypatch):
-    organization = _organization()
+    organization = create_organization()
     Subscriptions.ensure_free(organization.pk)
     _pro_plan()
     _close(organization)
@@ -359,7 +355,7 @@ def test_late_checkout_for_closed_organization_cancels_with_close_key_without_pa
 
 
 def test_late_event_for_closed_organization_without_access_only_marks_processed(monkeypatch):
-    organization = _organization()
+    organization = create_organization()
     Subscriptions.ensure_free(organization.pk)
     _close(organization)
     gateway = _patch_gateway(
@@ -375,7 +371,7 @@ def test_late_event_for_closed_organization_without_access_only_marks_processed(
 
 
 def test_late_checkout_for_closed_organization_stays_pending_when_cancel_fails(monkeypatch):
-    organization = _organization()
+    organization = create_organization()
     Subscriptions.ensure_free(organization.pk)
     _close(organization)
     _patch_gateway(
@@ -395,7 +391,7 @@ def test_late_checkout_for_closed_organization_stays_pending_when_cancel_fails(m
 
 
 def test_late_checkout_for_closed_organization_with_other_link_cancels_only_newcomer(monkeypatch):
-    organization = _organization()
+    organization = create_organization()
     Subscriptions.ensure_free(organization.pk)
     Subscriptions.link_external(organization.pk, external_id="sub_1", gateway_variant="stripe")
     _close(organization)
@@ -418,7 +414,7 @@ def test_late_checkout_for_closed_organization_with_other_link_cancels_only_newc
 
 
 def test_cancellation_event_for_closed_organization_resets_linked_mirror(monkeypatch):
-    organization = _organization()
+    organization = create_organization()
     Subscriptions.ensure_free(organization.pk)
     Subscriptions.link_external(organization.pk, external_id="sub_1", gateway_variant="stripe")
     _close(organization)

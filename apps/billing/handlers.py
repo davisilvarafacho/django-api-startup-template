@@ -20,8 +20,8 @@ def ensure_free_plan(**kwargs):
         return
 
     using = kwargs["using"]
-    gratuito = Plan.all_objects.using(using).filter(is_free=True).first()
-    if gratuito is None:
+    free_plan = Plan.all_objects.using(using).filter(is_free=True).first()
+    if free_plan is None:
         Plan.objects.using(using).create(
             name="Gratuito",
             slug="gratuito",
@@ -31,6 +31,6 @@ def ensure_free_plan(**kwargs):
         )
         return
 
-    if gratuito.is_deleted:
-        gratuito.is_deleted = False
-        gratuito.save(using=using, update_fields=["is_deleted"])
+    if free_plan.is_deleted:
+        free_plan.is_deleted = False
+        free_plan.save(using=using, update_fields=["is_deleted"])
