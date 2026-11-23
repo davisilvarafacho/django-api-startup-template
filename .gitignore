@@ -171,8 +171,11 @@ cython_debug/
 # linting 
 .trunk/
 
-
+# examples
 .examples/
+
+# ai tools
+graphify-out/
 
 # prometheus_client em modo multiprocess (ver PROMETHEUS_MULTIPROC_DIR)
 counter_*.db
